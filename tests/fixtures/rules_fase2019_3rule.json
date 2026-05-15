@@ -1,0 +1,129 @@
+{
+  "name": "fase2019-3rule",
+  "description": "3-Rule-Minimalversion der FASE2019/STTT2021-Package-TGG (bidirektional, saubere Opt.1-Fassung). L = Package-Welt, R = Folder/DocFile-Welt.",
+  "rules": [
+    {
+      "name": "Root-Rule",
+      "rank": 30,
+      "documentation": "L: Package top OHNE eingehende subPackages-Kante (NAC). R: Folder f + CorrPackage(top↔f, name↦name).",
+      "l_pattern": {
+        "nodes": [
+          { "id": "top", "kind": "Package", "constraints": [] }
+        ],
+        "edges": []
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "top", "kind": "Package", "constraints": [] },
+          { "id": "f", "kind": "Folder", "constraints": [] }
+        ],
+        "edges": []
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "top",
+          "r_node_id": "f",
+          "kind": "CorrPackage",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        }
+      ],
+      "nacs": [
+        {
+          "name": "no_incoming_subPackages",
+          "nodes": [
+            { "id": "top", "kind": "Package", "constraints": [] },
+            { "id": "parent", "kind": "Package", "constraints": [] }
+          ],
+          "edges": [
+            { "kind": "subPackages", "source_node_id": "parent", "target_node_id": "top" }
+          ],
+          "shared_with_l": ["top"]
+        }
+      ]
+    },
+    {
+      "name": "Sub-Rule",
+      "rank": 20,
+      "documentation": "L: parent_p --subPackages--> child_p. Context-Corr: parent_p↔parent_f. R: Folder child_f + subFolders(parent_f→child_f) + CorrPackage(child_p↔child_f, name↦name).",
+      "l_pattern": {
+        "nodes": [
+          { "id": "parent_p", "kind": "Package", "constraints": [] },
+          { "id": "child_p", "kind": "Package", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "subPackages", "source_node_id": "parent_p", "target_node_id": "child_p" }
+        ]
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "parent_p", "kind": "Package", "constraints": [] },
+          { "id": "child_p", "kind": "Package", "constraints": [] },
+          { "id": "parent_f", "kind": "Folder", "constraints": [] },
+          { "id": "child_f", "kind": "Folder", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "subFolders", "source_node_id": "parent_f", "target_node_id": "child_f" }
+        ]
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "parent_p",
+          "r_node_id": "parent_f",
+          "kind": "CorrPackage",
+          "attribute_bindings": []
+        },
+        {
+          "l_node_id": "child_p",
+          "r_node_id": "child_f",
+          "kind": "CorrPackage",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Leaf-Rule",
+      "rank": 10,
+      "documentation": "L: p --classes--> c. Context-Corr: p↔f. R: DocFile d + docFiles(f→d) + CorrClass(c↔d, name↦content).",
+      "l_pattern": {
+        "nodes": [
+          { "id": "p", "kind": "Package", "constraints": [] },
+          { "id": "c", "kind": "Class", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "classes", "source_node_id": "p", "target_node_id": "c" }
+        ]
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "p", "kind": "Package", "constraints": [] },
+          { "id": "c", "kind": "Class", "constraints": [] },
+          { "id": "f", "kind": "Folder", "constraints": [] },
+          { "id": "d", "kind": "DocFile", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "docFiles", "source_node_id": "f", "target_node_id": "d" }
+        ]
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "p",
+          "r_node_id": "f",
+          "kind": "CorrPackage",
+          "attribute_bindings": []
+        },
+        {
+          "l_node_id": "c",
+          "r_node_id": "d",
+          "kind": "CorrClass",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "content", "transformation": "identity" }
+          ]
+        }
+      ]
+    }
+  ]
+}

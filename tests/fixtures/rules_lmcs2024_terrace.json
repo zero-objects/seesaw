@@ -1,0 +1,199 @@
+{
+  "name": "lmcs2024-terrace",
+  "description": "LMCS2024 Terrace-House TGG (Fritsche et al. 2024 Fig. 2). Vier Rules: NookRule, VillaRule, CubeRule — typ-diskriminiert via Literal-Matcher auf House.type (M1). Plus NextRule für Sequenz-Propagation.",
+  "rules": [
+    {
+      "name": "NookRule",
+      "rank": 40,
+      "documentation": "House mit type=Nook → Construction (ohne Sub-Komponenten).",
+      "l_pattern": {
+        "nodes": [
+          {
+            "id": "h",
+            "kind": "House",
+            "constraints": [
+              { "name": "type", "matcher": { "type": "literal", "value": "Nook" } }
+            ]
+          }
+        ],
+        "edges": []
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "h", "kind": "House", "constraints": [] },
+          { "id": "c", "kind": "Construction", "constraints": [] }
+        ],
+        "edges": []
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "h",
+          "r_node_id": "c",
+          "kind": "CorrHouse",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "VillaRule",
+      "rank": 40,
+      "documentation": "House mit type=Villa → Construction + Floor + SaddleRoof. Jede Sub-Komponente ist eigenes Corr-Child von h (eigener Corr-Kind als Rolle-Marker).",
+      "l_pattern": {
+        "nodes": [
+          {
+            "id": "h",
+            "kind": "House",
+            "constraints": [
+              { "name": "type", "matcher": { "type": "literal", "value": "Villa" } }
+            ]
+          }
+        ],
+        "edges": []
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "h", "kind": "House", "constraints": [] },
+          { "id": "c", "kind": "Construction", "constraints": [] },
+          { "id": "floor", "kind": "Floor", "constraints": [] },
+          { "id": "roof", "kind": "SaddleRoof", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "hasFloor", "source_node_id": "c", "target_node_id": "floor" },
+          { "kind": "hasRoof", "source_node_id": "c", "target_node_id": "roof" }
+        ]
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "h",
+          "r_node_id": "c",
+          "kind": "CorrHouse",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        },
+        {
+          "l_node_id": "h",
+          "r_node_id": "floor",
+          "kind": "CorrFloor",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        },
+        {
+          "l_node_id": "h",
+          "r_node_id": "roof",
+          "kind": "CorrRoof",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "CubeRule",
+      "rank": 40,
+      "documentation": "House mit type=Cube → Construction + Cellar + Floor + SaddleRoof.",
+      "l_pattern": {
+        "nodes": [
+          {
+            "id": "h",
+            "kind": "House",
+            "constraints": [
+              { "name": "type", "matcher": { "type": "literal", "value": "Cube" } }
+            ]
+          }
+        ],
+        "edges": []
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "h", "kind": "House", "constraints": [] },
+          { "id": "c", "kind": "Construction", "constraints": [] },
+          { "id": "cellar", "kind": "Cellar", "constraints": [] },
+          { "id": "floor", "kind": "Floor", "constraints": [] },
+          { "id": "roof", "kind": "SaddleRoof", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "hasCellar", "source_node_id": "c", "target_node_id": "cellar" },
+          { "kind": "hasFloor",  "source_node_id": "c", "target_node_id": "floor" },
+          { "kind": "hasRoof",   "source_node_id": "c", "target_node_id": "roof" }
+        ]
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "h",
+          "r_node_id": "c",
+          "kind": "CorrHouse",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        },
+        {
+          "l_node_id": "h",
+          "r_node_id": "cellar",
+          "kind": "CorrCellar",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        },
+        {
+          "l_node_id": "h",
+          "r_node_id": "floor",
+          "kind": "CorrFloor",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        },
+        {
+          "l_node_id": "h",
+          "r_node_id": "roof",
+          "kind": "CorrRoof",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "NextRule",
+      "rank": 10,
+      "documentation": "Sequenz-Propagation: L next(h1→h2) + Context-Corrs auf beide → R nextConstr(c1→c2).",
+      "l_pattern": {
+        "nodes": [
+          { "id": "h1", "kind": "House", "constraints": [] },
+          { "id": "h2", "kind": "House", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "next", "source_node_id": "h1", "target_node_id": "h2" }
+        ]
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "h1", "kind": "House", "constraints": [] },
+          { "id": "h2", "kind": "House", "constraints": [] },
+          { "id": "c1", "kind": "Construction", "constraints": [] },
+          { "id": "c2", "kind": "Construction", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "nextConstr", "source_node_id": "c1", "target_node_id": "c2" }
+        ]
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "h1",
+          "r_node_id": "c1",
+          "kind": "CorrHouse",
+          "attribute_bindings": []
+        },
+        {
+          "l_node_id": "h2",
+          "r_node_id": "c2",
+          "kind": "CorrHouse",
+          "attribute_bindings": []
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+[package]
+name = "seesaw-tgg"
+description = "Delta-extended Triple Graph Grammar engine with rank-based backtracking: graph, ops, cascade, fold."
+version = "1.0.0-rc1"
+edition = "2021"
+authors = ["Zero Principle <hello@zero-principle.org>"]
+license = "Apache-2.0"
+repository = "https://github.com/zero-objects/seesaw"
+homepage = "https://github.com/zero-objects/seesaw"
+documentation = "https://docs.rs/seesaw-tgg"
+readme = "README.md"
+keywords = ["tgg", "graph", "model-transformation", "bidirectional", "cascade"]
+categories = ["data-structures", "algorithms", "science"]
+
+[dependencies]
+petgraph = { version = "0.6", features = ["serde-1"] }
+sha2 = "0.10"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "1.0"
+quick-xml = { version = "0.36", features = ["serialize"] }
+regex = "1.11"
+
+[dev-dependencies]
+proptest = "1.5"
+
+[features]
+regen_graphs = []
+
+[[example]]
+name = "basic_cascade"
+path = "examples/basic_cascade.rs"

@@ -1,0 +1,106 @@
+{
+  "name": "attr-regex-demo",
+  "description": "Demo-Fixture für M1 (Attribut-Matcher + Regex). Nutzt verschiedene Matcher-Typen.",
+  "rules": [
+    {
+      "name": "Regex-Abstract-Class",
+      "rank": 30,
+      "documentation": "Matcht Class mit Name, der mit 'Abstract' beginnt.",
+      "l_pattern": {
+        "nodes": [
+          {
+            "id": "c",
+            "kind": "Class",
+            "constraints": [
+              {
+                "name": "name",
+                "matcher": { "type": "regex", "pattern": "^Abstract" }
+              }
+            ]
+          }
+        ],
+        "edges": []
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "c", "kind": "Class", "constraints": [] },
+          { "id": "d", "kind": "DocFile", "constraints": [] }
+        ],
+        "edges": []
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "c",
+          "r_node_id": "d",
+          "kind": "CorrClass",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "content", "transformation": "identity" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Prefix-Get-Method",
+      "rank": 20,
+      "documentation": "Matcht Method mit Namen, der mit 'get' beginnt.",
+      "l_pattern": {
+        "nodes": [
+          {
+            "id": "m",
+            "kind": "Method",
+            "constraints": [
+              {
+                "name": "name",
+                "matcher": { "type": "prefix", "prefix": "get" }
+              }
+            ]
+          }
+        ],
+        "edges": []
+      },
+      "r_pattern": null,
+      "correspondence_links": []
+    },
+    {
+      "name": "NumericRange-Score",
+      "rank": 10,
+      "documentation": "Matcht Result mit score zwischen 0 und 100.",
+      "l_pattern": {
+        "nodes": [
+          {
+            "id": "r",
+            "kind": "Result",
+            "constraints": [
+              {
+                "name": "score",
+                "matcher": { "type": "numeric_range", "min": 0.0, "max": 100.0 }
+              }
+            ]
+          }
+        ],
+        "edges": []
+      },
+      "r_pattern": null,
+      "correspondence_links": []
+    },
+    {
+      "name": "Literal-Flag",
+      "rank": 5,
+      "documentation": "Literal-Match im neuen Matcher-Schema.",
+      "l_pattern": {
+        "nodes": [
+          {
+            "id": "x",
+            "kind": "Flag",
+            "constraints": [
+              { "name": "enabled", "matcher": { "type": "literal", "value": "true" } }
+            ]
+          }
+        ],
+        "edges": []
+      },
+      "r_pattern": null,
+      "correspondence_links": []
+    }
+  ]
+}

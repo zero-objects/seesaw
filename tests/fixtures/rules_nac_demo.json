@@ -1,0 +1,47 @@
+{
+  "name": "nac-demo",
+  "description": "Demo-Fixture für M2: Root-Rule mit NAC 'no_incoming_subPackages'. Matcht nur Packages ohne eingehende subPackages-Kante.",
+  "rules": [
+    {
+      "name": "Root-Rule-With-NAC",
+      "rank": 30,
+      "documentation": "Matcht Top-Level-Packages (ohne incoming subPackages). Erzeugt Folder + CorrPackage.",
+      "l_pattern": {
+        "nodes": [
+          { "id": "top", "kind": "Package", "constraints": [] }
+        ],
+        "edges": []
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "top", "kind": "Package", "constraints": [] },
+          { "id": "f", "kind": "Folder", "constraints": [] }
+        ],
+        "edges": []
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "top",
+          "r_node_id": "f",
+          "kind": "CorrPackage",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        }
+      ],
+      "nacs": [
+        {
+          "name": "no_incoming_subPackages",
+          "nodes": [
+            { "id": "top", "kind": "Package", "constraints": [] },
+            { "id": "parent", "kind": "Package", "constraints": [] }
+          ],
+          "edges": [
+            { "kind": "subPackages", "source_node_id": "parent", "target_node_id": "top" }
+          ],
+          "shared_with_l": ["top"]
+        }
+      ]
+    }
+  ]
+}

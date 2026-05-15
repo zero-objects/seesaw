@@ -1,0 +1,170 @@
+{
+  "name": "fase2019-3rule-with-sc",
+  "description": "3-Rule + Sub-To-Root-SC-Repair (bidirektionale Opt.1-Fassung, 2026-04-24). SC-Repair hat rank 35 > Root 30, damit Rank-Selektion SC-Repair vor Root-Rule wählt, wenn beide matchen.",
+  "rules": [
+    {
+      "name": "Root-Rule",
+      "rank": 30,
+      "documentation": "L: Package top OHNE eingehende subPackages-Kante (NAC). R: Folder f + CorrPackage.",
+      "l_pattern": {
+        "nodes": [
+          { "id": "top", "kind": "Package", "constraints": [] }
+        ],
+        "edges": []
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "top", "kind": "Package", "constraints": [] },
+          { "id": "f", "kind": "Folder", "constraints": [] }
+        ],
+        "edges": []
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "top",
+          "r_node_id": "f",
+          "kind": "CorrPackage",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        }
+      ],
+      "nacs": [
+        {
+          "name": "no_incoming_subPackages",
+          "nodes": [
+            { "id": "top", "kind": "Package", "constraints": [] },
+            { "id": "parent", "kind": "Package", "constraints": [] }
+          ],
+          "edges": [
+            { "kind": "subPackages", "source_node_id": "parent", "target_node_id": "top" }
+          ],
+          "shared_with_l": ["top"]
+        }
+      ]
+    },
+    {
+      "name": "Sub-Rule",
+      "rank": 20,
+      "documentation": "L: parent_p --subPackages--> child_p. Context-Corr: parent_p↔parent_f. R: Folder child_f + subFolders(parent_f→child_f) + CorrPackage(child_p↔child_f, name↦name).",
+      "l_pattern": {
+        "nodes": [
+          { "id": "parent_p", "kind": "Package", "constraints": [] },
+          { "id": "child_p", "kind": "Package", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "subPackages", "source_node_id": "parent_p", "target_node_id": "child_p" }
+        ]
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "parent_p", "kind": "Package", "constraints": [] },
+          { "id": "child_p", "kind": "Package", "constraints": [] },
+          { "id": "parent_f", "kind": "Folder", "constraints": [] },
+          { "id": "child_f", "kind": "Folder", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "subFolders", "source_node_id": "parent_f", "target_node_id": "child_f" }
+        ]
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "parent_p",
+          "r_node_id": "parent_f",
+          "kind": "CorrPackage",
+          "attribute_bindings": []
+        },
+        {
+          "l_node_id": "child_p",
+          "r_node_id": "child_f",
+          "kind": "CorrPackage",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Leaf-Rule",
+      "rank": 10,
+      "documentation": "L: p --classes--> c. Context-Corr: p↔f. R: DocFile d + docFiles(f→d) + CorrClass(c↔d, name↦content).",
+      "l_pattern": {
+        "nodes": [
+          { "id": "p", "kind": "Package", "constraints": [] },
+          { "id": "c", "kind": "Class", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "classes", "source_node_id": "p", "target_node_id": "c" }
+        ]
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "p", "kind": "Package", "constraints": [] },
+          { "id": "c", "kind": "Class", "constraints": [] },
+          { "id": "f", "kind": "Folder", "constraints": [] },
+          { "id": "d", "kind": "DocFile", "constraints": [] }
+        ],
+        "edges": [
+          { "kind": "docFiles", "source_node_id": "f", "target_node_id": "d" }
+        ]
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "p",
+          "r_node_id": "f",
+          "kind": "CorrPackage",
+          "attribute_bindings": []
+        },
+        {
+          "l_node_id": "c",
+          "r_node_id": "d",
+          "kind": "CorrClass",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "content", "transformation": "identity" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Sub-To-Root-SC-Repair",
+      "rank": 35,
+      "documentation": "Short-Cut-Repair mit Rank 35 > Root 30 und identischer NAC. Bei Match-Ambiguität auf Top-Level-Package gewinnt SC-Repair die Rank-Selektion, sodass die Corr-Struktur unter SC-Repair-Autorschaft entsteht.",
+      "l_pattern": {
+        "nodes": [
+          { "id": "p", "kind": "Package", "constraints": [] }
+        ],
+        "edges": []
+      },
+      "r_pattern": {
+        "nodes": [
+          { "id": "p", "kind": "Package", "constraints": [] },
+          { "id": "f", "kind": "Folder", "constraints": [] }
+        ],
+        "edges": []
+      },
+      "correspondence_links": [
+        {
+          "l_node_id": "p",
+          "r_node_id": "f",
+          "kind": "CorrPackage",
+          "attribute_bindings": [
+            { "l_attr_name": "name", "r_attr_name": "name", "transformation": "identity" }
+          ]
+        }
+      ],
+      "nacs": [
+        {
+          "name": "no_incoming_subPackages",
+          "nodes": [
+            { "id": "p", "kind": "Package", "constraints": [] },
+            { "id": "parent", "kind": "Package", "constraints": [] }
+          ],
+          "edges": [
+            { "kind": "subPackages", "source_node_id": "parent", "target_node_id": "p" }
+          ],
+          "shared_with_l": ["p"]
+        }
+      ]
+    }
+  ]
+}
