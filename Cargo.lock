@@ -443,7 +443,7 @@ dependencies = [
 
 [[package]]
 name = "seesaw-tgg"
-version = "1.0.0-rc1"
+version = "1.0.0-rc2"
 dependencies = [
  "petgraph",
  "proptest",

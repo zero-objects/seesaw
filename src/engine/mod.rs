@@ -11,7 +11,7 @@
 
 use crate::graph::{GhostId, NodeData, Status, TypedGraph};
 use crate::ops::{DeltaEntry, Op, OpError, OpTarget, Origin};
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use thiserror::Error;
 
@@ -200,55 +200,274 @@ pub fn find_matches_with_fixed(
             Vec::new()
         };
     }
+    let plan = build_match_plan(pattern, fixed);
     let mut results = Vec::new();
     let mut current = PatternMatch::default();
     for (k, v) in fixed {
         current.bindings.insert(k.clone(), *v);
     }
-    enumerate_matches(pattern, graph, 0, &mut current, &mut results);
+    enumerate_matches(pattern, graph, &plan, 0, &mut current, &mut results);
+    // Determinismus (Def. 4.2): kanonische μ-Ordnung, unabhängig vom
+    // edge-geleiteten Traversal-Pfad. Die Match-*Menge* ist pfad-
+    // invariant (erschöpfende Suche); nur die Push-Reihenfolge variiert.
+    results.sort_by_key(|m| canonical_key(m, pattern));
     results
+}
+
+// ── Edge-geleiteter Match-Plan ═══════════════════════════════════════════
+//
+// Statt das kartesische Produkt über alle Pattern-Positionen zu
+// enumerieren und Edge-Constraints erst am Blatt zu prüfen (O(M^N)),
+// arbeitet der Matcher die Knoten in *connected order* ab: ein
+// Seed-Knoten wird per Typ-Scan gewählt, jeder Folgeknoten hängt per
+// Pattern-Edge an einem bereits gebundenen Knoten und wird über
+// Graph-Adjazenz statt über die volle Typ-Population erzeugt. Das
+// senkt den Worst Case auf O(M · d^(N-1)), d = mittlerer Knotengrad.
+
+/// Eine Pattern-Edge eines Plan-Knotens zu einem im Plan bereits
+/// platzierten Knoten — relativ zum *neuen* Knoten ausgedrückt.
+struct EdgeLink {
+    /// Variable des bereits platzierten Nachbarn.
+    placed_var: String,
+    type_id: String,
+    /// `true`: der neue Knoten ist Source, der platzierte ist Target.
+    /// `false`: der platzierte ist Source, der neue ist Target.
+    new_is_source: bool,
+}
+
+/// Ein Schritt im Traversal-Plan: welcher Pattern-Knoten als nächstes
+/// gebunden wird und wie seine Kandidaten erzeugt werden.
+struct MatchStep {
+    /// Index in `pattern.nodes`.
+    node_idx: usize,
+    /// `true`: Variable ist via `fixed` vorgebunden — nur validieren.
+    pre_bound: bool,
+    /// Pattern-Edges zu bereits platzierten Knoten. Nicht-leer ⇒
+    /// `links[0]` dient als Adjazenz-Guide (Kandidaten aus den
+    /// Nachbarn des Ankers); alle Links werden zusätzlich verifiziert.
+    /// Leer ⇒ Seed-Knoten (Typ-Scan).
+    links: Vec<EdgeLink>,
+}
+
+/// Baut den deterministischen Traversal-Plan für ein Pattern.
+///
+/// Determinismus: das Pattern ist fixe Eingabe, die Knoten-Auswahl ist
+/// eine reine Funktion über (Pattern, platzierte Menge). Der
+/// abschließende `canonical_key`-Sort in [`find_matches_with_fixed`]
+/// macht die Plan-Reihenfolge ohnehin an der API-Grenze unsichtbar.
+fn build_match_plan(pattern: &Pattern, fixed: &HashMap<String, GhostId>) -> Vec<MatchStep> {
+    let n = pattern.nodes.len();
+    let mut placed = vec![false; n];
+    let mut steps: Vec<MatchStep> = Vec::with_capacity(n);
+
+    // 1. fixed-Variablen zuerst: sie sind bereits gebunden und dienen
+    //    als Adjazenz-Anker für den Rest (relevant für NAC- und
+    //    Re-Validation-Matching mit shared-Anchors).
+    for (i, np) in pattern.nodes.iter().enumerate() {
+        if fixed.contains_key(&np.var) {
+            placed[i] = true;
+            steps.push(MatchStep {
+                node_idx: i,
+                pre_bound: true,
+                links: Vec::new(),
+            });
+        }
+    }
+
+    // 2. Restliche Knoten greedy: bevorzugt einen, der per Edge an die
+    //    platzierte Menge anknüpft (guided); sonst den selektivsten
+    //    ungebundenen Knoten als Komponenten-Seed.
+    while steps.len() < n {
+        let next = pick_next_node(pattern, &placed);
+        let links = links_to_placed(pattern, &placed, next);
+        placed[next] = true;
+        steps.push(MatchStep {
+            node_idx: next,
+            pre_bound: false,
+            links,
+        });
+    }
+    steps
+}
+
+/// Wählt den nächsten zu platzierenden Pattern-Knoten. Bevorzugt
+/// Knoten mit Edge zur platzierten Menge (guided); Tie-Break:
+/// most-constrained-variable-first (meiste `attr_constraints`), dann
+/// kleinster Index.
+fn pick_next_node(pattern: &Pattern, placed: &[bool]) -> usize {
+    let mut best_idx: Option<usize> = None;
+    let mut best_key = (false, 0usize, 0usize);
+    for (i, np) in pattern.nodes.iter().enumerate() {
+        if placed[i] {
+            continue;
+        }
+        let guided = !links_to_placed(pattern, placed, i).is_empty();
+        // `usize::MAX - i` ⇒ größerer Schlüssel = kleinerer Index.
+        let key = (guided, np.attr_constraints.len(), usize::MAX - i);
+        if best_idx.is_none() || key > best_key {
+            best_idx = Some(i);
+            best_key = key;
+        }
+    }
+    best_idx.expect("pick_next_node: kein ungebundener Knoten vorhanden")
+}
+
+/// Sammelt alle Pattern-Edges des Knotens `idx` zu bereits platzierten
+/// Knoten, relativ zum Knoten `idx` ausgedrückt. Selbst-Schleifen und
+/// Edges mit unbekannter Gegen-Variable werden übersprungen — der
+/// Leaf-Check `satisfies_edge_patterns` deckt sie ab.
+fn links_to_placed(pattern: &Pattern, placed: &[bool], idx: usize) -> Vec<EdgeLink> {
+    let var = pattern.nodes[idx].var.as_str();
+    let mut links = Vec::new();
+    for ep in &pattern.edges {
+        if ep.source_var == ep.target_var {
+            continue;
+        }
+        let (other_var, new_is_source) = if ep.source_var == var {
+            (ep.target_var.as_str(), true)
+        } else if ep.target_var == var {
+            (ep.source_var.as_str(), false)
+        } else {
+            continue;
+        };
+        let other_placed = pattern
+            .nodes
+            .iter()
+            .position(|np| np.var == other_var)
+            .map(|j| placed[j])
+            .unwrap_or(false);
+        if other_placed {
+            links.push(EdgeLink {
+                placed_var: other_var.to_string(),
+                type_id: ep.type_id.clone(),
+                new_is_source,
+            });
+        }
+    }
+    links
 }
 
 fn enumerate_matches(
     pattern: &Pattern,
     graph: &TypedGraph,
+    plan: &[MatchStep],
     depth: usize,
     current: &mut PatternMatch,
     out: &mut Vec<PatternMatch>,
 ) {
-    if depth == pattern.nodes.len() {
+    if depth == plan.len() {
+        // Komponenten-interne Edges wurden inkrementell geprüft; der
+        // Leaf-Check deckt zusätzlich Selbst-Schleifen und Edges mit
+        // unbekannter Variable ab (Defense-in-depth).
         if satisfies_edge_patterns(pattern, graph, current) {
             out.push(current.clone());
         }
         return;
     }
-    let np = &pattern.nodes[depth];
-    // Fixed-Binding-Pfad (M2): wenn die Variable bereits gebunden ist
-    // (aus `find_matches_with_fixed`), nicht weiter enumerieren — nur
-    // prüfen, ob der gebundene Knoten das Pattern erfüllt.
-    if let Some(fixed_id) = current.bindings.get(&np.var).copied() {
-        if let Some(node) = graph.get_node(&fixed_id) {
-            if node.status.is_matchable() && np.matches_node(node) {
-                enumerate_matches(pattern, graph, depth + 1, current, out);
+    let step = &plan[depth];
+    let np = &pattern.nodes[step.node_idx];
+
+    // Vorgebundene Variable (M2 / Re-Validation): nicht enumerieren,
+    // nur prüfen, ob der gebundene Knoten das Pattern erfüllt.
+    if step.pre_bound {
+        if let Some(id) = current.bindings.get(&np.var).copied() {
+            if let Some(node) = graph.get_node(&id) {
+                if node.status.is_matchable() && np.matches_node(node) {
+                    enumerate_matches(pattern, graph, plan, depth + 1, current, out);
+                }
             }
         }
         return;
     }
-    // F15-Mitigation: indizierter Lookup über `matchable_nodes_by_kind`
-    // statt vollständiger Iteration. Reduziert pro Pattern-Position
-    // O(graph_size) auf O(matching_kind_count). Determinismus bleibt
-    // erhalten (BTreeSet liefert canonical Reihenfolge).
-    for node in graph.matchable_nodes_by_kind(&np.type_id) {
+
+    for cand in step_candidates(graph, np, step, current) {
         // Injektivität: Knoten darf noch nicht gebunden sein.
-        if current.bindings.values().any(|id| *id == node.id) {
+        if current.bindings.values().any(|id| *id == cand) {
             continue;
         }
-        if np.matches_node(node) {
-            current.bindings.insert(np.var.clone(), node.id);
-            enumerate_matches(pattern, graph, depth + 1, current, out);
-            current.bindings.remove(&np.var);
+        let node = match graph.get_node(&cand) {
+            Some(node) if node.status.is_matchable() => node,
+            _ => continue,
+        };
+        if !np.matches_node(node) {
+            continue;
+        }
+        // Edge-Constraints zu bereits gebundenen Knoten *sofort* prüfen
+        // — nicht erst am Blatt (early pruning).
+        if !satisfies_links(graph, current, &step.links, cand) {
+            continue;
+        }
+        current.bindings.insert(np.var.clone(), cand);
+        enumerate_matches(pattern, graph, plan, depth + 1, current, out);
+        current.bindings.remove(&np.var);
+    }
+}
+
+/// Kandidaten-Knoten für einen Plan-Schritt.
+///
+/// - **Guided** (`links` nicht leer): Adjazenz-Lookup über `links[0]`
+///   — nur Nachbarn des bereits gebundenen Ankers, dedupliziert
+///   (parallele Kanten). O(Knotengrad) statt O(Typ-Population).
+/// - **Seed** (`links` leer): Typ-Scan über `matchable_nodes_by_kind`
+///   (F15-Mitigation, BTreeSet-kanonisch).
+fn step_candidates(
+    graph: &TypedGraph,
+    np: &NodePattern,
+    step: &MatchStep,
+    current: &PatternMatch,
+) -> Vec<GhostId> {
+    let guide = match step.links.first() {
+        Some(guide) => guide,
+        None => {
+            return graph
+                .matchable_nodes_by_kind(&np.type_id)
+                .map(|node| node.id)
+                .collect();
+        }
+    };
+    let anchor = match current.bindings.get(&guide.placed_var) {
+        Some(id) => *id,
+        None => return Vec::new(),
+    };
+    let mut seen: BTreeSet<GhostId> = BTreeSet::new();
+    if guide.new_is_source {
+        // Pattern-Edge: neu ─type─▶ Anker ⇒ der neue Knoten ist Quelle
+        // einer eingehenden Kante des Ankers.
+        for (edge, src) in graph.incoming_edges(&anchor) {
+            if edge.type_id == guide.type_id {
+                seen.insert(src);
+            }
+        }
+    } else {
+        // Pattern-Edge: Anker ─type─▶ neu ⇒ der neue Knoten ist Ziel
+        // einer ausgehenden Kante des Ankers.
+        for (edge, tgt) in graph.outgoing_edges(&anchor) {
+            if edge.type_id == guide.type_id {
+                seen.insert(tgt);
+            }
         }
     }
+    seen.into_iter().collect()
+}
+
+/// Prüft alle Edge-Links eines Plan-Schritts gegen den Graphen.
+fn satisfies_links(
+    graph: &TypedGraph,
+    current: &PatternMatch,
+    links: &[EdgeLink],
+    new_id: GhostId,
+) -> bool {
+    links.iter().all(|link| {
+        let other = match current.bindings.get(&link.placed_var) {
+            Some(id) => *id,
+            None => return false,
+        };
+        if link.new_is_source {
+            graph.has_edge_between(&new_id, &other, &link.type_id)
+        } else {
+            graph.has_edge_between(&other, &new_id, &link.type_id)
+        }
+    })
 }
 
 fn satisfies_edge_patterns(pattern: &Pattern, graph: &TypedGraph, m: &PatternMatch) -> bool {
@@ -1701,6 +1920,60 @@ mod tests {
             .map(|m| canonical_key(m, &pattern))
             .collect();
         assert_eq!(keys_a, keys_b, "Reihenfolge ist deterministisch");
+    }
+
+    #[test]
+    fn edge_guided_matching_is_deterministic_and_complete() {
+        // Drei Container mit je zwei Items. Pattern: Container c +
+        // zwei Items i1, i2, beide per `holds`-Edge an c. Der
+        // edge-geleitete Matcher erzeugt i1/i2 aus den Nachbarn von c
+        // (Adjazenz) statt aus der vollen Item-Population — zwei
+        // gleichartige guided Knoten testen Dedup + Injektivität.
+        let mut g = TypedGraph::new();
+        for ci in 0..3 {
+            let c = g.add_baseline_node("Container", &format!("c{ci}"), BTreeMap::new());
+            for ii in 0..2 {
+                let item = g.add_ghost_node(
+                    c,
+                    "holds",
+                    "Item",
+                    attrs(&[("name", &format!("c{ci}-i{ii}"))]),
+                );
+                g.add_edge(c, item, "holds", BTreeMap::new(), Status::Ghost)
+                    .unwrap();
+            }
+        }
+        let pattern = Pattern::new()
+            .with_node(NodePattern::new("c", "Container"))
+            .with_node(NodePattern::new("i1", "Item"))
+            .with_node(NodePattern::new("i2", "Item"))
+            .with_edge(EdgePattern::new("c", "i1", "holds"))
+            .with_edge(EdgePattern::new("c", "i2", "holds"));
+
+        let a = find_matches(&pattern, &g);
+        let b = find_matches(&pattern, &g);
+
+        // Pro Container: 2 Items, injektiv geordnet → 2×1 = 2 Matches.
+        // Drei Container → 6 Matches.
+        assert_eq!(a.len(), 6, "3 Container × 2 geordnete Item-Paare");
+
+        let keys = |ms: &[PatternMatch]| -> Vec<Vec<[u8; 32]>> {
+            ms.iter().map(|m| canonical_key(m, &pattern)).collect()
+        };
+        assert_eq!(
+            keys(&a),
+            keys(&b),
+            "edge-geleitete Enumeration ist deterministisch"
+        );
+
+        for m in &a {
+            let c = m.get("c").unwrap();
+            let i1 = m.get("i1").unwrap();
+            let i2 = m.get("i2").unwrap();
+            assert_ne!(i1, i2, "Injektivität: i1 ≠ i2");
+            assert!(g.has_edge_between(c, i1, "holds"), "i1 hängt an c");
+            assert!(g.has_edge_between(c, i2, "holds"), "i2 hängt an c");
+        }
     }
 
     // ── Rang-Selektion ───────────────────────────────────────────────
