@@ -2209,7 +2209,12 @@ mod tests {
         let (g, person, _, person_name, _) = setup_uml_graph();
         // Del-Ops erzeugen nichts — sie sind nie Duplikate.
         assert!(!is_duplicate(&[Op::DelNode { target: person }], &g));
-        assert!(!is_duplicate(&[Op::DelEdge { target: person_name }], &g));
+        assert!(!is_duplicate(
+            &[Op::DelEdge {
+                target: person_name
+            }],
+            &g
+        ));
     }
 
     // ── Kontradiktions-Prädikat ──────────────────────────────────────
