@@ -164,6 +164,22 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
             }
         }
 
+        // 3. attrs_to_set: R-Pattern-Literal-Constraints, die ein
+        //    Attribut auf einem im Match gebundenen (Kontext-)Knoten
+        //    auf einen neuen Wert setzen. Pendant zu Schritt 2 auf der
+        //    Attribut-Seite — vor rc4 wurde dieser Pfad gar nicht
+        //    emittiert; der Workaround in dry-cleaner war Schema-
+        //    Verzerrung (Kind-Knoten statt Attribute).
+        for ats in &creation.attrs_to_set {
+            if let Some(id) = resolve_var(&ats.node_var, m, &created) {
+                ops.push(Op::SetAttr {
+                    target: id,
+                    key: ats.attr_name.clone(),
+                    value: ats.value.clone(),
+                });
+            }
+        }
+
         ops
     };
 
@@ -457,5 +473,61 @@ mod tests {
             pattern_node_count >= 5,
             "R_Getter-Pattern sollte ≥ 5 Knoten haben (tatsächlich: {pattern_node_count})"
         );
+    }
+
+    #[test]
+    fn r_attribut_auf_kontext_knoten_wird_via_setattr_emittiert() {
+        // rc4-Belegtest: Eine Rule mit L-Literal image="old" und
+        // R-Literal image="new" am selben (Kontext-)Knoten muss bei
+        // Produktion genau eine Op::SetAttr emittieren. Vor rc4 wäre
+        // dieser Match nie zustande gekommen — die Rule sucht sonst
+        // gleichzeitig nach image="old" und image="new". Pendant zum
+        // B4-Edge-Bug auf der Attribut-Seite.
+        let json = r#"{"rules":[{
+            "name":"SetImage","rank":1,
+            "l_pattern":{"nodes":[
+                {"id":"j","kind":"Job",
+                 "constraints":[{"name":"image","matcher":{"type":"literal","value":"old"}}]}],
+                "edges":[]},
+            "r_pattern":{"nodes":[
+                {"id":"j","kind":"Job",
+                 "constraints":[{"name":"image","matcher":{"type":"literal","value":"new"}}]}],
+                "edges":[]},
+            "correspondence_links":[]
+        }]}"#;
+        let rs = parse_ruleset(json).unwrap();
+        let compiled = compile(&rs.rules[0]).unwrap();
+        let rule = instantiate(&compiled);
+
+        // Graph mit einem Job-Knoten image="old"
+        let mut g = TypedGraph::new();
+        let job_attrs: BTreeMap<String, String> = [("image".to_string(), "old".to_string())]
+            .into_iter()
+            .collect();
+        let job_id = g.add_baseline_node("Job", "job-1", job_attrs);
+
+        // Match-und-Produce
+        let matches = find_matches(rule.pattern(), &g);
+        assert_eq!(
+            matches.len(),
+            1,
+            "Rule muss genau einen Match auf dem Job-Knoten finden"
+        );
+        let ops = rule.produce(&matches[0], &g);
+
+        // Genau eine SetAttr-Op auf job_id, key=image, value=new
+        assert_eq!(
+            ops.len(),
+            1,
+            "Produktion muss genau eine Op emittieren (SetAttr), war: {ops:?}"
+        );
+        match &ops[0] {
+            Op::SetAttr { target, key, value } => {
+                assert_eq!(*target, job_id);
+                assert_eq!(key, "image");
+                assert_eq!(value, "new");
+            }
+            other => panic!("Op[0] muss SetAttr sein, war: {other:?}"),
+        }
     }
 }

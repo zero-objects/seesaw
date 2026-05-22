@@ -21,7 +21,9 @@
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
-use super::spec::{AttrTransform, CorrespondenceLinkSpec, PatternSpec, RuleSpec, UnknownTransform};
+use super::spec::{
+    AttrMatcherSpec, AttrTransform, CorrespondenceLinkSpec, PatternSpec, RuleSpec, UnknownTransform,
+};
 
 // ══════════════════════════════════════════════════════════════════════
 // CompiledRuleSpec — das Ergebnis der Kompilierung
@@ -85,6 +87,28 @@ pub struct CreationPlan {
     /// Correspondence-Links, die diese Rule neu etabliert — nicht
     /// identisch zu `context_correspondences` im MatchPlan.
     pub correspondences_to_create: Vec<CorrespondenceLinkSpec>,
+    /// R-Pattern-Literal-Constraints, die auf einem im Match
+    /// gebundenen Knoten ein Attribut auf einen neuen Wert setzen
+    /// (entweder das L-Pattern hatte kein Constraint für dieses
+    /// Attribut, oder einen anderen Literal-Wert). Werden bei
+    /// Rule-Anwendung als `Op::SetAttr` materialisiert. Das frühere
+    /// pauschale „R-Constraints landen alle im Match-Plan" hätte
+    /// die Regel unmatchbar gemacht (gleiches Attribut, zwei
+    /// Wert-Forderungen) — Pendant zum Edge-Bug (B4).
+    pub attrs_to_set: Vec<AttrToSet>,
+}
+
+/// SetAttr-Intent aus einer Rule: setzt ein Attribut auf einem im
+/// Match gebundenen Knoten auf einen Literal-Wert. Wird in
+/// [`crate::rule::instantiate`] zu `Op::SetAttr` materialisiert.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AttrToSet {
+    /// NodePattern-ID — muss im MatchPlan gebunden sein.
+    pub node_var: String,
+    /// Attribut-Name.
+    pub attr_name: String,
+    /// Ziel-Wert.
+    pub value: String,
 }
 
 /// Propagations-Plan: welche Attribute wohin mit welcher Transformation.
@@ -201,6 +225,19 @@ pub enum CompileError {
         rule: String,
         nac: String,
         var: String,
+    },
+
+    #[error(
+        "Rule '{rule}': R-Pattern-Knoten '{node}' Attribut '{attr}' hat \
+         einen nicht-Literal-Matcher (Regex/Prefix/Suffix/NumericRange). \
+         R-Constraints werden in attrs_to_set uebersetzt; das geht nur \
+         mit Literal-Werten, weil 'Wert auf Regex setzen' semantisch \
+         undefiniert ist."
+    )]
+    NonLiteralRAttrUnsupported {
+        rule: String,
+        node: String,
+        attr: String,
     },
 }
 
@@ -396,9 +433,11 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
         }
     }
 
-    // ── 6. Attribut-Constraints sammeln (L + R) ─────────────────────
+    // ── 6. Attribut-Constraints klassifizieren ──────────────────────
+    // L-Constraints sind immer Match-Constraints (wir matchen den
+    // Ausgangs-Zustand).
     let mut constraints: Vec<MatchConstraint> = Vec::new();
-    for n in l_pat.nodes.iter().chain(r_pat.nodes.iter()) {
+    for n in &l_pat.nodes {
         for c in &n.constraints {
             let predicate = compile_matcher(&c.matcher)?;
             constraints.push(MatchConstraint {
@@ -406,6 +445,42 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
                 attr_name: c.name.clone(),
                 predicate,
             });
+        }
+    }
+    // R-Constraints werden klassifiziert: identisch zu einem
+    // L-Constraint am selben Knoten/Attribut → redundant, weglassen
+    // (L-Constraint deckt den Match schon ab). Davon abweichend mit
+    // Literal-Matcher → `attrs_to_set` (SetAttr-Intent). Davon
+    // abweichend mit Nicht-Literal-Matcher (Regex/Prefix/Suffix/
+    // NumericRange) → CompileError, weil semantisch unklar ist, was
+    // „Wert auf Regex setzen" bedeuten sollte.
+    let mut attrs_to_set: Vec<AttrToSet> = Vec::new();
+    for n in &r_pat.nodes {
+        let l_node = l_pat.nodes.iter().find(|ln| ln.id == n.id);
+        for c in &n.constraints {
+            let l_same_attr =
+                l_node.and_then(|ln| ln.constraints.iter().find(|lc| lc.name == c.name));
+            if let Some(lc) = l_same_attr {
+                if lc.matcher == c.matcher {
+                    continue; // identisch → L deckt es ab
+                }
+            }
+            match &c.matcher {
+                AttrMatcherSpec::Literal { value } => {
+                    attrs_to_set.push(AttrToSet {
+                        node_var: n.id.clone(),
+                        attr_name: c.name.clone(),
+                        value: value.clone(),
+                    });
+                }
+                _ => {
+                    return Err(CompileError::NonLiteralRAttrUnsupported {
+                        rule: spec.name.clone(),
+                        node: n.id.clone(),
+                        attr: c.name.clone(),
+                    });
+                }
+            }
         }
     }
 
@@ -423,6 +498,7 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
             nodes_to_create,
             edges_to_create,
             correspondences_to_create: corrs_to_create,
+            attrs_to_set,
         },
         propagation_plan: propagations,
         nacs: compile_nacs(spec, l_pat)?,
@@ -765,6 +841,74 @@ mod tests {
                 .any(|e| e.kind == "link" && e.side == EdgeSide::R),
             "Context-Context-R-Kante muss in edges_to_create stehen, \
              nicht als Match-Constraint"
+        );
+    }
+
+    #[test]
+    fn r_literal_unterschiedlich_zu_l_klassifiziert_als_attrs_to_set() {
+        // Pendant zum Edge-Bug (B4) auf der Attribut-Seite: L matcht
+        // Job mit image="old"; R sagt image="new" am selben (Kontext-)
+        // Knoten. Das R-Literal darf NICHT als Match-Constraint landen
+        // — sonst sucht der Matcher gleichzeitig nach "old" und "new"
+        // und findet nie etwas. Es gehört in
+        // creation_plan.attrs_to_set als SetAttr-Intent.
+        let json = r#"{"rules":[{
+            "name":"CtxAttr","rank":1,
+            "l_pattern":{"nodes":[
+                {"id":"j","kind":"Job",
+                 "constraints":[{"name":"image","matcher":{"type":"literal","value":"old"}}]}],
+                "edges":[]},
+            "r_pattern":{"nodes":[
+                {"id":"j","kind":"Job",
+                 "constraints":[{"name":"image","matcher":{"type":"literal","value":"new"}}]}],
+                "edges":[]},
+            "correspondence_links":[]
+        }]}"#;
+        let rs = parse_ruleset(json).unwrap();
+        let cr = compile(&rs.rules[0]).unwrap();
+
+        // (1) R-Literal "new" darf nicht als Match-Constraint auftauchen
+        let r_literal_in_match = cr.match_plan.constraints.iter().any(|c| {
+            c.node_var == "j"
+                && c.attr_name == "image"
+                && matches!(
+                    &c.predicate,
+                    crate::engine::AttrPredicate::Equals(v) if v == "new"
+                )
+        });
+        assert!(
+            !r_literal_in_match,
+            "R-Literal 'new' darf nicht als Match-Constraint behandelt \
+             werden — die Regel würde sonst nie matchen (sucht \
+             gleichzeitig nach 'old' und 'new')"
+        );
+
+        // (2) R-Literal muss als attrs_to_set im creation_plan stehen
+        assert_eq!(
+            cr.creation_plan.attrs_to_set.len(),
+            1,
+            "R-Literal auf Kontext-Knoten muss als attrs_to_set \
+             materialisiert werden"
+        );
+        let ats = &cr.creation_plan.attrs_to_set[0];
+        assert_eq!(ats.node_var, "j");
+        assert_eq!(ats.attr_name, "image");
+        assert_eq!(ats.value, "new");
+
+        // (3) L-Literal "old" bleibt als Match-Constraint — die Regel
+        //     soll nur Knoten mit image="old" matchen und dann auf "new"
+        //     setzen.
+        let l_literal_in_match = cr.match_plan.constraints.iter().any(|c| {
+            c.node_var == "j"
+                && c.attr_name == "image"
+                && matches!(
+                    &c.predicate,
+                    crate::engine::AttrPredicate::Equals(v) if v == "old"
+                )
+        });
+        assert!(
+            l_literal_in_match,
+            "L-Literal 'old' muss als Match-Constraint erhalten bleiben"
         );
     }
 }
