@@ -11,11 +11,15 @@ touches GitHub secrets.
 2. Update `README.md` if APIs changed.
 3. Run the full local gate:
    ```sh
-   cargo fmt --all -- --check
-   cargo clippy --all-targets -- -D warnings -D clippy::uninlined_format_args
-   cargo test
-   cargo publish --dry-run
+   ./release-gate.sh
    ```
+   This runs `cargo fmt --check`, `cargo clippy --all-targets -D warnings`,
+   `cargo test`, and `cargo publish --dry-run --allow-dirty`. Each step's
+   exit code propagates — the first failure aborts the gate. **Don't pipe
+   any of these commands through `tail`/`grep`/etc. on the command line —
+   the pipe's last process is what bash sees as the exit code, so a
+   failing `cargo fmt --check | tail -3` looks green.** That's why this
+   gate is a script.
 4. Commit + push to `main`. Wait for GitHub Actions to confirm the same
    gates pass on the `stable` and `1.88` Rust matrix.
 5. Tag:
