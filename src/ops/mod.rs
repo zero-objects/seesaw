@@ -324,6 +324,72 @@ mod tests {
         assert_eq!(g.node_count(), 1, "TOMB bleibt physisch");
     }
 
+    // ── Add/Remove-Edge — Op-Ebene ───────────────────────────────────
+
+    fn setup_two_classes() -> (TypedGraph, GhostId, GhostId) {
+        let mut g = TypedGraph::new();
+        let a = g.add_baseline_node("Class", "A", attrs(&[("name", "A")]));
+        let b = g.add_baseline_node("Class", "B", attrs(&[("name", "B")]));
+        (g, a, b)
+    }
+
+    fn add_edge_op(source: GhostId, target: GhostId) -> Op {
+        Op::AddEdge {
+            source,
+            target,
+            type_id: "link".into(),
+            attrs: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn add_edge_connects_two_existing_nodes() {
+        let (mut g, a, b) = setup_two_classes();
+        let edge_id = add_edge_op(a, b).apply(&mut g).unwrap().unwrap();
+
+        let edge = g.get_edge(&edge_id).unwrap();
+        assert_eq!(edge.type_id, "link");
+        assert_eq!(edge.status, Status::Ghost);
+        assert_eq!(g.edge_count(), 1);
+    }
+
+    #[test]
+    fn add_edge_is_idempotent_when_edge_exists() {
+        let (mut g, a, b) = setup_two_classes();
+        let first = add_edge_op(a, b).apply(&mut g).unwrap().unwrap();
+        let second = add_edge_op(a, b).apply(&mut g).unwrap().unwrap();
+
+        assert_eq!(first, second, "gleiche Kante → gleiche Ghost-ID");
+        assert_eq!(g.edge_count(), 1, "Re-Apply erzeugt kein Kanten-Duplikat");
+    }
+
+    #[test]
+    fn add_edge_fails_when_endpoint_missing() {
+        let (mut g, a, _) = setup_two_classes();
+        let phantom = GhostId::from_baseline("Phantom");
+        let result = add_edge_op(a, phantom).apply(&mut g);
+        assert!(matches!(result, Err(OpError::NodeNotFound(_))));
+    }
+
+    #[test]
+    fn del_edge_tombstones_the_edge() {
+        let (mut g, a, b) = setup_two_classes();
+        let edge_id = add_edge_op(a, b).apply(&mut g).unwrap().unwrap();
+
+        Op::DelEdge { target: edge_id }.apply(&mut g).unwrap();
+
+        assert_eq!(g.get_edge(&edge_id).unwrap().status, Status::Tombstone);
+        assert_eq!(g.edge_count(), 1, "TOMB bleibt physisch");
+    }
+
+    #[test]
+    fn del_edge_fails_when_edge_missing() {
+        let (mut g, ..) = setup_two_classes();
+        let phantom = GhostId::from_baseline("PhantomEdge");
+        let result = Op::DelEdge { target: phantom }.apply(&mut g);
+        assert!(matches!(result, Err(OpError::EdgeNotFound(_))));
+    }
+
     #[test]
     fn target_equality_identifies_same_element() {
         let parent = GhostId::from_baseline("X");

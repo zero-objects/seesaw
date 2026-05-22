@@ -782,8 +782,16 @@ pub enum EngineError {
 
 // ── Duplikations- und Kontradiktions-Prädikate ═══════════════════════════
 
-/// Prüft Duplikation (Def. 3.2): würden die emittierten Ops ein bereits
-/// existierendes (matchbares) Element erzeugen?
+/// Prüft Duplikation (Def. 3.2): trägt eine Regel-Anwendung *nichts
+/// Neues* bei — d.h. würde **jede** ihrer Ops nur ein bereits
+/// existierendes (matchbares) Element re-erzeugen?
+///
+/// Op-granular (`.all()`, nicht `.any()`): eine *gemischte* Anwendung
+/// (echte Neuarbeit + schon erfüllte Ops) ist **kein** Duplikat — sie
+/// wird angewandt, die schon erfüllten Add-Ops sind dabei idempotente
+/// No-ops (`insert_node`/`add_edge` re-bestätigen Bestehendes). Nur
+/// eine rein wiederholende Anwendung saturiert zu `Duplication`. Damit
+/// können Regeln Kanten zwischen bereits existierenden Knoten erzeugen.
 ///
 /// Da Ghost-IDs strukturell via SHA-256 berechnet werden (Def. 5.3),
 /// produziert ein isomorphes Emissions-Ziel denselben Hash → direkter
@@ -795,7 +803,7 @@ pub fn is_duplicate(ops: &[Op], graph: &TypedGraph) -> bool {
     // Add-Op läuft.
     let active_non_tentative =
         |status: Status| status.is_matchable() && status != Status::TentativeTombstone;
-    ops.iter().any(|op| match op {
+    ops.iter().all(|op| match op {
         Op::AddNode {
             parent,
             edge_type,
@@ -2143,6 +2151,65 @@ mod tests {
             attrs: attrs(&[("name", "name")]),
         };
         assert!(!is_duplicate(&[op], &g), "TOMB blockiert Duplikation nicht");
+    }
+
+    #[test]
+    fn mixed_application_is_not_a_duplicate() {
+        let (g, person, _, _, _) = setup_uml_graph();
+        // Eine duplizierende Op: Attribut "name" existiert bereits.
+        let dup = Op::AddNode {
+            parent: person,
+            edge_type: "hasAttribute".into(),
+            type_id: "Attribute".into(),
+            attrs: attrs(&[("name", "name")]),
+        };
+        // Eine echt neue Op im selben op_star.
+        let novel = Op::AddNode {
+            parent: person,
+            edge_type: "hasAttribute".into(),
+            type_id: "Attribute".into(),
+            attrs: attrs(&[("name", "novel_attr")]),
+        };
+        assert!(
+            !is_duplicate(&[dup, novel], &g),
+            "gemischte Anwendung (Duplikat + echte Neuarbeit) darf nicht \
+             als Duplikat verworfen werden"
+        );
+    }
+
+    #[test]
+    fn add_edge_for_existing_edge_is_duplicate() {
+        let (g, person, _, person_name, _) = setup_uml_graph();
+        // Die Kante person → person_name ("hasAttribute") existiert
+        // bereits in setup_uml_graph.
+        let op = Op::AddEdge {
+            source: person,
+            target: person_name,
+            type_id: "hasAttribute".into(),
+            attrs: attrs(&[]),
+        };
+        assert!(is_duplicate(&[op], &g));
+    }
+
+    #[test]
+    fn add_edge_for_novel_edge_is_not_duplicate() {
+        let (g, person, _, _, car_model) = setup_uml_graph();
+        // Eine Kante person → car_model gibt es nicht.
+        let op = Op::AddEdge {
+            source: person,
+            target: car_model,
+            type_id: "hasAttribute".into(),
+            attrs: attrs(&[]),
+        };
+        assert!(!is_duplicate(&[op], &g));
+    }
+
+    #[test]
+    fn del_ops_never_count_as_duplicate() {
+        let (g, person, _, person_name, _) = setup_uml_graph();
+        // Del-Ops erzeugen nichts — sie sind nie Duplikate.
+        assert!(!is_duplicate(&[Op::DelNode { target: person }], &g));
+        assert!(!is_duplicate(&[Op::DelEdge { target: person_name }], &g));
     }
 
     // ── Kontradiktions-Prädikat ──────────────────────────────────────

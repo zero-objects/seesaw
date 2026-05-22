@@ -324,8 +324,6 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
             side: EdgeSide::L,
         });
     }
-    // Var-Set der nodes_to_create — für die Edge-Klassifikation unten.
-    let create_vars: HashSet<&str> = nodes_to_create.iter().map(|n| n.var.as_str()).collect();
     for e in &r_pat.edges {
         check_node_ref(spec, &all_known, &e.source_node_id)?;
         check_node_ref(spec, &all_known, &e.target_node_id)?;
@@ -335,36 +333,23 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
             kind: e.kind.clone(),
             side: EdgeSide::R,
         };
-        // R-Edge-Klassifikation (zweistufig):
-        // (1) Shared-Edge: kommt auch im L-Pattern identisch vor →
-        //     bereits als L-Match-Edge gezählt, hier überspringen.
-        // (2) Sonst hängt's an den Endpunkten:
-        //     - Mindestens ein Endpunkt ist nodes_to_create → R-Edge
-        //       ist NEU zu etablieren (to-create).
-        //     - Beide Endpunkte sind Context (also schon im Graph via
-        //       Context-Corrs) → R-Edge ist eine **R-Context-Edge**:
-        //       muss bereits existieren (Match-Constraint), nicht neu
-        //       erzeugt. Sonst würden TGG-Folge-Rules wie R_Getter
-        //       wiederholte AddEdge-Ops produzieren, die der
-        //       Duplicate-Check fälschlich als Duplikat wertet und
-        //       so die Rule-Anwendung blockiert.
+        // R-Edge-Klassifikation:
+        // Kommt die Kante identisch im L-Pattern vor, ist sie bereits
+        // als L-Match-Edge gezählt → überspringen. Jede andere R-Edge
+        // wird erzeugt (edges_to_create) — auch eine zwischen zwei
+        // Kontext-Knoten. Der op-granulare Duplicate-Check (is_duplicate
+        // mit .all()) macht eine zweite, rein wiederholende Anwendung
+        // sauber idempotent, statt die Regel zu blockieren — damit ist
+        // die frühere R-Context-Edge-Sonderbehandlung (cf1c6c4) hinfällig.
         let also_in_l = l_pat.edges.iter().any(|le| {
             le.source_node_id == e.source_node_id
                 && le.target_node_id == e.target_node_id
                 && le.kind == e.kind
         });
         if also_in_l {
-            // Bereits als L-Edge in match_edges — nicht duplizieren.
             continue;
         }
-        let touches_create = create_vars.contains(e.source_node_id.as_str())
-            || create_vars.contains(e.target_node_id.as_str());
-        if touches_create {
-            edges_to_create.push(edge);
-        } else {
-            // R-Context-Edge: als Match-Constraint führen.
-            match_edges.push(edge);
-        }
+        edges_to_create.push(edge);
     }
 
     // ── 4. Correspondence-Links: Kontext vs. Neu ─────────────────────
@@ -751,5 +736,35 @@ mod tests {
             &cr.match_plan.constraints[0].predicate,
             crate::engine::AttrPredicate::Equals(v) if v == "false"
         ));
+    }
+
+    #[test]
+    fn r_kante_zwischen_kontext_knoten_wird_erzeugt() {
+        // L matcht zwei Knoten a, b ohne Kante; R fügt eine Kante a→b
+        // zwischen denselben (Kontext-)Knoten hinzu. Diese Kante muss
+        // erzeugt werden — nicht stillschweigend zur Match-Bedingung
+        // umklassifiziert.
+        let json = r#"{"rules":[{
+            "name":"CtxEdge","rank":1,
+            "l_pattern":{"nodes":[
+                {"id":"a","kind":"Class"},
+                {"id":"b","kind":"Class"}],
+                "edges":[]},
+            "r_pattern":{"nodes":[
+                {"id":"a","kind":"Class"},
+                {"id":"b","kind":"Class"}],
+                "edges":[{"kind":"link","source_node_id":"a","target_node_id":"b"}]},
+            "correspondence_links":[]
+        }]}"#;
+        let rs = parse_ruleset(json).unwrap();
+        let cr = compile(&rs.rules[0]).unwrap();
+        assert!(
+            cr.creation_plan
+                .edges_to_create
+                .iter()
+                .any(|e| e.kind == "link" && e.side == EdgeSide::R),
+            "Context-Context-R-Kante muss in edges_to_create stehen, \
+             nicht als Match-Constraint"
+        );
     }
 }
