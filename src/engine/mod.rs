@@ -828,6 +828,21 @@ pub fn is_duplicate(ops: &[Op], graph: &TypedGraph) -> bool {
                 .map(|e| active_non_tentative(e.status))
                 .unwrap_or(false)
         }
+        // B5-rc5: SetAttr ist Duplikat, wenn der Zielknoten matchbar+
+        // non-tentative ist und das Attribut bereits exakt diesen Wert
+        // trägt — d.h. die Op wäre ein idempotenter No-op. Vor diesem
+        // Arm fiel SetAttr in den catch-all `_ => false`, was bei
+        // rc4-attrs_to_set-Regeln zu nicht-terminierender Cascade
+        // führte (jeder Step galt als „productive", obwohl produce()
+        // nur dieselbe SetAttr wieder emittierte). Op-granular: nur
+        // wenn ALLE Ops dieser Anwendung idempotent sind, saturiert
+        // der Step zu Duplication.
+        Op::SetAttr { target, key, value } => graph
+            .get_node(target)
+            .filter(|n| active_non_tentative(n.status))
+            .and_then(|n| n.attrs.get(key))
+            .map(|current| current == value)
+            .unwrap_or(false),
         _ => false,
     })
 }
@@ -2215,6 +2230,87 @@ mod tests {
             }],
             &g
         ));
+    }
+
+    // ── B5-rc5: SetAttr-Duplikat (Reverse-Cascade-Termination) ───────
+
+    #[test]
+    fn setattr_for_already_equal_value_is_duplicate() {
+        // Regression rc4→rc5: B5 lieferte attrs_to_set → produce()
+        // emittiert in jedem Step die gleiche SetAttr. Vor dem Fix
+        // war is_duplicate `_ => false` für SetAttr — Folge: jeder
+        // Step galt als „productive", cascade_step returnte ewig
+        // Running. Idempotenz-Semantik (analog zu AddNode/AddEdge):
+        // SetAttr ist Duplikat, wenn der Zielknoten matchbar+non-
+        // tentative ist und der gewünschte Wert bereits gleich ist.
+        let (g, _, _, person_name, _) = setup_uml_graph();
+        let op = Op::SetAttr {
+            target: person_name,
+            key: "name".into(),
+            value: "name".into(), // person_name trägt schon name="name"
+        };
+        assert!(
+            is_duplicate(&[op], &g),
+            "SetAttr mit bereits identischem Wert muss als Duplikat zählen, \
+             sonst loopt die Cascade auf jeder attrs_to_set-Rule"
+        );
+    }
+
+    #[test]
+    fn setattr_for_different_value_is_not_duplicate() {
+        let (g, _, _, person_name, _) = setup_uml_graph();
+        let op = Op::SetAttr {
+            target: person_name,
+            key: "name".into(),
+            value: "renamed".into(),
+        };
+        assert!(
+            !is_duplicate(&[op], &g),
+            "SetAttr mit abweichendem Zielwert ist echte Arbeit — kein Duplikat"
+        );
+    }
+
+    #[test]
+    fn setattr_for_missing_key_is_not_duplicate() {
+        // Knoten existiert, aber Key noch nicht gesetzt → echte Arbeit.
+        let (g, _, _, person_name, _) = setup_uml_graph();
+        let op = Op::SetAttr {
+            target: person_name,
+            key: "freshly_introduced".into(),
+            value: "v".into(),
+        };
+        assert!(!is_duplicate(&[op], &g));
+    }
+
+    #[test]
+    fn setattr_on_unknown_node_is_not_duplicate() {
+        // Apply würde mit NodeNotFound auflaufen — bis dahin: nicht
+        // als Duplikat verschlucken, damit der Fehler sichtbar wird.
+        let (g, _, _, _, _) = setup_uml_graph();
+        let phantom = GhostId::from_baseline("phantom-never-inserted");
+        let op = Op::SetAttr {
+            target: phantom,
+            key: "k".into(),
+            value: "v".into(),
+        };
+        assert!(!is_duplicate(&[op], &g));
+    }
+
+    #[test]
+    fn setattr_on_tombstone_node_is_not_duplicate() {
+        // Tombstone-Knoten: nicht matchbar → SetAttr nicht als
+        // Duplikat zählen, analog zu AddNode/AddEdge.
+        let (mut g, _, _, person_name, _) = setup_uml_graph();
+        g.set_node_status(&person_name, Status::Tombstone);
+        let op = Op::SetAttr {
+            target: person_name,
+            key: "name".into(),
+            value: "name".into(),
+        };
+        assert!(
+            !is_duplicate(&[op], &g),
+            "TOMB-Knoten ist nicht matchbar → SetAttr ist kein Duplikat"
+        );
     }
 
     // ── Kontradiktions-Prädikat ──────────────────────────────────────
