@@ -99,8 +99,8 @@ pub struct CreationPlan {
 }
 
 /// SetAttr-Intent aus einer Rule: setzt ein Attribut auf einem im
-/// Match gebundenen Knoten auf einen Literal-Wert. Wird in
-/// [`crate::rule::instantiate`] zu `Op::SetAttr` materialisiert.
+/// Match gebundenen Knoten auf einen Literal-Wert. Wird im Modul
+/// [`mod@crate::rule::instantiate`] zu `Op::SetAttr` materialisiert.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttrToSet {
     /// NodePattern-ID — muss im MatchPlan gebunden sein.

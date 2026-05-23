@@ -28,6 +28,13 @@ cargo clippy --all-targets -- \
 step "cargo test"
 cargo test
 
+step "cargo doc --no-deps (RUSTDOCFLAGS=-D warnings)"
+# CI runs cargo doc with `-D warnings`, which catches broken intra-doc
+# links and ambiguous references (e.g. a name that is both a fn and a
+# module). The local gate must catch these too — otherwise the Docs
+# build job fails on push after the gate said „green" (rc4 lesson).
+RUSTDOCFLAGS="-D warnings" cargo doc --no-deps
+
 step "cargo publish --dry-run --allow-dirty"
 cargo publish --dry-run --allow-dirty
 
