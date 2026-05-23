@@ -131,13 +131,19 @@ fn multi_rule_reverse_cascade_terminates() {
     let construct = compile(&construct_rule()).expect("ConstructRule compile");
     let field = compile(&field_rule()).expect("FieldRule compile");
 
-    // Sanity: nur die FieldRule liefert attrs_to_set; die ConstructRule
-    // hat kein R-Literal und folglich keinen attrs_to_set-Eintrag.
+    // Sanity: ConstructRule hat kein R-Literal; FieldRule hat genau
+    // eines (`key=after_script` auf der R-only-Creation TgtEntry).
+    // rc6: das Literal landet in creation_attrs (Identitäts-Attribut
+    // des Creation-Knotens, fließt in den GhostId), nicht mehr in
+    // attrs_to_set (das gilt jetzt nur noch für Kontext-Knoten).
     assert_eq!(construct.creation_plan.attrs_to_set.len(), 0);
-    assert_eq!(field.creation_plan.attrs_to_set.len(), 1);
+    assert_eq!(construct.creation_plan.creation_attrs.len(), 0);
+    let field_lowered =
+        field.creation_plan.attrs_to_set.len() + field.creation_plan.creation_attrs.len();
+    assert_eq!(field_lowered, 1, "FieldRule muss `key=after_script` lowern");
     eprintln!(
-        "field.attrs_to_set = {:#?}",
-        field.creation_plan.attrs_to_set
+        "field.attrs_to_set = {:#?}\nfield.creation_attrs = {:#?}",
+        field.creation_plan.attrs_to_set, field.creation_plan.creation_attrs,
     );
 
     let mut graph = TypedGraph::new();

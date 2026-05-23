@@ -98,7 +98,6 @@ fn rule_with_target_path(name: &str, target_path: &str) -> RuleSpec {
 }
 
 #[test]
-#[ignore = "rc5 Bug #2: attrs_to_set collision on R-only-creation node — fix in rc6"]
 fn two_rules_writing_same_attr_with_different_values_must_not_loop() {
     let rule_a = compile(&rule_with_target_path(
         "Rule_target_path_allow_failure",

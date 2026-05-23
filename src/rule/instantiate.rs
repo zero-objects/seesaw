@@ -126,7 +126,10 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
                 }
                 (None, Some(kind)) => {
                     // R-Node ist neu zu erzeugen, als Kind des Corr-Nodes.
-                    let r_attrs = collect_r_attrs(cc, m, g, &propagation);
+                    // rc6 (B6): creation_attrs für diesen R-Var fließen in
+                    // den r_attrs ein und damit in die GhostId — sie sind
+                    // Identitäts-Attribute, nicht post-creation-Mutationen.
+                    let r_attrs = collect_r_attrs(cc, m, g, &propagation, &creation.creation_attrs);
                     let r_id = GhostId::from_parent(&corr_id, "corrR", &kind, &r_attrs);
                     ops.push(Op::AddNode {
                         parent: corr_id,
@@ -240,12 +243,25 @@ fn resolve_var(var: &str, m: &PatternMatch, created: &HashMap<String, GhostId>) 
 }
 
 /// Sammelt die Attribute, die auf dem neu zu erzeugenden R-Node
-/// landen sollen.
+/// landen sollen. Drei Quellen, in dieser Reihenfolge:
+///
+/// 1. `attribute_bindings` des Corr-Links — propagierte L→R-Werte.
+/// 2. Zusätzliche `propagation_plan`-Einträge mit gleichem (L,R)-Paar.
+/// 3. **rc6 (B6)**: `creation_attrs` für diesen R-Var — Identitäts-
+///    Attribute aus R-Pattern-Literal-Constraints auf R-only-Creation-
+///    Knoten. Vor rc6 landeten diese in `attrs_to_set` und wurden
+///    nach der Knoten-Erzeugung via `Op::SetAttr` geschrieben; das
+///    machte zwei Rules mit verschiedenen Literal-Werten aber sonst
+///    identischer Struktur kollidieren (selbe GhostId, oszillierende
+///    SetAttrs). Jetzt fließen sie in `r_attrs` und damit in den
+///    GhostId-Hash → zwei verschiedene Werte → zwei verschiedene
+///    Knoten, keine Kollision.
 fn collect_r_attrs(
     cc: &CorrespondenceLinkSpec,
     m: &PatternMatch,
     g: &TypedGraph,
     propagation: &[super::compile::AttrPropagation],
+    creation_attrs: &[super::compile::CreationAttr],
 ) -> BTreeMap<String, String> {
     let mut attrs = BTreeMap::new();
     for b in &cc.attribute_bindings {
@@ -279,6 +295,17 @@ fn collect_r_attrs(
                 .and_then(|n| n.attrs.get(&p.source_attr).cloned())
                 .unwrap_or_default();
             attrs.insert(p.target_attr.clone(), p.transform.apply(&src_value));
+        }
+    }
+    // rc6 (B6): R-Pattern-Literal-Constraints auf diesem R-only-
+    // Creation-Knoten als Identitäts-Attribute mit aufnehmen.
+    // Bindings haben Vorrang (insert nur, wenn key noch frei),
+    // damit propagierte Werte nicht durch einen Konflikt-Literal-
+    // Constraint überschrieben werden — der wäre ein Modellierungs-
+    // fehler im Ruleset (Literal vs. gebundener Wert).
+    for ca in creation_attrs {
+        if ca.node_var == cc.r_node_id && !attrs.contains_key(&ca.attr_name) {
+            attrs.insert(ca.attr_name.clone(), ca.value.clone());
         }
     }
     attrs

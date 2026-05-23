@@ -87,20 +87,34 @@ pub struct CreationPlan {
     /// Correspondence-Links, die diese Rule neu etabliert — nicht
     /// identisch zu `context_correspondences` im MatchPlan.
     pub correspondences_to_create: Vec<CorrespondenceLinkSpec>,
-    /// R-Pattern-Literal-Constraints, die auf einem im Match
-    /// gebundenen Knoten ein Attribut auf einen neuen Wert setzen
-    /// (entweder das L-Pattern hatte kein Constraint für dieses
-    /// Attribut, oder einen anderen Literal-Wert). Werden bei
-    /// Rule-Anwendung als `Op::SetAttr` materialisiert. Das frühere
-    /// pauschale „R-Constraints landen alle im Match-Plan" hätte
-    /// die Regel unmatchbar gemacht (gleiches Attribut, zwei
-    /// Wert-Forderungen) — Pendant zum Edge-Bug (B4).
+    /// R-Pattern-Literal-Constraints auf **Kontext-Knoten** (Shared-
+    /// Anchor oder R-only-mit-context-corr): das Attribut soll auf
+    /// einem bereits existierenden Knoten geändert werden. Wird bei
+    /// Rule-Anwendung als `Op::SetAttr` materialisiert.
+    ///
+    /// rc6 (B6): bis rc5 landeten R-Literale auf ALLEN R-Knoten in
+    /// dieser Liste — auch auf R-only-Creation-Knoten. Das führte zu
+    /// Oszillation, wenn zwei Rules strukturell-identische Creation-
+    /// Knoten (gleicher corr-parent, gleiche attribute_bindings →
+    /// gleicher GhostId-Hash) produzieren wollten, deren R-Literale
+    /// aber unterschiedliche Werte für dasselbe Attribut hatten — die
+    /// SetAttrs überschrieben sich gegenseitig in jeder Iteration.
+    /// Pendant zum Edge-Identitäts-Verhalten (B4).
     pub attrs_to_set: Vec<AttrToSet>,
+    /// R-Pattern-Literal-Constraints auf **R-only-Creation-Knoten**:
+    /// das Attribut ist *Teil der Identität* des neu erzeugten
+    /// Knotens und fließt in den GhostId-Hash via `collect_r_attrs`
+    /// (siehe Modul [`mod@crate::rule::instantiate`]). Dadurch
+    /// produzieren zwei Rules mit verschiedenen Literal-Werten *zwei
+    /// verschiedene* Creation-Knoten statt sich auf demselben Knoten
+    /// zu überschreiben.
+    pub creation_attrs: Vec<CreationAttr>,
 }
 
 /// SetAttr-Intent aus einer Rule: setzt ein Attribut auf einem im
-/// Match gebundenen Knoten auf einen Literal-Wert. Wird im Modul
-/// [`mod@crate::rule::instantiate`] zu `Op::SetAttr` materialisiert.
+/// Match gebundenen (Kontext-) Knoten auf einen Literal-Wert. Wird im
+/// Modul [`mod@crate::rule::instantiate`] zu `Op::SetAttr`
+/// materialisiert.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttrToSet {
     /// NodePattern-ID — muss im MatchPlan gebunden sein.
@@ -108,6 +122,22 @@ pub struct AttrToSet {
     /// Attribut-Name.
     pub attr_name: String,
     /// Ziel-Wert.
+    pub value: String,
+}
+
+/// Identitäts-Attribut für einen R-only-Creation-Knoten: aus einem
+/// R-Pattern-Literal-Constraint abgeleitet, fließt in die Ghost-ID
+/// des neu erzeugten Knotens ein. Verhindert die rc5-Oszillation
+/// zwischen Rules, die strukturell-identische Creation-Knoten mit
+/// verschiedenen Literal-Werten erzeugen würden.
+#[derive(Debug, Clone, PartialEq)]
+pub struct CreationAttr {
+    /// NodePattern-ID des Creation-Knotens — muss in
+    /// `creation_plan.nodes_to_create` sein.
+    pub node_var: String,
+    /// Attribut-Name.
+    pub attr_name: String,
+    /// Literal-Wert.
     pub value: String,
 }
 
@@ -447,16 +477,29 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
             });
         }
     }
-    // R-Constraints werden klassifiziert: identisch zu einem
-    // L-Constraint am selben Knoten/Attribut → redundant, weglassen
-    // (L-Constraint deckt den Match schon ab). Davon abweichend mit
-    // Literal-Matcher → `attrs_to_set` (SetAttr-Intent). Davon
-    // abweichend mit Nicht-Literal-Matcher (Regex/Prefix/Suffix/
-    // NumericRange) → CompileError, weil semantisch unklar ist, was
-    // „Wert auf Regex setzen" bedeuten sollte.
+    // R-Constraints werden klassifiziert:
+    //   1. Identisch zu einem L-Constraint am selben Knoten/Attribut
+    //      → redundant, weglassen (L-Constraint deckt den Match ab).
+    //   2. Auf einem **R-only-Creation-Knoten** (steht in
+    //      `nodes_to_create`) → `creation_attrs`. Das Literal ist
+    //      Identitäts-Attribut und fließt in den Ghost-Hash, NICHT
+    //      als SetAttr-Op. Verhindert die rc5-Oszillation zwischen
+    //      Rules, die strukturell-identische Creation-Knoten mit
+    //      verschiedenen Literal-Werten erzeugen würden.
+    //   3. Auf einem **Kontext-Knoten** (Shared-Anchor oder R-only-
+    //      mit-context-corr) → `attrs_to_set` (B5/rc4-Semantik:
+    //      `Op::SetAttr` mutiert das Attribut auf dem bestehenden
+    //      Knoten).
+    //   4. Nicht-Literal-Matcher (Regex/Prefix/Suffix/NumericRange)
+    //      → CompileError, weil „Wert auf Regex setzen" semantisch
+    //      undefiniert ist.
+    let creation_var_set: HashSet<&str> =
+        nodes_to_create.iter().map(|mn| mn.var.as_str()).collect();
     let mut attrs_to_set: Vec<AttrToSet> = Vec::new();
+    let mut creation_attrs: Vec<CreationAttr> = Vec::new();
     for n in &r_pat.nodes {
         let l_node = l_pat.nodes.iter().find(|ln| ln.id == n.id);
+        let is_creation = creation_var_set.contains(n.id.as_str());
         for c in &n.constraints {
             let l_same_attr =
                 l_node.and_then(|ln| ln.constraints.iter().find(|lc| lc.name == c.name));
@@ -467,11 +510,19 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
             }
             match &c.matcher {
                 AttrMatcherSpec::Literal { value } => {
-                    attrs_to_set.push(AttrToSet {
-                        node_var: n.id.clone(),
-                        attr_name: c.name.clone(),
-                        value: value.clone(),
-                    });
+                    if is_creation {
+                        creation_attrs.push(CreationAttr {
+                            node_var: n.id.clone(),
+                            attr_name: c.name.clone(),
+                            value: value.clone(),
+                        });
+                    } else {
+                        attrs_to_set.push(AttrToSet {
+                            node_var: n.id.clone(),
+                            attr_name: c.name.clone(),
+                            value: value.clone(),
+                        });
+                    }
                 }
                 _ => {
                     return Err(CompileError::NonLiteralRAttrUnsupported {
@@ -499,6 +550,7 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
             edges_to_create,
             correspondences_to_create: corrs_to_create,
             attrs_to_set,
+            creation_attrs,
         },
         propagation_plan: propagations,
         nacs: compile_nacs(spec, l_pat)?,
@@ -910,5 +962,102 @@ mod tests {
             l_literal_in_match,
             "L-Literal 'old' muss als Match-Constraint erhalten bleiben"
         );
+    }
+
+    #[test]
+    fn r_literal_auf_creation_knoten_landet_in_creation_attrs_nicht_attrs_to_set() {
+        // rc6/B6 Klassifikations-Regression: L hat nur Source, R hat
+        // Target (R-only-Creation) mit Literal `label=x`. Vor rc6
+        // landete `label=x` in `attrs_to_set` und führte beim
+        // Aufeinandertreffen zweier Rules mit demselben strukturellen
+        // R-Output aber verschiedenen Literal-Werten zu einer
+        // Oszillations-Schleife (siehe
+        // tests/repro_rc5_bug2_attrs_to_set_collision.rs). Jetzt
+        // landet es in `creation_attrs` und fließt in den GhostId
+        // des neu erzeugten Knotens.
+        let json = r#"{"rules":[{
+            "name":"CreationLit","rank":1,
+            "l_pattern":{"nodes":[
+                {"id":"L","kind":"Source","constraints":[]}],
+                "edges":[]},
+            "r_pattern":{"nodes":[
+                {"id":"R","kind":"Target",
+                 "constraints":[{"name":"label","matcher":{"type":"literal","value":"x"}}]}],
+                "edges":[]},
+            "correspondence_links":[{
+                "l_node_id":"L","r_node_id":"R","kind":"tgg:refines",
+                "attribute_bindings":[]
+            }]
+        }]}"#;
+        let rs = parse_ruleset(json).unwrap();
+        let cr = compile(&rs.rules[0]).unwrap();
+
+        // R-Knoten ist R-only-Creation (nicht in r_only_in_context,
+        // weil der Corr `attribute_bindings: []` hat — Context-Corr —
+        // wait: context-corrs befördern R-Vars in den Match. Wenn
+        // bindings leer sind, ist R kontext, nicht creation. Daher
+        // muss der Corr Bindings haben, damit R als Creation
+        // klassifiziert wird. Wir prüfen das durch einen separaten
+        // Spec mit non-empty bindings.
+        // → siehe nächster Test: hier ist R *kontext* (corr ohne
+        // bindings).
+        eprintln!(
+            "(context-corr variant) attrs_to_set={:?} creation_attrs={:?}",
+            cr.creation_plan.attrs_to_set, cr.creation_plan.creation_attrs
+        );
+        assert_eq!(
+            cr.creation_plan.nodes_to_create.len(),
+            0,
+            "R via context-corr (no bindings) gehört in match, nicht in nodes_to_create"
+        );
+        assert_eq!(
+            cr.creation_plan.attrs_to_set.len(),
+            1,
+            "R-Knoten ist hier Kontext (context-corr) → Literal in attrs_to_set"
+        );
+        assert_eq!(cr.creation_plan.creation_attrs.len(), 0);
+
+        // Zweite Variante: corr MIT bindings → R ist R-only-Creation
+        // → Literal landet in creation_attrs.
+        let json2 = r#"{"rules":[{
+            "name":"CreationLit2","rank":1,
+            "l_pattern":{"nodes":[
+                {"id":"L","kind":"Source",
+                 "constraints":[{"name":"tag","matcher":{"type":"literal","value":"foo"}}]}],
+                "edges":[]},
+            "r_pattern":{"nodes":[
+                {"id":"R","kind":"Target",
+                 "constraints":[{"name":"label","matcher":{"type":"literal","value":"x"}}]}],
+                "edges":[]},
+            "correspondence_links":[{
+                "l_node_id":"L","r_node_id":"R","kind":"tgg:refines",
+                "attribute_bindings":[{
+                    "l_attr_name":"tag","r_attr_name":"tag","transformation":"identity"
+                }]
+            }]
+        }]}"#;
+        let rs2 = parse_ruleset(json2).unwrap();
+        let cr2 = compile(&rs2.rules[0]).unwrap();
+        assert_eq!(
+            cr2.creation_plan.nodes_to_create.len(),
+            1,
+            "R muss Creation sein"
+        );
+        assert_eq!(cr2.creation_plan.nodes_to_create[0].var, "R");
+        assert_eq!(
+            cr2.creation_plan.attrs_to_set.len(),
+            0,
+            "Creation-Knoten-Literal darf NICHT in attrs_to_set landen — \
+             das war der rc5-Oszillations-Bug",
+        );
+        assert_eq!(
+            cr2.creation_plan.creation_attrs.len(),
+            1,
+            "Creation-Knoten-Literal muss in creation_attrs landen",
+        );
+        let ca = &cr2.creation_plan.creation_attrs[0];
+        assert_eq!(ca.node_var, "R");
+        assert_eq!(ca.attr_name, "label");
+        assert_eq!(ca.value, "x");
     }
 }

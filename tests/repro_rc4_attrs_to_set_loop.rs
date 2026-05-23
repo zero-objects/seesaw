@@ -87,14 +87,21 @@ fn rule_with_r_literal() -> RuleSpec {
 fn cascade_terminates_with_r_literal_constraint() {
     let spec = rule_with_r_literal();
     let compiled = compile(&spec).expect("compile");
+    // rc6: R-literal on an R-only-creation node belongs in the
+    // GhostId hash (creation_attrs), not in attrs_to_set. Either
+    // collection lowering the literal is acceptable for this
+    // termination test — the behavioural contract is "the cascade
+    // converges and Target.label == x", not which collection the
+    // literal lived in during compile.
+    let r_literal_lowered =
+        compiled.creation_plan.attrs_to_set.len() + compiled.creation_plan.creation_attrs.len();
     eprintln!(
-        "compiled.attrs_to_set = {:#?}",
-        compiled.creation_plan.attrs_to_set
+        "compiled.attrs_to_set = {:#?}\ncompiled.creation_attrs = {:#?}",
+        compiled.creation_plan.attrs_to_set, compiled.creation_plan.creation_attrs,
     );
     assert_eq!(
-        compiled.creation_plan.attrs_to_set.len(),
-        1,
-        "the R-side literal `label=x` should be lowered to one attrs_to_set entry",
+        r_literal_lowered, 1,
+        "the R-side literal `label=x` must be lowered into either attrs_to_set or creation_attrs",
     );
 
     let mut graph = TypedGraph::new();
