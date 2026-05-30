@@ -105,6 +105,31 @@ that mirrors the UML-Class → Java-Class transformation used in the paper:
 
 All four rules are bijective and use the strictly-monotone rank order.
 
+## Documentation
+
+Three pages cover the engine end-to-end:
+
+- **[docs/principles.md](docs/principles.md)** — *why* the engine is
+  shaped the way it is. The classical TGG pathology, strictly monotonic
+  change handling with rank-based backtracking, identity from
+  structure, symmetric correspondence.
+- **[docs/architecture.md](docs/architecture.md)** — *how it works*.
+  Module-by-module mechanics, the cascade lifecycle, ops semantics,
+  matching, fold, snapshot format.
+- **[docs/using.md](docs/using.md)** — *how to use it cleanly*. Rule
+  format, worked examples (forward, backward, rename), session
+  lifecycle, pitfalls, diagnostics, testing patterns.
+
+Two runnable examples back the worked examples in `using.md`:
+
+```sh
+cargo run --example basic_cascade        # forward cascade
+cargo run --example backward_cascade     # backward cascade, same rule
+cargo run --example rename_identity      # A8: identity stable under rename
+```
+
+The Rustdoc reference is at <https://docs.rs/seesaw-tgg>.
+
 ## Status
 
 `1.0.0-rc7` — release candidate. API may still see breaking changes before
