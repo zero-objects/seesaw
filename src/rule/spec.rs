@@ -179,6 +179,24 @@ pub enum AttrMatcherSpec {
     NumericRange { min: f64, max: f64 },
 }
 
+/// Rolle eines Correspondence-Links (rc7): entkoppelt context-vs-creation
+/// vom span-Anker.
+///
+/// - `Establishes` — der Link etabliert eine neue Korrespondenz; der
+///   output-seitige Endpunkt wird in der jeweiligen Richtung erzeugt.
+/// - `References` — der Link referenziert eine bereits bestehende
+///   Korrespondenz; beide Endpunkte sind in der jeweiligen Richtung
+///   context (Match). Trägt span-Bindings für die GhostId-Identität,
+///   ohne dass dadurch etwas erzeugt wird.
+///
+/// `role == None` in [`CorrespondenceLinkSpec`] ⟹ rc6-Fallback
+/// (`attribute_bindings.is_empty()` ⟹ References).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CorrRole {
+    Establishes,
+    References,
+}
+
 /// Persistente L↔R-Bindung, optional mit Attribut-Sync-Bindings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CorrespondenceLinkSpec {
@@ -188,6 +206,10 @@ pub struct CorrespondenceLinkSpec {
     pub kind: Option<String>,
     #[serde(default)]
     pub attribute_bindings: Vec<AttrBindingSpec>,
+    /// rc7: explizite Corr-Rolle. `None` ⟹ rc6-Fallback aus
+    /// `attribute_bindings.is_empty()`.
+    #[serde(default)]
+    pub role: Option<CorrRole>,
 }
 
 /// Attribut-Sync-Bindung zwischen zwei über `CorrespondenceLinkSpec`
@@ -301,6 +323,20 @@ pub fn parse_ruleset(json: &str) -> Result<RuleSetSpec, serde_json::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn corr_role_deserializes_explicit_and_defaults_to_none() {
+        let with_role: CorrespondenceLinkSpec = serde_json::from_str(
+            r#"{"l_node_id":"c","r_node_id":"jc","role":"References","attribute_bindings":[]}"#,
+        )
+        .unwrap();
+        assert_eq!(with_role.role, Some(CorrRole::References));
+
+        let without: CorrespondenceLinkSpec =
+            serde_json::from_str(r#"{"l_node_id":"c","r_node_id":"jc","attribute_bindings":[]}"#)
+                .unwrap();
+        assert_eq!(without.role, None);
+    }
 
     #[test]
     fn minimal_ruleset_deserialisiert() {

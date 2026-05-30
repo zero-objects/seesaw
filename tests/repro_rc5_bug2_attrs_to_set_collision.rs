@@ -87,6 +87,7 @@ fn rule_with_target_path(name: &str, target_path: &str) -> RuleSpec {
             l_node_id: "src".into(),
             r_node_id: "tgt".into(),
             kind: Some("tgg:refines".into()),
+            role: None,
             attribute_bindings: vec![AttrBindingSpec {
                 l_attr_name: "id".into(),
                 r_attr_name: "src_id".into(),

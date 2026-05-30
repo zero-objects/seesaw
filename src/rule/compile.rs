@@ -22,7 +22,8 @@ use std::collections::{HashMap, HashSet};
 use thiserror::Error;
 
 use super::spec::{
-    AttrMatcherSpec, AttrTransform, CorrespondenceLinkSpec, PatternSpec, RuleSpec, UnknownTransform,
+    AttrBindingSpec, AttrMatcherSpec, AttrTransform, CorrRole, CorrespondenceLinkSpec, PatternSpec,
+    RuleSpec, UnknownTransform,
 };
 
 // ══════════════════════════════════════════════════════════════════════
@@ -41,6 +42,13 @@ pub struct CompiledRuleSpec {
     /// Kompilierte NACs (M2). Werden vom Matcher nach dem
     /// Haupt-Match geprüft.
     pub nacs: Vec<CompiledNac>,
+    /// rc7: „echte Input-kinds" dieser gerichteten Regel =
+    /// `l_pattern`-kinds **minus** `r_pattern`-kinds (Shared-Anchors
+    /// raus). Eine Regel ist für ein Δ aktiv, wenn diese Menge die
+    /// Δ-kinds schneidet — so wird die Cascade-Richtung aus dem Δ
+    /// abgeleitet (Anti-Ping-Pong, siehe Spec §5). Sortiert+dedupliziert
+    /// für deterministische Vergleiche.
+    pub input_domain_kinds: Vec<String>,
 }
 
 /// Kompilierte Negative Application Condition.
@@ -284,6 +292,84 @@ impl CompileError {
 // Compiler
 // ══════════════════════════════════════════════════════════════════════
 
+/// Entscheidet, ob ein Correspondence-Link eine **bestehende**
+/// Korrespondenz referenziert (context) oder eine **neue** etabliert
+/// (creation). rc7: role-aware mit rc6-Fallback.
+///
+/// - `Some(References)` → context (beide Endpunkte gematcht, nichts
+///   erzeugt; span-Bindings dienen nur der GhostId-Identität).
+/// - `Some(Establishes)` → creation (output-seitiger Endpunkt erzeugt).
+/// - `None` → rc6-Verhalten: leere `attribute_bindings` ⟹ References.
+pub(crate) fn corr_is_reference(cl: &CorrespondenceLinkSpec) -> bool {
+    match cl.role {
+        Some(CorrRole::References) => true,
+        Some(CorrRole::Establishes) => false,
+        None => cl.attribute_bindings.is_empty(),
+    }
+}
+
+/// Transformationsrichtung für das bidirektionale Lowering (rc7).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Direction {
+    /// Lhs→Rhs (unverändert).
+    Fwd,
+    /// Rhs→Lhs: l_pattern↔r_pattern getauscht, Corr-Endpunkte getauscht,
+    /// Bindings gespiegelt.
+    Bwd,
+}
+
+/// Liefert die für `dir` gerichtete Sicht der Regel.
+///
+/// `Fwd` = unverändert. `Bwd` = l_pattern↔r_pattern + Corr-Endpunkte
+/// getauscht + Bindings gespiegelt (l_attr↔r_attr). `role` und
+/// `transformation` bleiben unverändert (richtungs-neutral; die
+/// Transform-Inverse wählt die Engine zur Propagations-Zeit).
+pub(crate) fn directed_spec(spec: &RuleSpec, dir: Direction) -> RuleSpec {
+    if dir == Direction::Fwd {
+        return spec.clone();
+    }
+    let swap_corr = |cl: &CorrespondenceLinkSpec| CorrespondenceLinkSpec {
+        l_node_id: cl.r_node_id.clone(),
+        r_node_id: cl.l_node_id.clone(),
+        kind: cl.kind.clone(),
+        role: cl.role,
+        attribute_bindings: cl
+            .attribute_bindings
+            .iter()
+            .map(|b| AttrBindingSpec {
+                l_attr_name: b.r_attr_name.clone(),
+                r_attr_name: b.l_attr_name.clone(),
+                transformation: b.transformation.clone(),
+            })
+            .collect(),
+    };
+    RuleSpec {
+        name: spec.name.clone(),
+        rank: spec.rank,
+        documentation: spec.documentation.clone(),
+        l_pattern: spec.r_pattern.clone(),
+        r_pattern: spec.l_pattern.clone(),
+        correspondence_links: spec.correspondence_links.iter().map(swap_corr).collect(),
+        nacs: spec.nacs.clone(),
+    }
+}
+
+/// Lowert eine deklarative Regel in **beide** gerichteten
+/// [`CompiledRuleSpec`] (rc7). IDs: `"<name>→"` (Fwd), `"<name>←"`
+/// (Bwd) — eindeutig für den cascade-Origin-Lookup. Die
+/// context-vs-creation-Rolle + der span-Anker werden pro Richtung aus
+/// `role` + Bindings korrekt abgeleitet (siehe `directed_spec` +
+/// `corr_is_reference`, beides crate-intern).
+pub fn compile_bidirectional(spec: &RuleSpec) -> Result<Vec<CompiledRuleSpec>, CompileError> {
+    let mut out = Vec::with_capacity(2);
+    for (dir, suffix) in [(Direction::Fwd, "\u{2192}"), (Direction::Bwd, "\u{2190}")] {
+        let mut compiled = compile(&directed_spec(spec, dir))?;
+        compiled.name = format!("{}{}", spec.name, suffix);
+        out.push(compiled);
+    }
+    Ok(out)
+}
+
 /// Kompiliert eine einzelne [`RuleSpec`] in einen [`CompiledRuleSpec`].
 pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
     // ── 1. Patterns holen (leere ok, aber nicht beide leer) ──────────
@@ -342,7 +428,7 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
     let r_only_in_context: HashSet<&str> = spec
         .correspondence_links
         .iter()
-        .filter(|cl| cl.attribute_bindings.is_empty())
+        .filter(|cl| corr_is_reference(cl))
         .map(|cl| cl.r_node_id.as_str())
         .collect();
 
@@ -432,12 +518,13 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
                 r: cl.r_node_id.clone(),
             });
         }
-        // Ein Corr ist Kontext, wenn er **keine** AttrBindings hat —
-        // dann ist seine einzige Rolle, einen bereits bestehenden
-        // Corr-Knoten im Match zu referenzieren. Corrs mit
-        // AttrBindings etablieren bijektive Synchronisation und
-        // werden von dieser Rule materialisiert.
-        if cl.attribute_bindings.is_empty() {
+        // rc7: Rolle entscheidet context-vs-creation (role-aware mit
+        // rc6-Fallback via corr_is_reference). References = referenziert
+        // bestehende Korrespondenz (context), Establishes = etabliert
+        // neue bijektive Synchronisation (materialisiert). span-Bindings
+        // dienen bei References nur der GhostId-Identität, nicht der
+        // Klassifikation.
+        if corr_is_reference(cl) {
             context_corrs.push(cl.clone());
         } else {
             corrs_to_create.push(cl.clone());
@@ -554,6 +641,20 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
         },
         propagation_plan: propagations,
         nacs: compile_nacs(spec, l_pat)?,
+        input_domain_kinds: {
+            let r_kinds: std::collections::HashSet<&str> =
+                r_pat.nodes.iter().map(|n| n.kind.as_str()).collect();
+            let mut v: Vec<String> = l_pat
+                .nodes
+                .iter()
+                .map(|n| n.kind.as_str())
+                .filter(|k| !r_kinds.contains(k))
+                .map(String::from)
+                .collect();
+            v.sort();
+            v.dedup();
+            v
+        },
     })
 }
 
@@ -633,9 +734,193 @@ mod tests {
 
     const DEMO_FIXTURE: &str = include_str!("../../tests/fixtures/demo-ruleset.json");
 
+    #[test]
+    fn corr_is_reference_role_aware_with_rc6_fallback() {
+        use crate::rule::spec::{AttrBindingSpec, CorrRole, CorrespondenceLinkSpec};
+        let mk = |role: Option<CorrRole>, has_binding: bool| CorrespondenceLinkSpec {
+            l_node_id: "c".into(),
+            r_node_id: "jc".into(),
+            kind: None,
+            attribute_bindings: if has_binding {
+                vec![AttrBindingSpec {
+                    l_attr_name: "name".into(),
+                    r_attr_name: "name".into(),
+                    transformation: None,
+                }]
+            } else {
+                vec![]
+            },
+            role,
+        };
+        // explizit
+        assert!(corr_is_reference(&mk(Some(CorrRole::References), true)));
+        assert!(!corr_is_reference(&mk(Some(CorrRole::Establishes), false)));
+        // rc6-Fallback (role = None)
+        assert!(corr_is_reference(&mk(None, false))); // leere bindings → context
+        assert!(!corr_is_reference(&mk(None, true))); // bindings → creation
+    }
+
     fn demo_rule(name: &str) -> RuleSpec {
         let rs = parse_ruleset(DEMO_FIXTURE).unwrap();
         rs.rules.into_iter().find(|r| r.name == name).unwrap()
+    }
+
+    #[test]
+    fn input_domain_kinds_discriminate_direction() {
+        let json = r#"{"rules":[{
+            "name":"R_Class","rank":40,
+            "l_pattern":{"nodes":[{"id":"m","kind":"Model","constraints":[]},
+                                  {"id":"c","kind":"Class","constraints":[]}],
+                         "edges":[{"kind":"classes","source_node_id":"m","target_node_id":"c"}]},
+            "r_pattern":{"nodes":[{"id":"m","kind":"Model","constraints":[]},
+                                  {"id":"jc","kind":"JavaClass","constraints":[]}],
+                         "edges":[{"kind":"javaClasses","source_node_id":"m","target_node_id":"jc"}]},
+            "correspondence_links":[{"l_node_id":"c","r_node_id":"jc","kind":"CorrClass","role":"Establishes",
+                "attribute_bindings":[{"l_attr_name":"name","r_attr_name":"name","transformation":"identity"}]}]
+        }]}"#;
+        let rs = parse_ruleset(json).unwrap();
+        let rules = compile_bidirectional(&rs.rules[0]).unwrap();
+        let fwd = rules.iter().find(|r| r.name.ends_with('\u{2192}')).unwrap();
+        let bwd = rules.iter().find(|r| r.name.ends_with('\u{2190}')).unwrap();
+        // Shared-Anchor "Model" fällt raus; nur der diskriminierende
+        // Input-kind bleibt.
+        assert_eq!(fwd.input_domain_kinds, vec!["Class".to_string()]);
+        assert_eq!(bwd.input_domain_kinds, vec!["JavaClass".to_string()]);
+    }
+
+    #[test]
+    fn compile_bidirectional_yields_two_directed_rules_with_span_anchor() {
+        let json = r#"{"rules":[{
+            "name":"R_Attr","rank":30,
+            "l_pattern":{"nodes":[{"id":"c","kind":"Class","constraints":[]},
+                                  {"id":"a","kind":"Attribute","constraints":[]}],
+                         "edges":[{"kind":"attributes","source_node_id":"c","target_node_id":"a"}]},
+            "r_pattern":{"nodes":[{"id":"jc","kind":"JavaClass","constraints":[]},
+                                  {"id":"jf","kind":"JavaField","constraints":[]}],
+                         "edges":[{"kind":"hasField","source_node_id":"jc","target_node_id":"jf"}]},
+            "correspondence_links":[
+                {"l_node_id":"c","r_node_id":"jc","role":"References",
+                 "attribute_bindings":[{"l_attr_name":"name","r_attr_name":"name"}]},
+                {"l_node_id":"a","r_node_id":"jf","role":"Establishes",
+                 "attribute_bindings":[{"l_attr_name":"name","r_attr_name":"name"}]}
+            ]
+        }]}"#;
+        let rs = parse_ruleset(json).unwrap();
+        let rules = compile_bidirectional(&rs.rules[0]).unwrap();
+        assert_eq!(rules.len(), 2, "eine Regel → Fwd + Bwd");
+
+        let fwd = rules.iter().find(|r| r.name.ends_with('\u{2192}')).unwrap();
+        let bwd = rules.iter().find(|r| r.name.ends_with('\u{2190}')).unwrap();
+
+        // Fwd: jf (Establishes) erzeugt, jc (References) context
+        assert!(fwd
+            .creation_plan
+            .nodes_to_create
+            .iter()
+            .any(|n| n.var == "jf"));
+        assert!(!fwd
+            .creation_plan
+            .nodes_to_create
+            .iter()
+            .any(|n| n.var == "jc"));
+        // Bwd: a (Establishes-Endpunkt, jetzt Output) erzeugt, c (References) context
+        assert!(bwd
+            .creation_plan
+            .nodes_to_create
+            .iter()
+            .any(|n| n.var == "a"));
+        assert!(!bwd
+            .creation_plan
+            .nodes_to_create
+            .iter()
+            .any(|n| n.var == "c"));
+
+        // References-Corr ist in BEIDEN Richtungen context MIT span-binding
+        // (kein leeres corr_attrs → kein GhostId-Kollaps).
+        assert!(
+            fwd.match_plan
+                .context_correspondences
+                .iter()
+                .any(|c| !c.attribute_bindings.is_empty()),
+            "Fwd: CorrClass context mit span-binding"
+        );
+        assert!(
+            bwd.match_plan
+                .context_correspondences
+                .iter()
+                .any(|c| !c.attribute_bindings.is_empty()),
+            "Bwd: CorrClass context mit span-binding"
+        );
+    }
+
+    #[test]
+    fn directed_spec_bwd_swaps_patterns_and_corr_endpoints() {
+        use crate::rule::spec::CorrRole;
+        let json = r#"{"rules":[{
+            "name":"T","rank":40,
+            "l_pattern":{"nodes":[{"id":"c","kind":"Class","constraints":[]}],"edges":[]},
+            "r_pattern":{"nodes":[{"id":"jc","kind":"JavaClass","constraints":[]}],"edges":[]},
+            "correspondence_links":[
+                {"l_node_id":"c","r_node_id":"jc","role":"Establishes",
+                 "attribute_bindings":[{"l_attr_name":"uName","r_attr_name":"jName"}]}
+            ]
+        }]}"#;
+        let rs = parse_ruleset(json).unwrap();
+        let spec = &rs.rules[0];
+
+        let bwd = directed_spec(spec, Direction::Bwd);
+        assert_eq!(bwd.l_pattern.as_ref().unwrap().nodes[0].kind, "JavaClass");
+        assert_eq!(bwd.r_pattern.as_ref().unwrap().nodes[0].kind, "Class");
+        let cl = &bwd.correspondence_links[0];
+        assert_eq!(cl.l_node_id, "jc");
+        assert_eq!(cl.r_node_id, "c");
+        assert_eq!(cl.role, Some(CorrRole::Establishes)); // richtungs-neutral
+                                                          // Binding gespiegelt: l_attr↔r_attr
+        assert_eq!(cl.attribute_bindings[0].l_attr_name, "jName");
+        assert_eq!(cl.attribute_bindings[0].r_attr_name, "uName");
+
+        // Fwd = unverändert
+        let fwd = directed_spec(spec, Direction::Fwd);
+        assert_eq!(fwd.l_pattern.as_ref().unwrap().nodes[0].kind, "Class");
+        assert_eq!(fwd.correspondence_links[0].l_node_id, "c");
+    }
+
+    #[test]
+    fn reference_corr_with_bindings_is_context_not_creation() {
+        // R_Attr-artig: CorrClass=References (MIT span-binding),
+        // CorrAttr=Establishes. rc7-Akzeptanz: ein References-Corr mit
+        // bindings macht seinen R-Endpunkt context, nicht creation.
+        let json = r#"{"rules":[{
+            "name":"T","rank":30,
+            "l_pattern":{"nodes":[{"id":"c","kind":"Class","constraints":[]},
+                                  {"id":"a","kind":"Attribute","constraints":[]}],
+                         "edges":[{"kind":"attributes","source_node_id":"c","target_node_id":"a"}]},
+            "r_pattern":{"nodes":[{"id":"jc","kind":"JavaClass","constraints":[]},
+                                  {"id":"jf","kind":"JavaField","constraints":[]}],
+                         "edges":[{"kind":"hasField","source_node_id":"jc","target_node_id":"jf"}]},
+            "correspondence_links":[
+                {"l_node_id":"c","r_node_id":"jc","role":"References",
+                 "attribute_bindings":[{"l_attr_name":"name","r_attr_name":"name"}]},
+                {"l_node_id":"a","r_node_id":"jf","role":"Establishes",
+                 "attribute_bindings":[{"l_attr_name":"name","r_attr_name":"name"}]}
+            ]
+        }]}"#;
+        let rs = parse_ruleset(json).unwrap();
+        let c = compile(&rs.rules[0]).unwrap();
+        assert!(
+            !c.creation_plan
+                .nodes_to_create
+                .iter()
+                .any(|n| n.var == "jc"),
+            "jc (References-corr) darf nicht erzeugt werden"
+        );
+        assert!(
+            c.creation_plan
+                .nodes_to_create
+                .iter()
+                .any(|n| n.var == "jf"),
+            "jf (Establishes-corr) muss erzeugt werden"
+        );
     }
 
     // ── Fehlerfälle ──────────────────────────────────────────────────

@@ -63,8 +63,14 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
             .clone()
             .unwrap_or_else(|| "Correspondence".to_string());
         pat = pat.with_node(NodePattern::new(&corr_var, &corr_kind));
-        pat = pat.with_edge(EdgePattern::new(&cc.l_node_id, &corr_var, "corrL"));
-        pat = pat.with_edge(EdgePattern::new(&corr_var, &cc.r_node_id, "corrR"));
+        // rc7 (S): symmetrische Korrespondenz — der Kontext-Match ist
+        // richtungs- UND kind-agnostisch (Membership): der Corr-Knoten muss
+        // mit beiden Endpunkten verbunden sein, egal wie corrL/corrR
+        // orientiert sind. So wird eine in EINER Richtung etablierte
+        // Korrespondenz von Regeln BEIDER Richtungen als Kontext erkannt
+        // (corrL/corrR werden richtungs-relativ erzeugt — der C1-Befund).
+        pat = pat.with_edge(EdgePattern::membership(&corr_var, &cc.l_node_id));
+        pat = pat.with_edge(EdgePattern::membership(&corr_var, &cc.r_node_id));
     }
 
     // ── Production-Closure aufbauen (owned clones für move) ─────────
@@ -81,27 +87,34 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
         let mut created: HashMap<String, GhostId> = HashMap::new();
 
         // 1. Correspondence-Nodes + ihre R-Target-Nodes materialisieren.
+        //
+        // rc7 A8 (Fix A) — Identität vom propagierten Attribut entkoppelt:
+        // Die Ghost-ID von Corr und Ziel wird NUR aus strukturellen +
+        // Identitäts-Attributen gebildet (creation_attrs), NICHT aus den
+        // gebundenen (propagierten) Attributen. Letztere werden nach der
+        // Knoten-Erzeugung als `Op::SetAttr` geschrieben. Folge: die
+        // Identität ist stabil unter Attribut-Änderungen — ein Rename des
+        // Quell-Elements re-derivt denselben Ziel-Knoten (Struktur-Op wird
+        // idempotenter No-op) und aktualisiert nur dessen Wert, statt ein
+        // Duplikat mit neuer Identität zu erzeugen.
         for cc in &creation.correspondences_to_create {
             let l_id = match m.get(&cc.l_node_id) {
                 Some(id) => *id,
                 None => continue, // L-Seite nicht gebunden — Rule-Variante unsupported
             };
 
-            // Attribute des Corr-Nodes: die propagierten Werte aus den
-            // L-Attributen (Engine-Konvention: Corr trägt „sprechende"
-            // Namen, damit Snapshot und Ghost-ID lesbar bleiben).
-            let corr_attrs = collect_corr_attrs(cc, m, g, &propagation);
-
             let corr_kind = cc
                 .kind
                 .clone()
                 .unwrap_or_else(|| "Correspondence".to_string());
-            let corr_id = GhostId::from_parent(&l_id, "corrL", &corr_kind, &corr_attrs);
+            // Corr-Identität ist rein strukturell (Quell-Element + Kind);
+            // keine gebundenen Attribute im Hash.
+            let corr_id = GhostId::from_parent(&l_id, "corrL", &corr_kind, &BTreeMap::new());
             ops.push(Op::AddNode {
                 parent: l_id,
                 edge_type: "corrL".into(),
                 type_id: corr_kind,
-                attrs: corr_attrs,
+                attrs: BTreeMap::new(),
             });
 
             // R-Target-Node: ist er in nodes_to_create oder schon
@@ -113,7 +126,7 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
                 .find(|n| &n.var == r_var)
                 .map(|n| n.kind.clone());
 
-            match (m.get(r_var), r_kind) {
+            let target_id: Option<GhostId> = match (m.get(r_var), r_kind) {
                 (Some(existing_r), _) => {
                     // R-Node war schon im Match — nur die Corr-Edge
                     // muss noch gezogen werden.
@@ -123,25 +136,42 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
                         type_id: "corrR".into(),
                         attrs: BTreeMap::new(),
                     });
+                    Some(*existing_r)
                 }
                 (None, Some(kind)) => {
                     // R-Node ist neu zu erzeugen, als Kind des Corr-Nodes.
-                    // rc6 (B6): creation_attrs für diesen R-Var fließen in
-                    // den r_attrs ein und damit in die GhostId — sie sind
-                    // Identitäts-Attribute, nicht post-creation-Mutationen.
-                    let r_attrs = collect_r_attrs(cc, m, g, &propagation, &creation.creation_attrs);
-                    let r_id = GhostId::from_parent(&corr_id, "corrR", &kind, &r_attrs);
+                    // Nur Identitäts-Attribute (creation_attrs, rc6 B6)
+                    // fließen in die GhostId; gebundene Werte folgen als
+                    // SetAttr (rc7 A8).
+                    let r_identity = collect_r_identity_attrs(cc, &creation.creation_attrs);
+                    let r_id = GhostId::from_parent(&corr_id, "corrR", &kind, &r_identity);
                     ops.push(Op::AddNode {
                         parent: corr_id,
                         edge_type: "corrR".into(),
                         type_id: kind,
-                        attrs: r_attrs,
+                        attrs: r_identity,
                     });
                     created.insert(r_var.clone(), r_id);
+                    Some(r_id)
                 }
                 (None, None) => {
                     // R-Var in keiner Plan-Tabelle → unsauberer
                     // CompiledRuleSpec; wir ignorieren still.
+                    None
+                }
+            };
+
+            // rc7 A8: gebundene Attribut-Werte als SetAttr auf das Ziel
+            // propagieren. Idempotent — wenn der Wert schon stimmt, ist die
+            // Op ein No-op (saturiert zu Duplication). Beim Rename trägt sie
+            // den neuen Wert auf den (identitäts-stabilen) Ziel-Knoten.
+            if let Some(tid) = target_id {
+                for (attr, value) in collect_propagated_attrs(cc, m, g, &propagation) {
+                    ops.push(Op::SetAttr {
+                        target: tid,
+                        key: attr,
+                        value,
+                    });
                 }
             }
         }
@@ -230,7 +260,8 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
     Box::new(
         BasicRule::new(&rule_name, rank, pat, production)
             .with_nacs(nacs)
-            .with_propagations(propagations),
+            .with_propagations(propagations)
+            .with_input_domain_kinds(compiled.input_domain_kinds.clone()),
     )
 }
 
@@ -256,87 +287,68 @@ fn resolve_var(var: &str, m: &PatternMatch, created: &HashMap<String, GhostId>) 
 ///    SetAttrs). Jetzt fließen sie in `r_attrs` und damit in den
 ///    GhostId-Hash → zwei verschiedene Werte → zwei verschiedene
 ///    Knoten, keine Kollision.
-fn collect_r_attrs(
+///
+/// rc7 A8 — Identitäts-Attribute des neu erzeugten R-Knotens: NUR
+/// `creation_attrs` (rc6 B6: R-Pattern-Literal-Constraints auf R-only-
+/// Creation-Knoten). Diese fließen in die Ghost-ID, weil sie das Ziel
+/// strukturell identifizieren (zwei Rules mit verschiedenen Literal-
+/// Werten → zwei verschiedene Knoten, keine Kollision). Gebundene
+/// (propagierte) Werte gehören NICHT hierher — sie sind Wert, nicht
+/// Identität, und werden via [`collect_propagated_attrs`] als SetAttr
+/// geschrieben.
+fn collect_r_identity_attrs(
     cc: &CorrespondenceLinkSpec,
-    m: &PatternMatch,
-    g: &TypedGraph,
-    propagation: &[super::compile::AttrPropagation],
     creation_attrs: &[super::compile::CreationAttr],
 ) -> BTreeMap<String, String> {
     let mut attrs = BTreeMap::new();
-    for b in &cc.attribute_bindings {
-        let transform =
-            AttrTransform::parse(b.transformation.as_deref()).unwrap_or(AttrTransform::Identity);
-        // Wert aus der L-Seite holen
-        let l_id = match m.get(&cc.l_node_id) {
-            Some(id) => id,
-            None => continue,
-        };
-        let src_value = g
-            .get_node(l_id)
-            .and_then(|n| n.attrs.get(&b.l_attr_name).cloned())
-            .unwrap_or_default();
-        attrs.insert(b.r_attr_name.clone(), transform.apply(&src_value));
-    }
-    // Nicht-binding Attribute aus propagation_plan ergänzen (falls
-    // der Compile-Plan auf diesem Corr zusätzliche Propagationen
-    // hat; aktuell deckungsgleich mit attribute_bindings).
-    for p in propagation {
-        if p.source_node_var == cc.l_node_id && p.target_node_var == cc.r_node_id {
-            if attrs.contains_key(&p.target_attr) {
-                continue;
-            }
-            let l_id = match m.get(&p.source_node_var) {
-                Some(id) => id,
-                None => continue,
-            };
-            let src_value = g
-                .get_node(l_id)
-                .and_then(|n| n.attrs.get(&p.source_attr).cloned())
-                .unwrap_or_default();
-            attrs.insert(p.target_attr.clone(), p.transform.apply(&src_value));
-        }
-    }
-    // rc6 (B6): R-Pattern-Literal-Constraints auf diesem R-only-
-    // Creation-Knoten als Identitäts-Attribute mit aufnehmen.
-    // Bindings haben Vorrang (insert nur, wenn key noch frei),
-    // damit propagierte Werte nicht durch einen Konflikt-Literal-
-    // Constraint überschrieben werden — der wäre ein Modellierungs-
-    // fehler im Ruleset (Literal vs. gebundener Wert).
     for ca in creation_attrs {
-        if ca.node_var == cc.r_node_id && !attrs.contains_key(&ca.attr_name) {
+        if ca.node_var == cc.r_node_id {
             attrs.insert(ca.attr_name.clone(), ca.value.clone());
         }
     }
     attrs
 }
 
-/// Sammelt die Attribute, die auf dem Corr-Node landen. Engine-
-/// Konvention: der Corr bekommt dieselben L-Attribute wie der neu
-/// erzeugte R-Node, wenn die Transformation Identity ist. Das ergibt
-/// sprechende Ghost-IDs für Corr-Knoten.
-fn collect_corr_attrs(
+/// rc7 A8 — gebundene (propagierte) Attribut-Werte für das Ziel: aus den
+/// `attribute_bindings` (L→R via Transform) plus deckungsgleichen
+/// `propagation_plan`-Einträgen. Werden NACH der Knoten-Erzeugung als
+/// `Op::SetAttr` auf das Ziel geschrieben. So ist das gebundene Attribut
+/// ein **Wert** (mutierbar, propagierbar), keine Identität — ein Rename
+/// des Quell-Elements aktualisiert den bestehenden Ziel-Knoten, statt ein
+/// Duplikat mit neuer Ghost-ID zu erzeugen.
+fn collect_propagated_attrs(
     cc: &CorrespondenceLinkSpec,
     m: &PatternMatch,
     g: &TypedGraph,
-    _propagation: &[super::compile::AttrPropagation],
+    propagation: &[super::compile::AttrPropagation],
 ) -> BTreeMap<String, String> {
     let mut attrs = BTreeMap::new();
+    let l_id = match m.get(&cc.l_node_id) {
+        Some(id) => id,
+        None => return attrs,
+    };
     for b in &cc.attribute_bindings {
         let transform =
             AttrTransform::parse(b.transformation.as_deref()).unwrap_or(AttrTransform::Identity);
-        if transform != AttrTransform::Identity {
-            continue;
-        }
-        let l_id = match m.get(&cc.l_node_id) {
-            Some(id) => id,
-            None => continue,
-        };
         let src_value = g
             .get_node(l_id)
             .and_then(|n| n.attrs.get(&b.l_attr_name).cloned())
             .unwrap_or_default();
-        attrs.insert(b.l_attr_name.clone(), src_value);
+        attrs.insert(b.r_attr_name.clone(), transform.apply(&src_value));
+    }
+    // Zusätzliche propagation_plan-Einträge (aktuell deckungsgleich mit
+    // attribute_bindings; Bindings haben Vorrang).
+    for p in propagation {
+        if p.source_node_var == cc.l_node_id
+            && p.target_node_var == cc.r_node_id
+            && !attrs.contains_key(&p.target_attr)
+        {
+            let src_value = g
+                .get_node(l_id)
+                .and_then(|n| n.attrs.get(&p.source_attr).cloned())
+                .unwrap_or_default();
+            attrs.insert(p.target_attr.clone(), p.transform.apply(&src_value));
+        }
     }
     attrs
 }
@@ -406,12 +418,15 @@ mod tests {
         let matches = find_matches(rule.pattern(), &g);
         let ops = rule.produce(&matches[0], &g);
 
-        // Spec-treu: 3 Ops. Die javaClasses-Edge zwischen Model und
-        // neuem JavaClass wird explizit gezogen (die hart-kodierte
-        // Variante ohne Model-Kontext hätte das nicht — das ist ein
-        // bewusster Gewinn des Spec-basierten Compilers).
-        assert_eq!(ops.len(), 3,
-            "R_Class-Produktion soll 3 Ops emittieren (CorrClass, JavaClass, javaClasses-Edge), war: {ops:?}");
+        // rc7 A8 — Identität vom propagierten Attribut entkoppelt: die
+        // CorrClass- und JavaClass-AddNodes tragen `name` NICHT mehr (ihre
+        // Ghost-ID ist strukturell), der Name wird als separate SetAttr
+        // propagiert. Folge: 4 Ops statt 3 (CorrClass, JavaClass, SetAttr
+        // name, javaClasses-Edge). Die javaClasses-Edge zwischen Model und
+        // neuem JavaClass wird explizit gezogen — bewusster Gewinn des
+        // Spec-basierten Compilers gegenüber der hart-kodierten Variante.
+        assert_eq!(ops.len(), 4,
+            "R_Class-Produktion soll 4 Ops emittieren (CorrClass, JavaClass, SetAttr name, javaClasses-Edge), war: {ops:?}");
 
         match &ops[0] {
             Op::AddNode {
@@ -422,7 +437,11 @@ mod tests {
             } => {
                 assert_eq!(type_id, "CorrClass");
                 assert_eq!(edge_type, "corrL");
-                assert_eq!(attrs.get("name").map(String::as_str), Some("Person"));
+                assert_eq!(
+                    attrs.get("name"),
+                    None,
+                    "rc7 A8: CorrClass-Identität trägt kein gebundenes Attribut"
+                );
             }
             _ => panic!("Op[0] muss CorrClass-AddNode sein, war: {:?}", ops[0]),
         }
@@ -435,19 +454,33 @@ mod tests {
             } => {
                 assert_eq!(type_id, "JavaClass");
                 assert_eq!(edge_type, "corrR");
-                assert_eq!(attrs.get("name").map(String::as_str), Some("Person"));
+                assert_eq!(
+                    attrs.get("name"),
+                    None,
+                    "rc7 A8: JavaClass-Identität trägt kein gebundenes Attribut"
+                );
             }
             _ => panic!("Op[1] muss JavaClass-AddNode sein, war: {:?}", ops[1]),
         }
         match &ops[2] {
+            Op::SetAttr { key, value, .. } => {
+                assert_eq!(key, "name");
+                assert_eq!(
+                    value, "Person",
+                    "rc7 A8: name wird als Wert auf das Ziel propagiert"
+                );
+            }
+            _ => panic!("Op[2] muss SetAttr(name) sein, war: {:?}", ops[2]),
+        }
+        match &ops[3] {
             Op::AddEdge { type_id, .. } => {
                 assert_eq!(
                     type_id, "javaClasses",
-                    "Op[2] muss javaClasses-Edge sein, war: {:?}",
-                    ops[2]
+                    "Op[3] muss javaClasses-Edge sein, war: {:?}",
+                    ops[3]
                 );
             }
-            _ => panic!("Op[2] muss AddEdge sein, war: {:?}", ops[2]),
+            _ => panic!("Op[3] muss AddEdge sein, war: {:?}", ops[3]),
         }
     }
 

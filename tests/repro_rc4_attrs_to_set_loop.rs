@@ -73,6 +73,7 @@ fn rule_with_r_literal() -> RuleSpec {
             l_node_id: "L".into(),
             r_node_id: "R".into(),
             kind: Some("tgg:refines".into()),
+            role: None,
             attribute_bindings: vec![AttrBindingSpec {
                 l_attr_name: "tag".into(),
                 r_attr_name: "tag".into(),

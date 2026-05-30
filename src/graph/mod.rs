@@ -129,6 +129,32 @@ impl GhostId {
         )
     }
 
+    /// Volle 64-stellige Hex-Darstellung (32 Bytes). Wird über die
+    /// JNI-Grenze gereicht, damit die Pilot-Seite eine cascade-erzeugte
+    /// Identität verlustfrei zurückgeben kann (rc7 Rückweg-Bridge).
+    pub fn hex(&self) -> String {
+        let mut s = String::with_capacity(64);
+        for b in &self.0 {
+            use std::fmt::Write;
+            let _ = write!(s, "{b:02x}");
+        }
+        s
+    }
+
+    /// Parst die 64-stellige Hex-Form zurück; `None` bei ungültiger
+    /// Länge oder Nicht-Hex-Zeichen.
+    pub fn from_hex(s: &str) -> Option<Self> {
+        if s.len() != 64 {
+            return None;
+        }
+        let mut bytes = [0u8; 32];
+        for i in 0..32 {
+            let byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
+            bytes[i] = byte;
+        }
+        Some(Self(bytes))
+    }
+
     /// Raw 32-Byte-Hash.
     pub fn as_bytes(&self) -> [u8; 32] {
         self.0
@@ -410,6 +436,30 @@ impl TypedGraph {
         })
     }
 
+    /// rc7 (S): existiert IRGENDEINE matchbare Kante zwischen `a` und `b`
+    /// (beliebige Richtung, beliebige Art)? Für das symmetrische
+    /// Korrespondenz-Mitgliedschafts-Matching (siehe
+    /// `EdgePattern::membership`). Ein Korrespondenz-Knoten verkabelt nur
+    /// seine zwei Endpunkte, daher identifiziert „irgendeine Kante" hier
+    /// korrekt die Corr-Mitgliedschaft, ohne corrL/corrR zu kennen.
+    pub fn has_any_edge_either_dir(&self, a: &GhostId, b: &GhostId) -> bool {
+        let a_idx = match self.node_index.get(a) {
+            Some(i) => *i,
+            None => return false,
+        };
+        let b_idx = match self.node_index.get(b) {
+            Some(i) => *i,
+            None => return false,
+        };
+        self.inner
+            .edges(a_idx)
+            .any(|e| e.target() == b_idx && e.weight().status.is_matchable())
+            || self
+                .inner
+                .edges(b_idx)
+                .any(|e| e.target() == a_idx && e.weight().status.is_matchable())
+    }
+
     /// Alle matchbaren ausgehenden Kanten eines Knotens mit Zielknoten-ID.
     pub fn outgoing_edges(&self, source: &GhostId) -> Vec<(&EdgeData, GhostId)> {
         let src_idx = match self.node_index.get(source) {
@@ -564,6 +614,30 @@ mod tests {
         let a = GhostId::from_baseline("Person");
         let b = GhostId::from_baseline("Person");
         assert_eq!(a, b);
+    }
+
+    /// rc7 Rückweg-Bridge: für die JNI-Übergabe an die Pilot-Seite (die
+    /// die volle ID braucht, um sie wieder einzutragen) muss `hex()` die
+    /// 64-stellige Volldarstellung liefern, und `from_hex` muss sie
+    /// verlustfrei zurückparsen.
+    #[test]
+    fn ghost_id_hex_round_trip() {
+        let a = GhostId::from_baseline("Person");
+        let s = a.hex();
+        assert_eq!(s.len(), 64, "64 hex chars = 32 bytes");
+        let b = GhostId::from_hex(&s).expect("gültige Hex-Form parst zurück");
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn ghost_id_from_hex_rejects_invalid() {
+        assert!(GhostId::from_hex("").is_none());
+        assert!(GhostId::from_hex("zzz").is_none());
+        assert!(
+            GhostId::from_hex(&"a".repeat(63)).is_none(),
+            "ungerade Länge"
+        );
+        assert!(GhostId::from_hex(&"a".repeat(66)).is_none(), "zu lang");
     }
 
     #[test]

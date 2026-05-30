@@ -78,6 +78,7 @@ fn construct_rule() -> RuleSpec {
             l_node_id: "src".into(),
             r_node_id: "tgt".into(),
             kind: Some("tgg:refines".into()),
+            role: None,
             attribute_bindings: vec![AttrBindingSpec {
                 l_attr_name: "type".into(),
                 r_attr_name: "type".into(),
@@ -116,6 +117,7 @@ fn field_rule() -> RuleSpec {
             l_node_id: "src".into(),
             r_node_id: "tgt".into(),
             kind: Some("tgg:refines".into()),
+            role: None,
             attribute_bindings: vec![AttrBindingSpec {
                 l_attr_name: "name".into(),
                 r_attr_name: "name".into(),

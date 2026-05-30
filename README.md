@@ -56,7 +56,7 @@ rank as an interface, not a fixed policy.
 
 ```toml
 [dependencies]
-seesaw-tgg = "1.0.0-rc1"
+seesaw-tgg = "1.0.0-rc7"
 ```
 
 ```rust
@@ -107,7 +107,7 @@ All four rules are bijective and use the strictly-monotone rank order.
 
 ## Status
 
-`1.0.0-rc1` — release candidate. API may still see breaking changes before
+`1.0.0-rc7` — release candidate. API may still see breaking changes before
 `1.0.0`. The core algorithms (cascade, fold, ranked backtracking) are stable
 and test-covered across ~265 unit, integration, and property tests including
 benchmark suites against published research cases (FASE 2019, JOT 2022,

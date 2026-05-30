@@ -95,6 +95,15 @@ pub struct EdgePattern {
     pub source_var: String,
     pub target_var: String,
     pub type_id: String,
+    /// rc7 (S) — Membership-Match: richtungs- UND kind-agnostisch. Wahr
+    /// nur für synthetische Korrespondenz-Mitgliedschafts-Kanten: eine
+    /// Korrespondenz ist symmetrisch, ihr Kontext-Match darf nicht von
+    /// der `corrL`/`corrR`-Orientierung (die richtungs-relativ erzeugt
+    /// wird) abhängen. Der Matcher prüft dann „irgendeine Kante zwischen
+    /// den beiden Knoten, in beliebiger Richtung". Der Matcher bleibt
+    /// metamodell-agnostisch (kennt corrL/corrR nicht); die Kanten-Layout-
+    /// Kenntnis bleibt in `instantiate`.
+    pub membership: bool,
 }
 
 impl EdgePattern {
@@ -103,6 +112,18 @@ impl EdgePattern {
             source_var: source_var.into(),
             target_var: target_var.into(),
             type_id: type_id.into(),
+            membership: false,
+        }
+    }
+
+    /// rc7 (S): symmetrische Korrespondenz-Mitgliedschaft — `a` und `b`
+    /// sind durch irgendeine Kante (beliebige Richtung) verbunden.
+    pub fn membership(a: &str, b: &str) -> Self {
+        Self {
+            source_var: a.into(),
+            target_var: b.into(),
+            type_id: String::new(),
+            membership: true,
         }
     }
 }
@@ -233,6 +254,9 @@ struct EdgeLink {
     /// `true`: der neue Knoten ist Source, der platzierte ist Target.
     /// `false`: der platzierte ist Source, der neue ist Target.
     new_is_source: bool,
+    /// rc7 (S): richtungs-/kind-agnostische Korrespondenz-Mitgliedschaft
+    /// (siehe [`EdgePattern::membership`]).
+    membership: bool,
 }
 
 /// Ein Schritt im Traversal-Plan: welcher Pattern-Knoten als nächstes
@@ -341,6 +365,7 @@ fn links_to_placed(pattern: &Pattern, placed: &[bool], idx: usize) -> Vec<EdgeLi
                 placed_var: other_var.to_string(),
                 type_id: ep.type_id.clone(),
                 new_is_source,
+                membership: ep.membership,
             });
         }
     }
@@ -430,7 +455,13 @@ fn step_candidates(
         None => return Vec::new(),
     };
     let mut seen: BTreeSet<GhostId> = BTreeSet::new();
-    if guide.new_is_source {
+    if guide.membership {
+        // rc7 (S): Korrespondenz-Mitgliedschaft — richtungs-/kind-agnostisch.
+        // Kandidaten sind ALLE inzidenten Nachbarn des Ankers.
+        for (_edge, other) in graph.incident_edges(&anchor) {
+            seen.insert(other);
+        }
+    } else if guide.new_is_source {
         // Pattern-Edge: neu ─type─▶ Anker ⇒ der neue Knoten ist Quelle
         // einer eingehenden Kante des Ankers.
         for (edge, src) in graph.incoming_edges(&anchor) {
@@ -462,7 +493,9 @@ fn satisfies_links(
             Some(id) => *id,
             None => return false,
         };
-        if link.new_is_source {
+        if link.membership {
+            graph.has_any_edge_either_dir(&new_id, &other)
+        } else if link.new_is_source {
             graph.has_edge_between(&new_id, &other, &link.type_id)
         } else {
             graph.has_edge_between(&other, &new_id, &link.type_id)
@@ -480,7 +513,11 @@ fn satisfies_edge_patterns(pattern: &Pattern, graph: &TypedGraph, m: &PatternMat
             Some(id) => id,
             None => return false,
         };
-        graph.has_edge_between(src, tgt, &ep.type_id)
+        if ep.membership {
+            graph.has_any_edge_either_dir(src, tgt)
+        } else {
+            graph.has_edge_between(src, tgt, &ep.type_id)
+        }
     })
 }
 
@@ -529,6 +566,13 @@ pub trait Rule: fmt::Debug + Send + Sync {
     fn propagations_for(&self, _l_var: &str, _source_attr: &str) -> Vec<EnginePropagation> {
         Vec::new()
     }
+    /// rc7: „echte Input-kinds" dieser gerichteten Regel (l_pattern
+    /// minus r_pattern). Leere Liste = nicht-gerichtete/rc6-Regel
+    /// (immer aktiv). Wird für die Δ-basierte Richtungs-Bündelung
+    /// genutzt. Default: leer.
+    fn input_domain_kinds(&self) -> &[String] {
+        &[]
+    }
 }
 
 /// Konkrete Regel-Implementierung mit Closure-basierter Produktion.
@@ -540,6 +584,7 @@ pub struct BasicRule {
     production: Box<dyn Fn(&PatternMatch, &TypedGraph) -> Vec<Op> + Send + Sync>,
     nacs: Vec<NacPattern>,
     propagations: Vec<EnginePropagation>,
+    input_domain_kinds: Vec<String>,
 }
 
 impl BasicRule {
@@ -554,7 +599,14 @@ impl BasicRule {
             production: Box::new(production),
             nacs: Vec::new(),
             propagations: Vec::new(),
+            input_domain_kinds: Vec::new(),
         }
+    }
+
+    /// Setzt die Δ-Richtungs-Input-kinds (Builder-Style, rc7).
+    pub fn with_input_domain_kinds(mut self, kinds: Vec<String>) -> Self {
+        self.input_domain_kinds = kinds;
+        self
     }
 
     /// Setzt die NACs dieser Rule (Builder-Style).
@@ -595,6 +647,9 @@ impl Rule for BasicRule {
     }
     fn nacs(&self) -> &[NacPattern] {
         &self.nacs
+    }
+    fn input_domain_kinds(&self) -> &[String] {
+        &self.input_domain_kinds
     }
     fn propagations_for(&self, l_var: &str, source_attr: &str) -> Vec<EnginePropagation> {
         self.propagations
@@ -1905,6 +1960,50 @@ mod tests {
     }
 
     #[test]
+    fn membership_edge_matches_corr_in_both_orientations() {
+        // rc7 (S): eine Korrespondenz ist symmetrisch. Ein Membership-
+        // Match (EdgePattern::membership) findet den Corr-Knoten unabhängig
+        // von der corrL/corrR-Orientierung — so erkennt eine Bwd-Regel eine
+        // Forward-etablierte Corr als Kontext (der C1-Befund) und umgekehrt.
+        let pattern = Pattern::new()
+            .with_node(NodePattern::new("c", "Class"))
+            .with_node(NodePattern::new("jc", "JavaClass"))
+            .with_node(NodePattern::new("corr", "CorrClass"))
+            .with_edge(EdgePattern::membership("corr", "c"))
+            .with_edge(EdgePattern::membership("corr", "jc"));
+
+        // Orientierung A (Forward-erzeugt): Class --corrL--> Corr --corrR--> JavaClass
+        let mut ga = TypedGraph::new();
+        let ca = ga.add_baseline_node("Class", "Foo", attrs(&[("name", "Foo")]));
+        let corra = ga.add_ghost_node(ca, "corrL", "CorrClass", BTreeMap::new());
+        ga.add_edge(ca, corra, "corrL", BTreeMap::new(), Status::Ghost)
+            .unwrap();
+        let jca = ga.add_ghost_node(corra, "corrR", "JavaClass", attrs(&[("name", "Foo")]));
+        ga.add_edge(corra, jca, "corrR", BTreeMap::new(), Status::Ghost)
+            .unwrap();
+        assert_eq!(
+            find_matches(&pattern, &ga).len(),
+            1,
+            "Membership matcht Forward-Orientierung (Class--corrL-->Corr--corrR-->JavaClass)"
+        );
+
+        // Orientierung B (Backward-erzeugt): JavaClass --corrL--> Corr --corrR--> Class
+        let mut gb = TypedGraph::new();
+        let jcb = gb.add_baseline_node("JavaClass", "Foo", attrs(&[("name", "Foo")]));
+        let corrb = gb.add_ghost_node(jcb, "corrL", "CorrClass", BTreeMap::new());
+        gb.add_edge(jcb, corrb, "corrL", BTreeMap::new(), Status::Ghost)
+            .unwrap();
+        let cb = gb.add_ghost_node(corrb, "corrR", "Class", attrs(&[("name", "Foo")]));
+        gb.add_edge(corrb, cb, "corrR", BTreeMap::new(), Status::Ghost)
+            .unwrap();
+        assert_eq!(
+            find_matches(&pattern, &gb).len(),
+            1,
+            "Membership matcht Backward-Orientierung (JavaClass--corrL-->Corr--corrR-->Class)"
+        );
+    }
+
+    #[test]
     fn edge_pattern_respects_tombstone() {
         let (mut g, person, _, person_name, _) = setup_uml_graph();
         let pattern = Pattern::new()
@@ -2272,7 +2371,6 @@ mod tests {
 
     #[test]
     fn setattr_for_missing_key_is_not_duplicate() {
-        // Knoten existiert, aber Key noch nicht gesetzt → echte Arbeit.
         let (g, _, _, person_name, _) = setup_uml_graph();
         let op = Op::SetAttr {
             target: person_name,
@@ -2284,8 +2382,6 @@ mod tests {
 
     #[test]
     fn setattr_on_unknown_node_is_not_duplicate() {
-        // Apply würde mit NodeNotFound auflaufen — bis dahin: nicht
-        // als Duplikat verschlucken, damit der Fehler sichtbar wird.
         let (g, _, _, _, _) = setup_uml_graph();
         let phantom = GhostId::from_baseline("phantom-never-inserted");
         let op = Op::SetAttr {
@@ -2298,8 +2394,6 @@ mod tests {
 
     #[test]
     fn setattr_on_tombstone_node_is_not_duplicate() {
-        // Tombstone-Knoten: nicht matchbar → SetAttr nicht als
-        // Duplikat zählen, analog zu AddNode/AddEdge.
         let (mut g, _, _, person_name, _) = setup_uml_graph();
         g.set_node_status(&person_name, Status::Tombstone);
         let op = Op::SetAttr {
