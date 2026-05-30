@@ -1,29 +1,27 @@
-//! Case 5 — Hildebrandt2013 CDDS Backtracking-Trilemma.
+//! Case 5 — Hildebrandt 2013 CDDS backtracking trilemma.
 //!
-//! Hildebrandt et al. (Survey 2013) §3 zeigt: TGG-Tools schließen
-//! Klassen aus, um Backtracking zu vermeiden (functional behavior /
-//! DEC-1 / look-ahead). Die volle Pathologie braucht zwei
-//! sich-überlappende Regeln, deren Greedy-Wahl in eine Sackgasse
-//! führt.
+//! Hildebrandt et al. (Survey 2013) §3 shows: TGG tools exclude
+//! classes to avoid backtracking (functional behavior / DEC-1 /
+//! look-ahead). The full pathology needs two overlapping rules
+//! whose greedy choice ends in a dead end.
 //!
-//! Da das volle CDDS-Beispiel nicht in einer JSON-Rule-Form
-//! ausdrückbar ist (es braucht spezielle DelNode-Ops in der
-//! Produktion), nutzt dieser Test **programmatisch konstruierte
-//! BasicRules**. Das spiegelt die ehrliche Engineering-Realität
-//! wider — auch in der Originalliteratur ist der Case ein
-//! Konstrukt, kein generisches Modell.
+//! Because the full CDDS example is not expressible in JSON rule
+//! form (it needs special DelNode ops in the production), this
+//! test uses **programmatically constructed BasicRules**. This
+//! reflects the honest engineering reality — even in the original
+//! literature the case is a construct, not a generic model.
 //!
 //! Setup:
-//!   - **R_TableMaker** (rank 30): matcht Class c → erzeugt Table
-//!     mit kind="primary" als Kind von c.
-//!   - **R_TableConflict** (rank 5): matcht Table mit kind="primary"
-//!     → versucht DelNode darauf, was V₇ verletzt (R_TableMaker ist
-//!     Vorfahre).
+//!   - **R_TableMaker** (rank 30): matches Class c → produces a
+//!     Table with kind="primary" as a child of c.
+//!   - **R_TableConflict** (rank 5): matches Table with kind="primary"
+//!     → tries DelNode on it, which violates V₇ (R_TableMaker is
+//!     ancestor).
 //!
-//! Ohne Rollback: TableMaker feuert greedy → TableConflict triggert
-//! Contradiction.
-//! Mit Rollback: TableMaker wird zurückgerollt → TableConflict
-//! matcht nicht mehr → Konvergenz.
+//! Without rollback: TableMaker fires greedy → TableConflict
+//! triggers Contradiction.
+//! With rollback: TableMaker is rolled back → TableConflict no
+//! longer matches → convergence.
 
 use seesaw_tgg::engine::{
     run_cascade, run_cascade_with_rollback, BasicRule, Cascade, NodePattern, Pattern, Rule,
@@ -80,25 +78,25 @@ fn make_rules() -> (BasicRule, BasicRule) {
 
 #[test]
 fn case05_without_rollback_reaches_contradiction() {
-    // Ohne Rollback: TableMaker feuert (rank 30), dann TableConflict
-    // triggert Contradiction (V₇: Vorfahre wird angegriffen).
+    // Without rollback: TableMaker fires (rank 30), then TableConflict
+    // triggers Contradiction (V₇: ancestor under attack).
     let mut g = build_class_diagram();
     let (r1, r2) = make_rules();
     let rules: Vec<&dyn Rule> = vec![&r1, &r2];
     let mut cas = Cascade::new();
     let term = run_cascade(&mut cas, &mut g, &rules, 20).unwrap();
-    eprintln!("Case 5 ohne Rollback: {term:?}");
+    eprintln!("Case 5 without rollback: {term:?}");
     assert!(
         matches!(term, TerminationState::Contradiction { .. }),
-        "Ohne Rollback erwarten wir Contradiction, got {term:?}"
+        "without rollback we expect Contradiction, got {term:?}"
     );
 }
 
 #[test]
 fn case05_with_rollback_recovers_to_convergence() {
-    // Mit Rollback: TableMaker-Anwendung wird zurückgerollt, sobald
-    // TableConflict's Contradiction sichtbar wird. Endzustand:
-    // Konvergenz ohne Table.
+    // With rollback: TableMaker application is rolled back once
+    // TableConflict's Contradiction becomes visible. End state:
+    // convergence without Table.
     let mut g = build_class_diagram();
     let base = g.clone();
     let (r1, r2) = make_rules();
@@ -106,35 +104,32 @@ fn case05_with_rollback_recovers_to_convergence() {
     let mut cas = Cascade::new();
     let (term, stats) = run_cascade_with_rollback(&base, &mut cas, &mut g, &rules, 50, 10).unwrap();
     eprintln!(
-        "Case 5 mit Rollback: {term:?}, rollbacks={}",
+        "Case 5 with rollback: {term:?}, rollbacks={}",
         stats.rollback_count
     );
-    assert!(stats.rollback_count >= 1, "Mindestens 1 Rollback erwartet");
+    assert!(stats.rollback_count >= 1, "at least 1 rollback expected");
     assert!(
         matches!(
             term,
             TerminationState::Convergence | TerminationState::Duplication
         ),
-        "Nach Rollback Konvergenz erwartet, got {term:?}"
+        "after rollback we expect convergence, got {term:?}"
     );
 
-    // Final-Graph: keine aktive Table (TableMaker wurde rausgerollt)
+    // Final graph: no active Table (TableMaker was rolled out)
     let active_tables = g
         .iter_nodes()
         .filter(|n| n.type_id == "Table" && n.status != Status::Tombstone)
         .count();
-    assert_eq!(
-        active_tables, 0,
-        "Nach Rollback gibt es keine aktive Table mehr"
-    );
+    assert_eq!(active_tables, 0, "after rollback no active Table remains");
 }
 
 #[test]
 fn case05_rollback_stats_show_position_limits() {
-    // β-Beleg: Rollback-Stats enthalten die positions-skopierten
-    // Rang-Limits. Das ist die paper-relevante Mechanik —
-    // Backtracking ist nicht global, sondern auf konkrete Cascade-
-    // Positionen beschränkt.
+    // β evidence: rollback stats contain position-scoped
+    // rank limits. This is the paper-relevant mechanic —
+    // backtracking is not global, but restricted to concrete
+    // cascade positions.
     let mut g = build_class_diagram();
     let base = g.clone();
     let (r1, r2) = make_rules();
@@ -142,5 +137,5 @@ fn case05_rollback_stats_show_position_limits() {
     let mut cas = Cascade::new();
     let (_, stats) = run_cascade_with_rollback(&base, &mut cas, &mut g, &rules, 50, 10).unwrap();
     eprintln!("Limits: {:?}", stats.limits_applied);
-    assert!(!stats.limits_applied.is_empty(), "limits_applied gefüllt");
+    assert!(!stats.limits_applied.is_empty(), "limits_applied populated");
 }

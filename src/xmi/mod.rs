@@ -1,27 +1,28 @@
-//! XMI-Import/Export — EMF-Interoperabilität.
+//! XMI import/export — EMF interoperability.
 //!
-//! Pragmatischer XMI-2.0-Subset-Parser/-Writer:
+//! Pragmatic XMI 2.0 subset parser/writer:
 //!
-//! - **Containment:** geschachtelte Elemente werden zu Kanten, deren
-//!   `type_id` der XML-Tag-Name des Kind-Elements ist (entspricht in EMF
-//!   dem Namen des Containment-Features).
-//! - **Knoten-Typ:** `xmi:type` bzw. `xsi:type`. Fehlt beides, wird der
-//!   XML-Tag-Name als Typ genommen (nur sinnvoll für das Root-Element).
-//! - **Identität:** `xmi:id` → `GhostId::from_opaque`. Elemente ohne
-//!   `xmi:id` bekommen synthetische Pfad-basierte IDs
-//!   (`"$path/<tag>[<idx>]"`) — stabil bei Re-Import.
-//! - **Attribute:** alle XML-Attribute außer dem XMI-Namespace und
-//!   `xmi:type`/`xsi:type` werden als Knoten-Attribute übernommen.
-//! - **Cross-Refs:** Kind-Elemente mit `xmi:idref` oder `href="#<id>"`
-//!   werden zu Cross-Edges (ihr Tag wird zum Kanten-Typ), ohne dass ein
-//!   neuer Knoten entsteht.
+//! - **Containment:** nested elements become edges whose `type_id` is
+//!   the XML tag name of the child element (in EMF this corresponds to
+//!   the name of the containment feature).
+//! - **Node type:** `xmi:type` or `xsi:type`. If both are missing, the
+//!   XML tag name is used as the type (only meaningful for the root
+//!   element).
+//! - **Identity:** `xmi:id` → `GhostId::from_opaque`. Elements without
+//!   `xmi:id` receive synthetic path-based IDs
+//!   (`"$path/<tag>[<idx>]"`) — stable across re-import.
+//! - **Attributes:** all XML attributes except the XMI namespace and
+//!   `xmi:type`/`xsi:type` are taken over as node attributes.
+//! - **Cross-refs:** child elements with `xmi:idref` or `href="#<id>"`
+//!   become cross-edges (their tag becomes the edge type), without
+//!   creating a new node.
 //!
-//! Das Modul ist bewusst kein vollständiger EMF-Resource-Loader — es
-//! deckt den Anteil ab, der für den TGG-Benchmark gegen Papyrus-UML-
-//! Modelle reicht (Class-Diagramm-Strukturen, Containment,
-//! `href`/`idref`). Komplexere EMF-Features (profile applications,
-//! multi-file references über Resource-URIs hinweg) werden bei Bedarf
-//! ergänzt; bis dahin ist der EMF-Adapter der bevorzugte Pfad.
+//! This module is deliberately not a full EMF resource loader — it
+//! covers the portion sufficient for the TGG benchmark against
+//! Papyrus UML models (class-diagram structures, containment,
+//! `href`/`idref`). More complex EMF features (profile applications,
+//! multi-file references across resource URIs) are added on demand;
+//! until then the EMF adapter is the preferred path.
 
 use crate::graph::{GhostId, Status, TypedGraph};
 use quick_xml::events::{BytesStart, Event};
@@ -31,17 +32,17 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 use thiserror::Error;
 
-// ══ Fehler ══════════════════════════════════════════════════════════════
+// ══ Errors ══════════════════════════════════════════════════════════════
 
 #[derive(Debug, Error)]
 pub enum XmiError {
-    #[error("XML-Parser-Fehler: {0}")]
+    #[error("XML parser error: {0}")]
     Xml(#[from] quick_xml::Error),
-    #[error("Attribut-Fehler: {0}")]
+    #[error("Attribute error: {0}")]
     XmlAttr(#[from] quick_xml::events::attributes::AttrError),
-    #[error("UTF-8 im XMI: {0}")]
+    #[error("UTF-8 in XMI: {0}")]
     Utf8(#[from] std::str::Utf8Error),
-    #[error("ungültiges XMI: {0}")]
+    #[error("invalid XMI: {0}")]
     Invalid(String),
 }
 
@@ -51,17 +52,17 @@ pub type XmiResult<T> = Result<T, XmiError>;
 
 const CONTAINMENT_PREFIX: &str = "xmi_path:";
 
-/// Parst einen XMI-String in einen `TypedGraph` mit SOLID-Baseline.
+/// Parses an XMI string into a `TypedGraph` with SOLID baseline.
 ///
-/// Alle Knoten und Kanten bekommen Status `Solid`; der resultierende
-/// Graph eignet sich als Baseline für eine Cascade.
+/// All nodes and edges receive status `Solid`; the resulting graph
+/// is suitable as a baseline for a Cascade.
 pub fn import_xmi(xml: &str) -> XmiResult<TypedGraph> {
     let mut reader = Reader::from_str(xml);
     reader.config_mut().trim_text(true);
 
     let mut graph = TypedGraph::new();
     let mut stack: Vec<ParentFrame> = Vec::new();
-    // Pfad-Zähler für Kinder ohne xmi:id (deterministische synthetische IDs).
+    // Path counter for children without xmi:id (deterministic synthetic IDs).
     let mut path_counter: Vec<BTreeMap<String, usize>> = vec![BTreeMap::new()];
 
     let mut buf = Vec::new();
@@ -98,15 +99,15 @@ pub fn import_xmi(xml: &str) -> XmiResult<TypedGraph> {
     Ok(graph)
 }
 
-/// Kontext-Frame eines offenen Eltern-Elements auf dem Parsing-Stack.
+/// Context frame of an open parent element on the parsing stack.
 struct ParentFrame {
     ghost_id: GhostId,
-    /// Pfad-Segment im synthetischen ID-Raum (für Kinder ohne xmi:id).
+    /// Path segment in the synthetic ID space (for children without xmi:id).
     path: String,
 }
 
-/// Tuple-Form für [`read_element_attributes`]: (xmi:id, xmi:type/xsi:type,
-/// übrige Attribute, idref).
+/// Tuple form for [`read_element_attributes`]: (xmi:id, xmi:type/xsi:type,
+/// remaining attributes, idref).
 type ParsedXmiAttrs = (
     Option<String>,
     Option<String>,
@@ -114,7 +115,7 @@ type ParsedXmiAttrs = (
     Option<String>,
 );
 
-/// Liest `xmi:id`, `xmi:type`/`xsi:type` und die übrigen Attribute.
+/// Reads `xmi:id`, `xmi:type`/`xsi:type` and the remaining attributes.
 fn read_element_attributes(elem: &BytesStart<'_>) -> XmiResult<ParsedXmiAttrs> {
     let mut xmi_id: Option<String> = None;
     let mut xmi_type: Option<String> = None;
@@ -132,7 +133,7 @@ fn read_element_attributes(elem: &BytesStart<'_>) -> XmiResult<ParsedXmiAttrs> {
             "xmi:idref" => idref = Some(val),
             "href" => idref = Some(val.trim_start_matches('#').to_string()),
             k if k.starts_with("xmlns") || k.starts_with("xmi:") || k.starts_with("xsi:") => {
-                // Namespace-Deklarationen und XMI-Metadaten werden ignoriert.
+                // Namespace declarations and XMI metadata are ignored.
             }
             _ => {
                 attrs.insert(key, val);
@@ -151,8 +152,8 @@ fn handle_start(
 ) -> XmiResult<()> {
     let tag = std::str::from_utf8(elem.name().as_ref())?.to_string();
 
-    // `xmi:XMI` ist der Envelope: keine Knoten-Erzeugung, nur Stack-Frame,
-    // damit die Kinder zu Roots werden.
+    // `xmi:XMI` is the envelope: no node creation, only a stack frame
+    // so that its children become roots.
     if tag == "xmi:XMI" {
         if !self_closing {
             stack.push(ParentFrame {
@@ -166,7 +167,7 @@ fn handle_start(
 
     let (xmi_id, xmi_type, attrs, idref) = read_element_attributes(elem)?;
 
-    // Cross-Ref: Kind-Element mit idref/href → nur Kante, kein Knoten.
+    // Cross-ref: child element with idref/href → edge only, no node.
     if let Some(target_opaque) = idref.as_ref() {
         if let Some(parent) = stack.last() {
             let target = GhostId::from_opaque(target_opaque);
@@ -179,7 +180,7 @@ fn handle_start(
             );
         }
         if !self_closing {
-            // Virtuelles Frame, damit der passende End-Tag sauber popt.
+            // Virtual frame so that the matching end tag pops cleanly.
             stack.push(ParentFrame {
                 ghost_id: GhostId::from_baseline("__xmi_void__"),
                 path: String::new(),
@@ -189,11 +190,11 @@ fn handle_start(
         return Ok(());
     }
 
-    // Pfad-Index: deterministische Nummerierung des aktuellen Tags im
-    // Geschwister-Kontext des aktuellen Frames.
+    // Path index: deterministic numbering of the current tag in the
+    // sibling context of the current frame.
     let counters = path_counter
         .last_mut()
-        .ok_or_else(|| XmiError::Invalid("Pfad-Stack leer".into()))?;
+        .ok_or_else(|| XmiError::Invalid("path stack empty".into()))?;
     let idx = counters.entry(tag.clone()).or_insert(0);
     let my_path_segment = format!("{}[{}]", tag, *idx);
     *idx += 1;
@@ -204,13 +205,13 @@ fn handle_start(
         .unwrap_or_else(|| CONTAINMENT_PREFIX.to_string());
     let my_path = format!("{parent_path}/{my_path_segment}");
 
-    // Ghost-ID bestimmen: xmi:id bevorzugt, sonst Pfad-Hash.
+    // Determine Ghost-ID: xmi:id preferred, otherwise path hash.
     let opaque = xmi_id.clone().unwrap_or_else(|| my_path.clone());
     let ghost_id = GhostId::from_opaque(&opaque);
 
     let type_id = xmi_type.unwrap_or_else(|| tag.clone());
 
-    // Knoten anlegen, falls nicht bereits existent.
+    // Create node if not already present.
     if graph.get_node(&ghost_id).is_none() {
         graph.insert_node_data(crate::graph::NodeData {
             id: ghost_id,
@@ -220,7 +221,7 @@ fn handle_start(
         });
     }
 
-    // Containment-Kante von Parent zu diesem Knoten.
+    // Containment edge from parent to this node.
     if let Some(parent) = stack.last() {
         let _ = graph.add_edge(
             parent.ghost_id,
@@ -243,13 +244,13 @@ fn handle_start(
 
 // ══ Export ══════════════════════════════════════════════════════════════
 
-/// Serialisiert einen `TypedGraph` zurück nach XMI.
+/// Serializes a `TypedGraph` back to XMI.
 ///
-/// Strategie: Knoten ohne eingehende Containment-Kante werden als Roots
-/// emittiert, alle anderen rekursiv entlang der Containment-Kanten. Der
-/// Schlüssel `type_id` wird als `xmi:type` emittiert; der Tag-Name ist
-/// das Containment-Feature (Kanten-Typ) — für Roots ist das ein
-/// synthetisches `xmi:XMI`-Envelope.
+/// Strategy: nodes without an incoming containment edge are emitted as
+/// roots, all others recursively along the containment edges. The key
+/// `type_id` is emitted as `xmi:type`; the tag name is the containment
+/// feature (edge type) — for roots this is a synthetic `xmi:XMI`
+/// envelope.
 pub fn export_xmi(graph: &TypedGraph) -> XmiResult<String> {
     let mut buf: Vec<u8> = Vec::new();
     buf.extend_from_slice(b"<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
@@ -262,7 +263,7 @@ pub fn export_xmi(graph: &TypedGraph) -> XmiResult<String> {
     envelope.push_attribute(("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance"));
     writer.write_event(Event::Start(envelope.clone()))?;
 
-    // Roots: Knoten ohne eingehende Containment-Kanten (und matchable).
+    // Roots: nodes without incoming containment edges (and matchable).
     let incoming: std::collections::HashSet<GhostId> = graph
         .iter_edges()
         .into_iter()
@@ -277,8 +278,8 @@ pub fn export_xmi(graph: &TypedGraph) -> XmiResult<String> {
         .collect();
 
     for root in roots {
-        // Für Roots nehmen wir den Typ als Tag (EMF-Konvention:
-        // `<uml:Model ...>` statt `<packagedElement xmi:type="uml:Model">`).
+        // For roots we use the type as the tag (EMF convention:
+        // `<uml:Model ...>` instead of `<packagedElement xmi:type="uml:Model">`).
         let root_tag = graph
             .get_node(&root)
             .map(|n| n.type_id.clone())
@@ -298,8 +299,8 @@ fn write_node_recursive<W: std::io::Write>(
     visited: &mut Vec<GhostId>,
 ) -> XmiResult<()> {
     if visited.contains(id) {
-        // Zyklus (sollte bei Containment nicht passieren) — als Cross-Ref
-        // emittieren.
+        // Cycle (should not happen for containment) — emit as a
+        // cross-ref.
         let mut cr = BytesStart::new(tag);
         cr.push_attribute(("xmi:idref", id.short().as_str()));
         writer.write_event(Event::Empty(cr))?;
@@ -363,17 +364,17 @@ mod tests {
     #[test]
     fn import_extracts_nodes_and_containment() {
         let g = import_xmi(MINIMAL_UML_XMI).expect("import ok");
-        // Knoten: XMI-Root, Model, 2 Klassen, 1 Attribut = 5 (wenn xmi:XMI
-        // auch als Knoten gezählt wird).
+        // Nodes: XMI root, Model, 2 classes, 1 attribute = 5 (when xmi:XMI
+        // is also counted as a node).
         assert!(
             g.node_count() >= 4,
-            "mindestens 4 Knoten, got {}",
+            "at least 4 nodes, got {}",
             g.node_count()
         );
 
         // xmi:id "_c1" → Person
         let c1 = GhostId::from_opaque("_c1");
-        let n = g.get_node(&c1).expect("Person existiert");
+        let n = g.get_node(&c1).expect("Person exists");
         assert_eq!(n.type_id, "uml:Class");
         assert_eq!(n.attrs.get("name").map(String::as_str), Some("Person"));
     }
@@ -382,7 +383,7 @@ mod tests {
     fn import_preserves_attributes() {
         let g = import_xmi(MINIMAL_UML_XMI).expect("import ok");
         let root = GhostId::from_opaque("_root");
-        let n = g.get_node(&root).expect("Model existiert");
+        let n = g.get_node(&root).expect("Model exists");
         assert_eq!(n.attrs.get("name").map(String::as_str), Some("TestModel"));
     }
 
@@ -394,11 +395,11 @@ mod tests {
         let c2 = GhostId::from_opaque("_c2");
         assert!(
             g.has_edge_between(&root, &c1, "packagedElement"),
-            "Model → Person Containment fehlt"
+            "Model → Person containment missing"
         );
         assert!(
             g.has_edge_between(&root, &c2, "packagedElement"),
-            "Model → Address Containment fehlt"
+            "Model → Address containment missing"
         );
     }
 
@@ -406,14 +407,14 @@ mod tests {
     fn roundtrip_preserves_structure() {
         let g1 = import_xmi(MINIMAL_UML_XMI).expect("import ok");
         let xml = export_xmi(&g1).expect("export ok");
-        // Nicht bit-identisch, aber re-importierbar mit gleicher Anzahl
-        // matchable Knoten (IDs ändern sich durch short()-Form, aber die
-        // Struktur bleibt erhalten).
+        // Not bit-identical, but re-importable with the same number of
+        // matchable nodes (IDs change due to short() form, but the
+        // structure is preserved).
         let g2 = import_xmi(&xml).expect("re-import ok");
         assert_eq!(
             g1.matchable_nodes().count(),
             g2.matchable_nodes().count(),
-            "Knoten-Anzahl geändert: vorher={}, nachher={}",
+            "node count changed: before={}, after={}",
             g1.matchable_nodes().count(),
             g2.matchable_nodes().count()
         );
@@ -436,7 +437,7 @@ mod tests {
         let c2 = GhostId::from_opaque("_c2");
         assert!(
             g.has_edge_between(&c2, &c1, "superClass"),
-            "B → A superClass-Referenz fehlt"
+            "B → A superClass reference missing"
         );
     }
 
@@ -447,29 +448,28 @@ mod tests {
         assert_eq!(g.node_count(), 0);
     }
 
-    /// Case 11 (Sirius EdgeMapping xsi:type): der XMI-Writer schreibt
-    /// `xmi:type` für jeden Knoten, was Sirius beim Lesen als Subtype-
-    /// Hint nutzt. Sirius akzeptiert sowohl `xmi:type` als auch
-    /// `xsi:type` — beide sind in der EMF-XMI-Spec als equivalent
-    /// definiert.
+    /// Case 11 (Sirius EdgeMapping xsi:type): the XMI writer emits
+    /// `xmi:type` for every node, which Sirius uses on read as a
+    /// subtype hint. Sirius accepts both `xmi:type` and `xsi:type` —
+    /// both are defined as equivalent in the EMF XMI spec.
     #[test]
     fn case11_export_writes_xmi_type_for_each_node() {
         let g = import_xmi(MINIMAL_UML_XMI).expect("import ok");
         let exported = export_xmi(&g).expect("export ok");
-        // Der Writer schreibt `xmi:type` für jeden Knoten — nicht
-        // `xsi:type`, aber semantisch equivalent in EMF.
+        // The writer emits `xmi:type` for every node — not
+        // `xsi:type`, but semantically equivalent in EMF.
         assert!(
             exported.contains("xmi:type=\"uml:Class\"")
                 || exported.contains("xmi:type=\"uml:Model\""),
-            "Export muss xmi:type-Attribut für Knoten schreiben.\nExport:\n{exported}"
+            "export must emit xmi:type attribute for nodes.\nExport:\n{exported}"
         );
     }
 
-    /// Case 11 Roundtrip: import → export → import erhält die
-    /// EClass-Type-Information (uml:Class etc.). Wenn der Writer
-    /// xmi:type weglassen würde, würde der zweite Import die Knoten
-    /// als generischen Tag-Namen-Type lesen statt als spezifische
-    /// EClass — das ist genau das Sirius-EdgeMapping-Symptom.
+    /// Case 11 roundtrip: import → export → import preserves the
+    /// EClass type information (uml:Class etc.). If the writer were
+    /// to omit xmi:type, the second import would read the nodes as
+    /// the generic tag-name type instead of the specific EClass —
+    /// that is exactly the Sirius EdgeMapping symptom.
     #[test]
     fn case11_roundtrip_preserves_eclass_type() {
         let g1 = import_xmi(MINIMAL_UML_XMI).expect("import ok");
@@ -479,9 +479,9 @@ mod tests {
         let class_count_post = g2.iter_nodes().filter(|n| n.type_id == "uml:Class").count();
         assert_eq!(
             class_count_pre, class_count_post,
-            "uml:Class-Knoten-Count muss durch Roundtrip erhalten bleiben \
+            "uml:Class node count must be preserved across roundtrip \
              (pre={class_count_pre}, post={class_count_post})"
         );
-        assert!(class_count_post >= 2, "mindestens 2 Klassen erwartet");
+        assert!(class_count_post >= 2, "at least 2 classes expected");
     }
 }

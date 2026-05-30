@@ -1,21 +1,21 @@
-//! Rule-Spec-Deserialisierung.
+//! Rule spec deserialization.
 //!
-//! Die Structs spiegeln exakt das JSON-Format, das
-//! `RuleSetJsonExporter` in `seesaw-core-java` produziert. Kontrakt:
+//! The structs mirror exactly the JSON format that
+//! `RuleSetJsonExporter` in `seesaw-core-java` produces. Contract:
 //!
-//! - **snake_case**-Feldnamen (Standard in Rust-serde).
-//! - **leere Arrays** statt `null` für Listen (Array-Defaults via
+//! - **snake_case** field names (the default for Rust serde).
+//! - **empty arrays** instead of `null` for lists (array defaults via
 //!   `#[serde(default)]`).
-//! - **optionale Strings** als `Option<String>` — der Java-Exporter
-//!   lässt Null-Felder weg, daher muss `Option<T>` korrekt
-//!   deserialisieren wenn der Key fehlt.
+//! - **optional strings** as `Option<String>` — the Java exporter
+//!   omits null fields, so `Option<T>` must deserialize correctly
+//!   when the key is missing.
 //!
-//! Tests im Submodul `tests` verifizieren die Kompatibilität mit
-//! demselben Demo-Rule-Set, das die Java-Tests produzieren.
+//! Tests in the `tests` submodule verify compatibility with the
+//! same demo rule set that the Java tests produce.
 
 use serde::{Deserialize, Serialize};
 
-/// Toplevel-Spec für eine `.seesaw-rules`-Datei.
+/// Top-level spec for a `.seesaw-rules` file.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuleSetSpec {
     #[serde(default)]
@@ -26,11 +26,11 @@ pub struct RuleSetSpec {
     pub rules: Vec<RuleSpec>,
 }
 
-/// Einzelne TGG-Regel.
+/// A single TGG rule.
 ///
-/// `l_pattern` und `r_pattern` sind gleichwertig (Paper-Bijektivität);
-/// die Engine entscheidet aus dem Match-Zustand, welche Seite zu
-/// komplettieren ist.
+/// `l_pattern` and `r_pattern` are equivalent (paper bijectivity);
+/// the engine decides from the match state which side has to
+/// be completed.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RuleSpec {
     pub name: String,
@@ -43,20 +43,20 @@ pub struct RuleSpec {
     pub r_pattern: Option<PatternSpec>,
     #[serde(default)]
     pub correspondence_links: Vec<CorrespondenceLinkSpec>,
-    /// Negative Application Conditions (M2). Wenn irgendeine NAC
-    /// im Graph matchbar ist — mit den Match-Bindings aus
-    /// `shared_with_l` als Anker fixiert —, wird der Rule-Kandidat
-    /// verworfen.
+    /// Negative Application Conditions (M2). If any NAC is
+    /// matchable in the graph — pinned by the match bindings from
+    /// `shared_with_l` as anchors — the rule candidate is
+    /// discarded.
     #[serde(default)]
     pub nacs: Vec<NegativeApplicationCondition>,
 }
 
-/// Negative Application Condition — ein "verbotenes" Sub-Pattern.
+/// Negative Application Condition — a "forbidden" sub-pattern.
 ///
-/// `shared_with_l` listet NodePattern-IDs, die sowohl im NAC als
-/// auch im `l_pattern` der Rule vorkommen. Beim NAC-Check werden
-/// diese an die Match-Bindings der Rule gekoppelt — der Rest
-/// bleibt frei matchbar.
+/// `shared_with_l` lists NodePattern IDs that appear both in the
+/// NAC and in the rule's `l_pattern`. During the NAC check these
+/// are bound to the rule's match bindings — the rest remains
+/// freely matchable.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NegativeApplicationCondition {
     pub name: String,
@@ -64,13 +64,13 @@ pub struct NegativeApplicationCondition {
     pub nodes: Vec<NodePatternSpec>,
     #[serde(default)]
     pub edges: Vec<EdgePatternSpec>,
-    /// NodePattern-IDs, die mit dem `l_pattern` der Rule geteilt
-    /// sind (Anker-Bindings werden beim NAC-Check fixiert).
+    /// NodePattern IDs that are shared with the rule's `l_pattern`
+    /// (anchor bindings are pinned during the NAC check).
     #[serde(default)]
     pub shared_with_l: Vec<String>,
 }
 
-/// Graph-Match-Muster (Knoten + Kanten).
+/// Graph match pattern (nodes + edges).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct PatternSpec {
     #[serde(default)]
@@ -79,7 +79,7 @@ pub struct PatternSpec {
     pub edges: Vec<EdgePatternSpec>,
 }
 
-/// Knoten-Match mit optionalen Literal-Constraints.
+/// Node match with optional literal constraints.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NodePatternSpec {
     pub id: String,
@@ -88,7 +88,7 @@ pub struct NodePatternSpec {
     pub constraints: Vec<AttrConstraintSpec>,
 }
 
-/// Kanten-Match via Knoten-IDs.
+/// Edge match via node IDs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EdgePatternSpec {
     pub kind: String,
@@ -96,10 +96,10 @@ pub struct EdgePatternSpec {
     pub target_node_id: String,
 }
 
-/// Attribut-Bedingung mit getaggtem Matcher (M1).
+/// Attribute constraint with a tagged matcher (M1).
 ///
-/// Legacy-Feld `expected_value` wurde zur M1-Umstellung entfernt —
-/// Literal-Bedingungen schreiben jetzt
+/// The legacy `expected_value` field was removed for the M1
+/// migration — literal constraints now write
 /// `{ "name": "...", "matcher": { "type": "literal", "value": "..." } }`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttrConstraintSpec {
@@ -108,7 +108,7 @@ pub struct AttrConstraintSpec {
 }
 
 impl AttrConstraintSpec {
-    /// Konvenienz: Literal-Constraint.
+    /// Convenience: literal constraint.
     pub fn literal(name: impl Into<String>, value: impl Into<String>) -> Self {
         Self {
             name: name.into(),
@@ -153,10 +153,10 @@ impl AttrConstraintSpec {
     }
 }
 
-/// Matcher-Varianten für Attribut-Constraints (M1).
+/// Matcher variants for attribute constraints (M1).
 ///
 /// Serialize/Deserialize via `#[serde(tag = "type")]` — in JSON
-/// erscheint ein `type`-Feld + Typ-spezifische Felder:
+/// a `type` field appears together with type-specific fields:
 ///
 /// ```json
 /// { "type": "regex", "pattern": "^Abstract.*$" }
@@ -166,30 +166,30 @@ impl AttrConstraintSpec {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AttrMatcherSpec {
-    /// Exakte Wert-Gleichheit.
+    /// Exact value equality.
     Literal { value: String },
-    /// Regex-Match (Rust `regex`-Crate-Semantik, nicht-gleich "find").
+    /// Regex match (Rust `regex` crate semantics, not the same as "find").
     Regex { pattern: String },
-    /// String-Präfix-Match.
+    /// String prefix match.
     Prefix { prefix: String },
-    /// String-Suffix-Match.
+    /// String suffix match.
     Suffix { suffix: String },
-    /// Numerischer Bereich (inklusiv). Wert wird via `parse::<f64>()`
-    /// konvertiert. Parse-Fehler → kein Match.
+    /// Numeric range (inclusive). The value is converted via
+    /// `parse::<f64>()`. Parse errors → no match.
     NumericRange { min: f64, max: f64 },
 }
 
-/// Rolle eines Correspondence-Links (rc7): entkoppelt context-vs-creation
-/// vom span-Anker.
+/// Role of a correspondence link (rc7): decouples context-vs-creation
+/// from the span anchor.
 ///
-/// - `Establishes` — der Link etabliert eine neue Korrespondenz; der
-///   output-seitige Endpunkt wird in der jeweiligen Richtung erzeugt.
-/// - `References` — der Link referenziert eine bereits bestehende
-///   Korrespondenz; beide Endpunkte sind in der jeweiligen Richtung
-///   context (Match). Trägt span-Bindings für die GhostId-Identität,
-///   ohne dass dadurch etwas erzeugt wird.
+/// - `Establishes` — the link establishes a new correspondence; the
+///   output-side endpoint is created in the respective direction.
+/// - `References` — the link references an already existing
+///   correspondence; both endpoints are context (match) in the
+///   respective direction. Carries span bindings for GhostId
+///   identity without creating anything.
 ///
-/// `role == None` in [`CorrespondenceLinkSpec`] ⟹ rc6-Fallback
+/// `role == None` in [`CorrespondenceLinkSpec`] ⟹ rc6 fallback
 /// (`attribute_bindings.is_empty()` ⟹ References).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CorrRole {
@@ -197,7 +197,7 @@ pub enum CorrRole {
     References,
 }
 
-/// Persistente L↔R-Bindung, optional mit Attribut-Sync-Bindings.
+/// Persistent L↔R binding, optionally with attribute sync bindings.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CorrespondenceLinkSpec {
     pub l_node_id: String,
@@ -206,18 +206,18 @@ pub struct CorrespondenceLinkSpec {
     pub kind: Option<String>,
     #[serde(default)]
     pub attribute_bindings: Vec<AttrBindingSpec>,
-    /// rc7: explizite Corr-Rolle. `None` ⟹ rc6-Fallback aus
+    /// rc7: explicit CorrRole. `None` ⟹ rc6 fallback from
     /// `attribute_bindings.is_empty()`.
     #[serde(default)]
     pub role: Option<CorrRole>,
 }
 
-/// Attribut-Sync-Bindung zwischen zwei über `CorrespondenceLinkSpec`
-/// verknüpften Knoten.
+/// Attribute sync binding between two nodes linked via
+/// `CorrespondenceLinkSpec`.
 ///
-/// Die Transformations-Semantik ist in [`AttrTransform`] dokumentiert;
-/// das Spec-Feld hält nur den String-Tag, damit das JSON stabil und
-/// engine-versions-unabhängig bleibt.
+/// The transformation semantics are documented in [`AttrTransform`];
+/// the spec field only holds the string tag so that the JSON stays
+/// stable and independent of engine versions.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AttrBindingSpec {
     pub l_attr_name: String,
@@ -226,19 +226,19 @@ pub struct AttrBindingSpec {
     pub transformation: Option<String>,
 }
 
-/// Interpretierte Transformations-Funktion über einem Attribut-Wert.
-/// Die Umkehrbarkeit ist Voraussetzung für TGG-Bijektivität — irre-
-/// versible Transformationen gehören nicht in den Spec-Layer.
+/// Interpreted transformation function over an attribute value.
+/// Invertibility is a precondition for TGG bijectivity —
+/// irreversible transformations do not belong in the spec layer.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AttrTransform {
-    /// Kein-Op; Wert 1:1 übernehmen.
+    /// No-op; take the value 1:1.
     Identity,
-    /// Erster Buchstabe großschreiben.
+    /// Uppercase the first letter.
     Capitalize,
-    /// Java-Bean-Getter-Name: `"name"` → `"getName"`. Umkehrung:
-    /// strippe `"get"`-Präfix, erster Buchstabe klein.
+    /// Java bean getter name: `"name"` → `"getName"`. Inverse:
+    /// strip the `"get"` prefix, lowercase the first letter.
     GetterName,
-    /// Java-Bean-Setter-Name: `"name"` → `"setName"`.
+    /// Java bean setter name: `"name"` → `"setName"`.
     SetterName,
 }
 
@@ -253,7 +253,7 @@ impl AttrTransform {
         }
     }
 
-    /// String-Tag der Variante (Inverses zu `parse`).
+    /// String tag of the variant (inverse of `parse`).
     pub fn tag(&self) -> &'static str {
         match self {
             Self::Identity => "identity",
@@ -272,7 +272,7 @@ impl AttrTransform {
         }
     }
 
-    /// Umkehrfunktion — Grundlage für Bijektivität.
+    /// Inverse function — foundation for bijectivity.
     pub fn apply_inverse(&self, value: &str) -> String {
         match self {
             Self::Identity => value.to_string(),
@@ -299,7 +299,7 @@ fn lowercase_first(s: &str) -> String {
     }
 }
 
-/// Fehler beim Parsen eines unbekannten Transformations-Tags.
+/// Error when parsing an unknown transformation tag.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UnknownTransform(pub String);
 
@@ -311,7 +311,7 @@ impl std::fmt::Display for UnknownTransform {
 
 impl std::error::Error for UnknownTransform {}
 
-/// Convenience: lädt ein RuleSet aus JSON-String.
+/// Convenience: loads a RuleSet from a JSON string.
 pub fn parse_ruleset(json: &str) -> Result<RuleSetSpec, serde_json::Error> {
     serde_json::from_str(json)
 }
@@ -453,16 +453,16 @@ mod tests {
     #[test]
     fn malformed_json_schlaegt_fehl() {
         let err = parse_ruleset("{not json").unwrap_err();
-        // nur irgendein Fehler — konkrete Meldung hängt von serde_json-Version ab
+        // just any error — the concrete message depends on the serde_json version
         assert!(!err.to_string().is_empty());
     }
 
     #[test]
     fn demo_ruleset_json_roundtrip() {
-        // Das ist das JSON-Format, das `DemoRules.buildDemoRuleSet()` auf
-        // der Java-Seite produziert. Die konkreten Strings hier sind das
-        // P7-Austauschformat und werden von den Java-Tests symmetrisch
-        // validiert.
+        // This is the JSON format that `DemoRules.buildDemoRuleSet()`
+        // produces on the Java side. The concrete strings here are the
+        // P7 interchange format and are symmetrically validated by the
+        // Java tests.
         let json = r#"{
             "name": "seesaw-demo",
             "rules": [
@@ -501,7 +501,7 @@ mod tests {
         assert_eq!(r.name, "R_Class");
         assert_eq!(r.rank, 40);
 
-        // Shared anchor: der Model-Knoten mit id='m' erscheint auf L und R
+        // Shared anchor: the Model node with id='m' appears on both L and R
         let l = r.l_pattern.as_ref().unwrap();
         let r_pat = r.r_pattern.as_ref().unwrap();
         let l_has_m = l.nodes.iter().any(|n| n.id == "m" && n.kind == "Model");
@@ -511,7 +511,7 @@ mod tests {
             "Model-Node muss auf beiden Seiten da sein"
         );
 
-        // AttrBinding mit identity auf name ↔ name
+        // AttrBinding with identity on name ↔ name
         let cl = &r.correspondence_links[0];
         assert_eq!(cl.attribute_bindings.len(), 1);
         assert_eq!(cl.attribute_bindings[0].l_attr_name, "name");

@@ -1,13 +1,13 @@
-//! Engine-Modul — T₃, T₄, T₆.
+//! Engine module — T₃, T₄, T₆.
 //!
-//! Zuständigkeit:
-//! - Ghost-View als inkrementelle Projektion (Def. 6.1, 6.2)
-//! - Matcher-Contract (Def. 6.3) inkl. Status-awareness
-//! - Pattern-Matching mit Injektivitätszwang und Edge-Patterns (Phase 1.3b)
-//! - Regel-Trait mit Produktion (Def. 4.1)
-//! - Rang-basierte Selektion höchstrangiger Kandidaten (Def. 4.3)
-//! - Canonical Match-Enumeration μ (Def. 4.2)
-//! - Cascade-Controller
+//! Responsibilities:
+//! - Ghost-View as an incremental projection (Def. 6.1, 6.2)
+//! - Matcher contract (Def. 6.3) including status awareness
+//! - Pattern matching with enforced injectivity and edge patterns (Phase 1.3b)
+//! - Rule trait with production (Def. 4.1)
+//! - Rank-based selection of highest-ranked candidates (Def. 4.3)
+//! - Canonical match enumeration μ (Def. 4.2)
+//! - Cascade controller
 
 use crate::graph::{GhostId, NodeData, Status, TypedGraph};
 use crate::ops::{DeltaEntry, Op, OpError, OpTarget, Origin};
@@ -15,19 +15,19 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use std::fmt;
 use thiserror::Error;
 
-// ── Attribut-Prädikate ═══════════════════════════════════════════════════
+// ── Attribute predicates ═════════════════════════════════════════════════
 
 #[derive(Clone, Debug)]
 pub enum AttrPredicate {
     Exists,
     Equals(String),
-    /// Regex-Match über Wert (Rust `regex`-Crate).
+    /// Regex match against the value (Rust `regex` crate).
     Regex(regex::Regex),
-    /// Wert startet mit Präfix.
+    /// Value starts with the given prefix.
     Prefix(String),
-    /// Wert endet mit Suffix.
+    /// Value ends with the given suffix.
     Suffix(String),
-    /// Numerischer Bereich, Wert wird via `parse::<f64>()` konvertiert.
+    /// Numeric range; the value is converted via `parse::<f64>()`.
     NumericRange {
         min: f64,
         max: f64,
@@ -89,20 +89,20 @@ impl NodePattern {
     }
 }
 
-/// Kanten-Pattern: verlangt matchbare Kante zwischen zwei Pattern-Variablen.
+/// Edge pattern: requires a matchable edge between two pattern variables.
 #[derive(Clone, Debug)]
 pub struct EdgePattern {
     pub source_var: String,
     pub target_var: String,
     pub type_id: String,
-    /// rc7 (S) — Membership-Match: richtungs- UND kind-agnostisch. Wahr
-    /// nur für synthetische Korrespondenz-Mitgliedschafts-Kanten: eine
-    /// Korrespondenz ist symmetrisch, ihr Kontext-Match darf nicht von
-    /// der `corrL`/`corrR`-Orientierung (die richtungs-relativ erzeugt
-    /// wird) abhängen. Der Matcher prüft dann „irgendeine Kante zwischen
-    /// den beiden Knoten, in beliebiger Richtung". Der Matcher bleibt
-    /// metamodell-agnostisch (kennt corrL/corrR nicht); die Kanten-Layout-
-    /// Kenntnis bleibt in `instantiate`.
+    /// rc7 (S) — membership match: direction- AND kind-agnostic. True
+    /// only for synthetic correspondence membership edges: a
+    /// correspondence is symmetric, so its context match must not
+    /// depend on the `corrL`/`corrR` orientation (which is emitted
+    /// relative to direction). The matcher then checks for "any edge
+    /// between the two nodes, in either direction". The matcher stays
+    /// metamodel-agnostic (it does not know corrL/corrR); knowledge of
+    /// the edge layout remains in `instantiate`.
     pub membership: bool,
 }
 
@@ -116,8 +116,8 @@ impl EdgePattern {
         }
     }
 
-    /// rc7 (S): symmetrische Korrespondenz-Mitgliedschaft — `a` und `b`
-    /// sind durch irgendeine Kante (beliebige Richtung) verbunden.
+    /// rc7 (S): symmetric correspondence membership — `a` and `b`
+    /// are connected by any edge (in either direction).
     pub fn membership(a: &str, b: &str) -> Self {
         Self {
             source_var: a.into(),
@@ -163,10 +163,10 @@ impl PatternMatch {
     }
 }
 
-/// Canonical Match-Key für deterministische Enumeration μ (Def. 4.2).
+/// Canonical match key for deterministic enumeration μ (Def. 4.2).
 ///
-/// Ordnet Matches lexikographisch nach den gebundenen Ghost-IDs in
-/// Pattern-Variablen-Reihenfolge.
+/// Orders matches lexicographically by their bound Ghost-IDs in
+/// pattern-variable order.
 pub fn canonical_key(m: &PatternMatch, pattern: &Pattern) -> Vec<[u8; 32]> {
     pattern
         .nodes
@@ -176,35 +176,36 @@ pub fn canonical_key(m: &PatternMatch, pattern: &Pattern) -> Vec<[u8; 32]> {
 }
 
 fn id_bytes(id: GhostId) -> [u8; 32] {
-    // GhostId ist tuple-struct; wir brauchen einen bytes-accessor.
-    // serde-bincode wäre eine Option; hier direkt über Hash-Seed als proxy:
-    // Da GhostId nach Copy implementiert ist, ist der direkte Zugriff
-    // via Debug-String unschön. Sauberer Weg: GhostId-API erweitern.
-    // Für jetzt: über serde_json-Roundtrip als Fallback wäre absurd.
-    // Beste Lösung: GhostId einen bytes()-Accessor geben.
+    // GhostId is a tuple struct; we need a bytes accessor.
+    // serde-bincode would be one option; here we go directly via the
+    // hash seed as a proxy. Since GhostId implements Copy, direct
+    // access via the Debug string would be ugly. The clean path is
+    // to extend the GhostId API. For now, a serde_json roundtrip
+    // fallback would be absurd. Best solution: give GhostId a
+    // bytes() accessor.
     id.as_bytes()
 }
 
-/// Findet alle Matches eines Patterns im Graphen.
+/// Finds all matches of a pattern in the graph.
 ///
-/// Eigenschaften:
-/// - **Ghost-aware**: `graph.matchable_nodes()` schließt TOMB aus.
-/// - **Injektiv**: verschiedene Pattern-Variablen binden an verschiedene
-///   Graph-Knoten.
-/// - **Edge-Constraints**: alle `pattern.edges` müssen im Graph existieren
-///   und matchbar sein.
+/// Properties:
+/// - **Ghost-aware**: `graph.matchable_nodes()` excludes TOMB.
+/// - **Injective**: distinct pattern variables bind to distinct
+///   graph nodes.
+/// - **Edge constraints**: all `pattern.edges` must exist in the
+///   graph and be matchable.
 ///
-/// Naive Backtracking-Enumeration.
+/// Naive backtracking enumeration.
 pub fn find_matches(pattern: &Pattern, graph: &TypedGraph) -> Vec<PatternMatch> {
     find_matches_with_fixed(pattern, graph, &HashMap::new())
 }
 
-/// Variante von [`find_matches`] mit Pre-Bindings: bestimmte
-/// Pattern-Variablen sind bereits an konkrete `GhostId`s fixiert.
-/// Der Matcher verzweigt nur über die restlichen Variablen.
+/// Variant of [`find_matches`] with pre-bindings: certain pattern
+/// variables are already pinned to concrete `GhostId`s. The matcher
+/// branches only over the remaining variables.
 ///
-/// Verwendet von NAC-Checks (M2), wo die `shared_with_l`-Anker
-/// aus dem Haupt-Match bereits gebunden sind.
+/// Used by NAC checks (M2), where the `shared_with_l` anchors from
+/// the main match are already bound.
 pub fn find_matches_with_fixed(
     pattern: &Pattern,
     graph: &TypedGraph,
@@ -228,65 +229,65 @@ pub fn find_matches_with_fixed(
         current.bindings.insert(k.clone(), *v);
     }
     enumerate_matches(pattern, graph, &plan, 0, &mut current, &mut results);
-    // Determinismus (Def. 4.2): kanonische μ-Ordnung, unabhängig vom
-    // edge-geleiteten Traversal-Pfad. Die Match-*Menge* ist pfad-
-    // invariant (erschöpfende Suche); nur die Push-Reihenfolge variiert.
+    // Determinism (Def. 4.2): canonical μ ordering, independent of
+    // the edge-guided traversal path. The *set* of matches is path-
+    // invariant (exhaustive search); only the push order varies.
     results.sort_by_key(|m| canonical_key(m, pattern));
     results
 }
 
-// ── Edge-geleiteter Match-Plan ═══════════════════════════════════════════
+// ── Edge-guided match plan ═══════════════════════════════════════════════
 //
-// Statt das kartesische Produkt über alle Pattern-Positionen zu
-// enumerieren und Edge-Constraints erst am Blatt zu prüfen (O(M^N)),
-// arbeitet der Matcher die Knoten in *connected order* ab: ein
-// Seed-Knoten wird per Typ-Scan gewählt, jeder Folgeknoten hängt per
-// Pattern-Edge an einem bereits gebundenen Knoten und wird über
-// Graph-Adjazenz statt über die volle Typ-Population erzeugt. Das
-// senkt den Worst Case auf O(M · d^(N-1)), d = mittlerer Knotengrad.
+// Instead of enumerating the cartesian product over all pattern
+// positions and checking edge constraints only at the leaf (O(M^N)),
+// the matcher walks the nodes in *connected order*: a seed node is
+// chosen via a type scan, each follow-up node hangs on an already
+// bound node via a pattern edge and is generated from graph adjacency
+// rather than from the full type population. That lowers the worst
+// case to O(M · d^(N-1)), where d is the average node degree.
 
-/// Eine Pattern-Edge eines Plan-Knotens zu einem im Plan bereits
-/// platzierten Knoten — relativ zum *neuen* Knoten ausgedrückt.
+/// A pattern edge of a plan node to an already placed plan node —
+/// expressed relative to the *new* node.
 struct EdgeLink {
-    /// Variable des bereits platzierten Nachbarn.
+    /// Variable of the already placed neighbor.
     placed_var: String,
     type_id: String,
-    /// `true`: der neue Knoten ist Source, der platzierte ist Target.
-    /// `false`: der platzierte ist Source, der neue ist Target.
+    /// `true`: the new node is the source, the placed one is the target.
+    /// `false`: the placed one is the source, the new node is the target.
     new_is_source: bool,
-    /// rc7 (S): richtungs-/kind-agnostische Korrespondenz-Mitgliedschaft
-    /// (siehe [`EdgePattern::membership`]).
+    /// rc7 (S): direction- and kind-agnostic correspondence membership
+    /// (see [`EdgePattern::membership`]).
     membership: bool,
 }
 
-/// Ein Schritt im Traversal-Plan: welcher Pattern-Knoten als nächstes
-/// gebunden wird und wie seine Kandidaten erzeugt werden.
+/// One step in the traversal plan: which pattern node is bound next
+/// and how its candidates are produced.
 struct MatchStep {
-    /// Index in `pattern.nodes`.
+    /// Index into `pattern.nodes`.
     node_idx: usize,
-    /// `true`: Variable ist via `fixed` vorgebunden — nur validieren.
+    /// `true`: variable is pre-bound via `fixed` — only validate.
     pre_bound: bool,
-    /// Pattern-Edges zu bereits platzierten Knoten. Nicht-leer ⇒
-    /// `links[0]` dient als Adjazenz-Guide (Kandidaten aus den
-    /// Nachbarn des Ankers); alle Links werden zusätzlich verifiziert.
-    /// Leer ⇒ Seed-Knoten (Typ-Scan).
+    /// Pattern edges to already placed nodes. Non-empty ⇒ `links[0]`
+    /// serves as the adjacency guide (candidates from the neighbors
+    /// of the anchor); all links are verified in addition. Empty ⇒
+    /// seed node (type scan).
     links: Vec<EdgeLink>,
 }
 
-/// Baut den deterministischen Traversal-Plan für ein Pattern.
+/// Builds the deterministic traversal plan for a pattern.
 ///
-/// Determinismus: das Pattern ist fixe Eingabe, die Knoten-Auswahl ist
-/// eine reine Funktion über (Pattern, platzierte Menge). Der
-/// abschließende `canonical_key`-Sort in [`find_matches_with_fixed`]
-/// macht die Plan-Reihenfolge ohnehin an der API-Grenze unsichtbar.
+/// Determinism: the pattern is a fixed input; node selection is a
+/// pure function over (pattern, placed set). The final
+/// `canonical_key` sort in [`find_matches_with_fixed`] makes the
+/// plan ordering invisible at the API boundary anyway.
 fn build_match_plan(pattern: &Pattern, fixed: &HashMap<String, GhostId>) -> Vec<MatchStep> {
     let n = pattern.nodes.len();
     let mut placed = vec![false; n];
     let mut steps: Vec<MatchStep> = Vec::with_capacity(n);
 
-    // 1. fixed-Variablen zuerst: sie sind bereits gebunden und dienen
-    //    als Adjazenz-Anker für den Rest (relevant für NAC- und
-    //    Re-Validation-Matching mit shared-Anchors).
+    // 1. fixed variables first: they are already bound and serve as
+    //    adjacency anchors for the rest (relevant for NAC and
+    //    re-validation matching with shared anchors).
     for (i, np) in pattern.nodes.iter().enumerate() {
         if fixed.contains_key(&np.var) {
             placed[i] = true;
@@ -298,9 +299,9 @@ fn build_match_plan(pattern: &Pattern, fixed: &HashMap<String, GhostId>) -> Vec<
         }
     }
 
-    // 2. Restliche Knoten greedy: bevorzugt einen, der per Edge an die
-    //    platzierte Menge anknüpft (guided); sonst den selektivsten
-    //    ungebundenen Knoten als Komponenten-Seed.
+    // 2. Remaining nodes greedily: prefer one that attaches to the
+    //    placed set via an edge (guided); otherwise pick the most
+    //    constrained unbound node as the component seed.
     while steps.len() < n {
         let next = pick_next_node(pattern, &placed);
         let links = links_to_placed(pattern, &placed, next);
@@ -314,10 +315,9 @@ fn build_match_plan(pattern: &Pattern, fixed: &HashMap<String, GhostId>) -> Vec<
     steps
 }
 
-/// Wählt den nächsten zu platzierenden Pattern-Knoten. Bevorzugt
-/// Knoten mit Edge zur platzierten Menge (guided); Tie-Break:
-/// most-constrained-variable-first (meiste `attr_constraints`), dann
-/// kleinster Index.
+/// Picks the next pattern node to place. Prefers nodes with an edge
+/// to the placed set (guided); tie-break: most-constrained-variable-
+/// first (most `attr_constraints`), then smallest index.
 fn pick_next_node(pattern: &Pattern, placed: &[bool]) -> usize {
     let mut best_idx: Option<usize> = None;
     let mut best_key = (false, 0usize, 0usize);
@@ -326,20 +326,20 @@ fn pick_next_node(pattern: &Pattern, placed: &[bool]) -> usize {
             continue;
         }
         let guided = !links_to_placed(pattern, placed, i).is_empty();
-        // `usize::MAX - i` ⇒ größerer Schlüssel = kleinerer Index.
+        // `usize::MAX - i` ⇒ larger key = smaller index.
         let key = (guided, np.attr_constraints.len(), usize::MAX - i);
         if best_idx.is_none() || key > best_key {
             best_idx = Some(i);
             best_key = key;
         }
     }
-    best_idx.expect("pick_next_node: kein ungebundener Knoten vorhanden")
+    best_idx.expect("pick_next_node: no unbound node available")
 }
 
-/// Sammelt alle Pattern-Edges des Knotens `idx` zu bereits platzierten
-/// Knoten, relativ zum Knoten `idx` ausgedrückt. Selbst-Schleifen und
-/// Edges mit unbekannter Gegen-Variable werden übersprungen — der
-/// Leaf-Check `satisfies_edge_patterns` deckt sie ab.
+/// Collects all pattern edges of node `idx` to already placed nodes,
+/// expressed relative to node `idx`. Self-loops and edges with an
+/// unknown counterpart variable are skipped — the leaf check
+/// `satisfies_edge_patterns` covers them.
 fn links_to_placed(pattern: &Pattern, placed: &[bool], idx: usize) -> Vec<EdgeLink> {
     let var = pattern.nodes[idx].var.as_str();
     let mut links = Vec::new();
@@ -381,9 +381,9 @@ fn enumerate_matches(
     out: &mut Vec<PatternMatch>,
 ) {
     if depth == plan.len() {
-        // Komponenten-interne Edges wurden inkrementell geprüft; der
-        // Leaf-Check deckt zusätzlich Selbst-Schleifen und Edges mit
-        // unbekannter Variable ab (Defense-in-depth).
+        // Intra-component edges have been checked incrementally; the
+        // leaf check additionally covers self-loops and edges with an
+        // unknown variable (defense in depth).
         if satisfies_edge_patterns(pattern, graph, current) {
             out.push(current.clone());
         }
@@ -392,8 +392,8 @@ fn enumerate_matches(
     let step = &plan[depth];
     let np = &pattern.nodes[step.node_idx];
 
-    // Vorgebundene Variable (M2 / Re-Validation): nicht enumerieren,
-    // nur prüfen, ob der gebundene Knoten das Pattern erfüllt.
+    // Pre-bound variable (M2 / re-validation): do not enumerate,
+    // only check whether the bound node satisfies the pattern.
     if step.pre_bound {
         if let Some(id) = current.bindings.get(&np.var).copied() {
             if let Some(node) = graph.get_node(&id) {
@@ -406,7 +406,7 @@ fn enumerate_matches(
     }
 
     for cand in step_candidates(graph, np, step, current) {
-        // Injektivität: Knoten darf noch nicht gebunden sein.
+        // Injectivity: the node must not already be bound.
         if current.bindings.values().any(|id| *id == cand) {
             continue;
         }
@@ -417,8 +417,8 @@ fn enumerate_matches(
         if !np.matches_node(node) {
             continue;
         }
-        // Edge-Constraints zu bereits gebundenen Knoten *sofort* prüfen
-        // — nicht erst am Blatt (early pruning).
+        // Check edge constraints to already bound nodes *immediately*
+        // — not only at the leaf (early pruning).
         if !satisfies_links(graph, current, &step.links, cand) {
             continue;
         }
@@ -428,13 +428,13 @@ fn enumerate_matches(
     }
 }
 
-/// Kandidaten-Knoten für einen Plan-Schritt.
+/// Candidate nodes for a plan step.
 ///
-/// - **Guided** (`links` nicht leer): Adjazenz-Lookup über `links[0]`
-///   — nur Nachbarn des bereits gebundenen Ankers, dedupliziert
-///   (parallele Kanten). O(Knotengrad) statt O(Typ-Population).
-/// - **Seed** (`links` leer): Typ-Scan über `matchable_nodes_by_kind`
-///   (F15-Mitigation, BTreeSet-kanonisch).
+/// - **Guided** (`links` non-empty): adjacency lookup via `links[0]`
+///   — only neighbors of the already bound anchor, deduplicated
+///   (parallel edges). O(node degree) instead of O(type population).
+/// - **Seed** (`links` empty): type scan via `matchable_nodes_by_kind`
+///   (F15 mitigation, BTreeSet-canonical).
 fn step_candidates(
     graph: &TypedGraph,
     np: &NodePattern,
@@ -456,22 +456,22 @@ fn step_candidates(
     };
     let mut seen: BTreeSet<GhostId> = BTreeSet::new();
     if guide.membership {
-        // rc7 (S): Korrespondenz-Mitgliedschaft — richtungs-/kind-agnostisch.
-        // Kandidaten sind ALLE inzidenten Nachbarn des Ankers.
+        // rc7 (S): correspondence membership — direction- and kind-agnostic.
+        // Candidates are ALL incident neighbors of the anchor.
         for (_edge, other) in graph.incident_edges(&anchor) {
             seen.insert(other);
         }
     } else if guide.new_is_source {
-        // Pattern-Edge: neu ─type─▶ Anker ⇒ der neue Knoten ist Quelle
-        // einer eingehenden Kante des Ankers.
+        // Pattern edge: new ─type─▶ anchor ⇒ the new node is the source
+        // of an incoming edge of the anchor.
         for (edge, src) in graph.incoming_edges(&anchor) {
             if edge.type_id == guide.type_id {
                 seen.insert(src);
             }
         }
     } else {
-        // Pattern-Edge: Anker ─type─▶ neu ⇒ der neue Knoten ist Ziel
-        // einer ausgehenden Kante des Ankers.
+        // Pattern edge: anchor ─type─▶ new ⇒ the new node is the target
+        // of an outgoing edge of the anchor.
         for (edge, tgt) in graph.outgoing_edges(&anchor) {
             if edge.type_id == guide.type_id {
                 seen.insert(tgt);
@@ -481,7 +481,7 @@ fn step_candidates(
     seen.into_iter().collect()
 }
 
-/// Prüft alle Edge-Links eines Plan-Schritts gegen den Graphen.
+/// Checks all edge links of a plan step against the graph.
 fn satisfies_links(
     graph: &TypedGraph,
     current: &PatternMatch,
@@ -523,32 +523,32 @@ fn satisfies_edge_patterns(pattern: &Pattern, graph: &TypedGraph, m: &PatternMat
 
 // ── Rule ═════════════════════════════════════════════════════════════════
 
-/// Negative Application Condition als Engine-Pattern (M2).
+/// Negative Application Condition as an engine pattern (M2).
 ///
-/// Wird vom Matcher via [`find_matches_with_fixed`] gegen den Graph
-/// geprüft — wenn mindestens ein Match mit den shared-Anker-Bindings
-/// existiert, ist die Rule-Anwendung verboten.
+/// The matcher checks it against the graph via
+/// [`find_matches_with_fixed`] — if at least one match exists with
+/// the shared-anchor bindings, the rule application is forbidden.
 #[derive(Clone, Debug)]
 pub struct NacPattern {
     pub name: String,
     pub pattern: Pattern,
-    /// Node-Vars, die an das L-Match fixiert werden.
+    /// Node vars that get pinned to the L-match.
     pub shared_with_l: Vec<String>,
 }
 
-/// Eintrag im Attribut-Propagations-Plan einer Rule (M5.3/M5.4).
+/// Entry in the attribute propagation plan of a rule (M5.3/M5.4).
 ///
-/// Spiegelt `crate::rule::compile::AttrPropagation` als engine-
-/// interne Sicht, damit der Re-Validation-Code keine Cross-Modul-
-/// Abhängigkeit von `rule` braucht.
+/// Mirrors `crate::rule::compile::AttrPropagation` as an engine-
+/// internal view, so the re-validation code does not need a cross-
+/// module dependency on `rule`.
 #[derive(Clone, Debug)]
 pub struct EnginePropagation {
     pub source_node_var: String,
     pub source_attr: String,
     pub target_node_var: String,
     pub target_attr: String,
-    /// String-Tag der `AttrTransform`-Variante. Aufgelöst bei der
-    /// Anwendung im Rule-eigenen Kontext.
+    /// String tag of the `AttrTransform` variant. Resolved at
+    /// application time inside the rule's own context.
     pub transform_tag: String,
 }
 
@@ -557,25 +557,25 @@ pub trait Rule: fmt::Debug + Send + Sync {
     fn rank(&self) -> u64;
     fn pattern(&self) -> &Pattern;
     fn produce(&self, m: &PatternMatch, graph: &TypedGraph) -> Vec<Op>;
-    /// Negative Application Conditions. Default: keine.
+    /// Negative Application Conditions. Default: none.
     fn nacs(&self) -> &[NacPattern] {
         &[]
     }
-    /// Liste der Propagations, die zu (l_var, source_attr) passen.
-    /// Default: leer.
+    /// List of propagations that match (l_var, source_attr).
+    /// Default: empty.
     fn propagations_for(&self, _l_var: &str, _source_attr: &str) -> Vec<EnginePropagation> {
         Vec::new()
     }
-    /// rc7: „echte Input-kinds" dieser gerichteten Regel (l_pattern
-    /// minus r_pattern). Leere Liste = nicht-gerichtete/rc6-Regel
-    /// (immer aktiv). Wird für die Δ-basierte Richtungs-Bündelung
-    /// genutzt. Default: leer.
+    /// rc7: "real input kinds" of this directional rule (l_pattern
+    /// minus r_pattern). Empty list = non-directional/rc6 rule
+    /// (always active). Used for the Δ-based direction bundling.
+    /// Default: empty.
     fn input_domain_kinds(&self) -> &[String] {
         &[]
     }
 }
 
-/// Konkrete Regel-Implementierung mit Closure-basierter Produktion.
+/// Concrete rule implementation with closure-based production.
 pub struct BasicRule {
     id: String,
     rank: u64,
@@ -603,19 +603,19 @@ impl BasicRule {
         }
     }
 
-    /// Setzt die Δ-Richtungs-Input-kinds (Builder-Style, rc7).
+    /// Sets the Δ-direction input kinds (builder-style, rc7).
     pub fn with_input_domain_kinds(mut self, kinds: Vec<String>) -> Self {
         self.input_domain_kinds = kinds;
         self
     }
 
-    /// Setzt die NACs dieser Rule (Builder-Style).
+    /// Sets the NACs of this rule (builder-style).
     pub fn with_nacs(mut self, nacs: Vec<NacPattern>) -> Self {
         self.nacs = nacs;
         self
     }
 
-    /// Setzt den Propagations-Plan (Builder-Style, M5.3).
+    /// Sets the propagation plan (builder-style, M5.3).
     pub fn with_propagations(mut self, propagations: Vec<EnginePropagation>) -> Self {
         self.propagations = propagations;
         self
@@ -660,10 +660,10 @@ impl Rule for BasicRule {
     }
 }
 
-/// Prüft, ob irgendeine NAC der Rule im Graph matcht (mit den
-/// aus dem Haupt-Match übernommenen `shared_with_l`-Bindings).
+/// Checks whether any NAC of the rule matches in the graph (with
+/// the `shared_with_l` bindings carried over from the main match).
 ///
-/// Rückgabe: `true` = Rule-Anwendung verboten.
+/// Returns: `true` = rule application forbidden.
 pub fn nacs_forbid(m: &PatternMatch, rule: &dyn Rule, graph: &TypedGraph) -> bool {
     for nac in rule.nacs() {
         let mut fixed = HashMap::new();
@@ -679,9 +679,9 @@ pub fn nacs_forbid(m: &PatternMatch, rule: &dyn Rule, graph: &TypedGraph) -> boo
     false
 }
 
-// ── Kandidaten-Selektion ═════════════════════════════════════════════════
+// ── Candidate selection ══════════════════════════════════════════════════
 
-/// Ein Match-Kandidat mit Rang-Informationen für die Selektion.
+/// A match candidate with rank information for selection.
 pub struct MatchCandidate<'a> {
     pub rule: &'a dyn Rule,
     pub pattern_match: PatternMatch,
@@ -689,11 +689,11 @@ pub struct MatchCandidate<'a> {
 }
 
 impl<'a> MatchCandidate<'a> {
-    /// Zusammengesetzter Rang (ρ(r), μ(m)), lexikographisch geordnet.
+    /// Composite rank (ρ(r), μ(m)), ordered lexicographically.
     ///
-    /// Entspricht Def. 4.3 im PDF; das Produkt ρ·M + μ wird hier als
-    /// Tupel repräsentiert, was semantisch identisch ist und keine
-    /// Wahl von M erfordert.
+    /// Corresponds to Def. 4.3 in the paper; the product ρ·M + μ is
+    /// represented here as a tuple, which is semantically identical
+    /// and does not require a choice of M.
     pub fn rank_key(&self) -> (u64, usize) {
         (self.rule.rank(), self.match_idx)
     }
@@ -709,12 +709,12 @@ impl<'a> fmt::Debug for MatchCandidate<'a> {
     }
 }
 
-/// Wählt den höchstrangigen Kandidaten aus allen Regeln.
+/// Picks the highest-ranked candidate across all rules.
 ///
-/// Konvention: **höherer Rang-Wert gewinnt**. Default-Heuristik
-/// `ρ(r_i) = i` (Definitionsreihenfolge) bedeutet damit, dass
-/// später-definierte Regeln höhere Priorität haben. Anwender, die
-/// umgekehrte Priorität wünschen, setzen `ρ(r_i) = N - i`.
+/// Convention: **higher rank value wins**. The default heuristic
+/// `ρ(r_i) = i` (definition order) therefore means that later-
+/// defined rules have higher priority. Users that want the opposite
+/// priority set `ρ(r_i) = N - i`.
 pub fn select_highest_rank<'a, I>(rules: I, graph: &TypedGraph) -> Option<MatchCandidate<'a>>
 where
     I: IntoIterator<Item = &'a dyn Rule>,
@@ -724,7 +724,7 @@ where
     for rule in rules {
         let pattern = rule.pattern();
         let mut matches = find_matches(pattern, graph);
-        // Kanonische Enumeration μ: sortieren nach Ghost-ID-Tupel.
+        // Canonical enumeration μ: sort by Ghost-ID tuple.
         matches.sort_by_key(|m| canonical_key(m, pattern));
 
         for (idx, pattern_match) in matches.into_iter().enumerate() {
@@ -764,7 +764,7 @@ impl Cascade {
         }
     }
 
-    /// Fügt einen Delta-Eintrag an — strikte Monotonie V₆.
+    /// Appends a delta entry — strict monotonicity V₆.
     pub fn append(&mut self, entry: DeltaEntry) -> usize {
         let idx = self.entries.len();
         self.entries.push(entry);
@@ -783,9 +783,9 @@ impl Cascade {
         self.entries.last()
     }
 
-    /// Findet den Delta-Eintrag, der das Element mit der gegebenen ID erstmals
-    /// erzeugte. Rückgabe: `Some(idx)` oder `None`, wenn das Element nicht
-    /// durch die Kaskade erzeugt wurde (z. B. SOLID-Baseline).
+    /// Finds the delta entry that first created the element with the
+    /// given ID. Returns `Some(idx)`, or `None` if the element was not
+    /// produced by the cascade (e.g. SOLID baseline).
     pub fn creator_of(&self, id: &GhostId) -> Option<usize> {
         for (idx, entry) in self.entries.iter().enumerate() {
             for op in &entry.op_star {
@@ -799,9 +799,9 @@ impl Cascade {
         None
     }
 
-    /// Transitive Vorfahren-Menge bzgl. `≺_D` (Def. 2.6): alle Delta-Indizes,
-    /// die (transitiv) Elemente erzeugt haben, die im gegebenen Anchor
-    /// referenziert werden.
+    /// Transitive ancestor set with respect to `≺_D` (Def. 2.6): all
+    /// delta indices that (transitively) produced elements referenced
+    /// in the given anchor.
     pub fn ancestors_of_anchor(&self, anchor: &[GhostId]) -> HashSet<usize> {
         let mut result = HashSet::new();
         let mut queue: Vec<GhostId> = anchor.to_vec();
@@ -826,36 +826,35 @@ pub enum TerminationState {
     Running,
 }
 
-/// Engine-Fehler beim Kaskaden-Step.
+/// Engine error during a cascade step.
 #[derive(Debug, Error)]
 pub enum EngineError {
-    #[error("Op-Anwendung fehlgeschlagen: {0}")]
+    #[error("Op application failed: {0}")]
     OpApplication(#[from] OpError),
-    #[error("Schrittlimit überschritten ({limit})")]
+    #[error("Step limit exceeded ({limit})")]
     StepLimitExceeded { limit: usize },
 }
 
-// ── Duplikations- und Kontradiktions-Prädikate ═══════════════════════════
+// ── Duplication and contradiction predicates ═════════════════════════════
 
-/// Prüft Duplikation (Def. 3.2): trägt eine Regel-Anwendung *nichts
-/// Neues* bei — d.h. würde **jede** ihrer Ops nur ein bereits
-/// existierendes (matchbares) Element re-erzeugen?
+/// Checks duplication (Def. 3.2): does a rule application contribute
+/// *nothing new* — i.e. would **every** one of its ops only re-create
+/// an already existing (matchable) element?
 ///
-/// Op-granular (`.all()`, nicht `.any()`): eine *gemischte* Anwendung
-/// (echte Neuarbeit + schon erfüllte Ops) ist **kein** Duplikat — sie
-/// wird angewandt, die schon erfüllten Add-Ops sind dabei idempotente
-/// No-ops (`insert_node`/`add_edge` re-bestätigen Bestehendes). Nur
-/// eine rein wiederholende Anwendung saturiert zu `Duplication`. Damit
-/// können Regeln Kanten zwischen bereits existierenden Knoten erzeugen.
+/// Op-granular (`.all()`, not `.any()`): a *mixed* application
+/// (genuine new work + already-satisfied ops) is **not** a duplicate
+/// — it fires, and the already-satisfied add-ops are idempotent
+/// no-ops (`insert_node`/`add_edge` re-confirm what is already there).
+/// Only a purely repeating application saturates to `Duplication`.
+/// This lets rules create edges between already existing nodes.
 ///
-/// Da Ghost-IDs strukturell via SHA-256 berechnet werden (Def. 5.3),
-/// produziert ein isomorphes Emissions-Ziel denselben Hash → direkter
-/// Lookup im Graphen.
+/// Because Ghost-IDs are computed structurally via SHA-256 (Def. 5.3),
+/// an isomorphic emission target produces the same hash → direct
+/// lookup in the graph.
 pub fn is_duplicate(ops: &[Op], graph: &TypedGraph) -> bool {
-    // M5.5: TentativeTombstone-Elemente zählen NICHT als Duplikate —
-    // sie sind Resurrection-Kandidaten und sollen via insert_node/
-    // add_edge auf Solid/Ghost zurück gesetzt werden, wenn die
-    // Add-Op läuft.
+    // M5.5: TentativeTombstone elements do NOT count as duplicates —
+    // they are resurrection candidates and should be reset to
+    // Solid/Ghost via insert_node/add_edge when the add-op fires.
     let active_non_tentative =
         |status: Status| status.is_matchable() && status != Status::TentativeTombstone;
     ops.iter().all(|op| match op {
@@ -883,15 +882,15 @@ pub fn is_duplicate(ops: &[Op], graph: &TypedGraph) -> bool {
                 .map(|e| active_non_tentative(e.status))
                 .unwrap_or(false)
         }
-        // B5-rc5: SetAttr ist Duplikat, wenn der Zielknoten matchbar+
-        // non-tentative ist und das Attribut bereits exakt diesen Wert
-        // trägt — d.h. die Op wäre ein idempotenter No-op. Vor diesem
-        // Arm fiel SetAttr in den catch-all `_ => false`, was bei
-        // rc4-attrs_to_set-Regeln zu nicht-terminierender Cascade
-        // führte (jeder Step galt als „productive", obwohl produce()
-        // nur dieselbe SetAttr wieder emittierte). Op-granular: nur
-        // wenn ALLE Ops dieser Anwendung idempotent sind, saturiert
-        // der Step zu Duplication.
+        // B5-rc5: SetAttr is a duplicate when the target node is
+        // matchable+non-tentative and the attribute already carries
+        // exactly this value — i.e. the op would be an idempotent
+        // no-op. Before this arm, SetAttr fell into the catch-all
+        // `_ => false`, which made rc4-attrs_to_set rules drive a
+        // non-terminating cascade (every step counted as "productive"
+        // even though produce() only re-emitted the same SetAttr).
+        // Op-granular: only when ALL ops of this application are
+        // idempotent does the step saturate to Duplication.
         Op::SetAttr { target, key, value } => graph
             .get_node(target)
             .filter(|n| active_non_tentative(n.status))
@@ -902,46 +901,46 @@ pub fn is_duplicate(ops: &[Op], graph: &TypedGraph) -> bool {
     })
 }
 
-/// Prüft Kontradiktion ohne Kaskaden-Kontext (Vereinfachung, deprecated).
+/// Checks contradiction without cascade context (simplification, deprecated).
 ///
-/// Nutzt nur SOLID- und TOMB-Checks, keine Vorfahren-Analyse.
-/// Phase 1.3c verwendet [`is_contradictory_with_cascade`].
+/// Uses only SOLID and TOMB checks, no ancestor analysis.
+/// Phase 1.3c uses [`is_contradictory_with_cascade`].
 pub fn is_contradictory(ops: &[Op], graph: &TypedGraph) -> Option<String> {
     for op in ops {
         match op {
             Op::DelNode { target } => match graph.get_node(target) {
-                None => return Some(format!("DelNode-Ziel {} nicht gefunden", target.short())),
+                None => return Some(format!("DelNode target {} not found", target.short())),
                 Some(n) if n.status == Status::Solid => {
                     return Some(format!(
-                        "V₇-Verletzung: SOLID-Knoten {} nicht erasbar",
+                        "V₇ violation: SOLID node {} cannot be erased",
                         target.short()
                     ))
                 }
                 Some(n) if n.status == Status::Tombstone => {
                     return Some(format!(
-                        "Doppel-Tombstone auf {} (bereits tombstoned)",
+                        "double-tombstone on {} (already tombstoned)",
                         target.short()
                     ))
                 }
                 _ => {}
             },
             Op::DelEdge { target } => match graph.get_edge(target) {
-                None => return Some(format!("DelEdge-Ziel {} nicht gefunden", target.short())),
+                None => return Some(format!("DelEdge target {} not found", target.short())),
                 Some(e) if e.status == Status::Solid => {
                     return Some(format!(
-                        "V₇-Verletzung: SOLID-Kante {} nicht erasbar",
+                        "V₇ violation: SOLID edge {} cannot be erased",
                         target.short()
                     ))
                 }
                 _ => {}
             },
             Op::AddEdge { source, target, .. } => {
-                // Ghost-Endpunkt darf nicht TOMB sein (Def. 2.5).
+                // Ghost endpoint must not be TOMB (Def. 2.5).
                 if matches!(graph.get_node(source), Some(n) if n.status == Status::Tombstone) {
-                    return Some(format!("AddEdge: source {} ist TOMB", source.short()));
+                    return Some(format!("AddEdge: source {} is TOMB", source.short()));
                 }
                 if matches!(graph.get_node(target), Some(n) if n.status == Status::Tombstone) {
-                    return Some(format!("AddEdge: target {} ist TOMB", target.short()));
+                    return Some(format!("AddEdge: target {} is TOMB", target.short()));
                 }
             }
             _ => {}
@@ -950,12 +949,13 @@ pub fn is_contradictory(ops: &[Op], graph: &TypedGraph) -> Option<String> {
     None
 }
 
-/// Volle Kontradiktions-Prüfung mit Vorfahren-Analyse (Def. 3.6 + V₇).
+/// Full contradiction check with ancestor analysis (Def. 3.6 + V₇).
 ///
-/// Zusätzlich zu den lokalen SOLID- und TOMB-Checks prüft diese Variante:
-/// - Del-Ops auf $d_0$-Elementen (User-Delta geschützt).
-/// - Del-Ops auf Elementen, die durch einen (transitiven) Vorfahren
-///   des Kandidaten erzeugt wurden (Reconciliation-Zulässigkeit V₇).
+/// In addition to the local SOLID and TOMB checks, this variant also
+/// checks:
+/// - del-ops on $d_0$ elements (user-delta protection).
+/// - del-ops on elements produced by a (transitive) ancestor of the
+///   candidate (reconciliation admissibility V₇).
 pub fn is_contradictory_with_cascade(
     ops: &[Op],
     anchor: &[GhostId],
@@ -974,13 +974,13 @@ pub fn is_contradictory_with_cascade(
                 if let Some(creator) = cascade.creator_of(target) {
                     if creator == 0 {
                         return Some(format!(
-                            "V₇: d_0-Element {} während Kaskade nicht erasbar",
+                            "V₇: d_0 element {} cannot be erased during cascade",
                             target.short()
                         ));
                     }
                     if ancestors.contains(&creator) {
                         return Some(format!(
-                            "V₇: Vorfahre d_{} mit Element {} nicht erasbar",
+                            "V₇: ancestor d_{} with element {} cannot be erased",
                             creator,
                             target.short()
                         ));
@@ -993,16 +993,16 @@ pub fn is_contradictory_with_cascade(
     None
 }
 
-// ── Retraktions-Kaskade (Def. 3.8) ═══════════════════════════════════════
+// ── Retraction cascade (Def. 3.8) ════════════════════════════════════════
 
-/// Berechnet die Retraktions-Kaskade für eine Op.
+/// Computes the retraction cascade for an op.
 ///
-/// Aktuell implementiert: bei DelNode werden alle matchbaren inzidenten
-/// Kanten als induzierte DelEdge-Ops produziert (strukturelle Abhängigkeit
-/// Def. 3.7 für Kanten-Endpunkte).
+/// Currently implemented: on DelNode, all matchable incident edges
+/// are produced as induced DelEdge ops (structural dependency
+/// Def. 3.7 for edge endpoints).
 ///
-/// Weitere Abhängigkeits-Typen (z. B. Korrespondenz-Knoten, Attribute mit
-/// Pflicht-Typ) können hier in zukünftigen Iterationen ergänzt werden.
+/// Further dependency kinds (e.g. correspondence nodes, attributes
+/// with required type) can be added here in future iterations.
 pub fn retraction_cascade_for(op: &Op, graph: &TypedGraph) -> Vec<Op> {
     match op {
         Op::DelNode { target } => graph
@@ -1014,12 +1014,12 @@ pub fn retraction_cascade_for(op: &Op, graph: &TypedGraph) -> Vec<Op> {
     }
 }
 
-/// Erweitert eine Primär-Op-Liste um ihre Retraktions-Kaskaden und erzeugt
-/// dabei die `induces`-DAG-Struktur aus V₁₂.
+/// Expands a primary op list with its retraction cascades while
+/// building the `induces` DAG structure from V₁₂.
 ///
-/// Rückgabe: `(erweiterte Ops, induces-Map)` — die induces-Map hat gleiche
-/// Länge wie die Op-Liste und enthält pro Op die Indizes der direkt
-/// induzierten Folge-Ops.
+/// Returns `(expanded ops, induces map)` — the induces map has the
+/// same length as the op list and contains, per op, the indices of
+/// the directly induced follow-up ops.
 pub fn expand_with_retraction(
     primary_ops: Vec<Op>,
     graph: &TypedGraph,
@@ -1046,18 +1046,19 @@ pub fn expand_with_retraction(
     (full_ops, induces)
 }
 
-// ── Cascade-Step und Runner ══════════════════════════════════════════════
+// ── Cascade step and runner ══════════════════════════════════════════════
 
-/// Kodiert einen (rule_rank, match_idx)-Paar als u64 für DeltaEntry.rank.
+/// Encodes a (rule_rank, match_idx) pair as u64 for DeltaEntry.rank.
 ///
-/// Layout: `[rule_rank: u32 high][match_idx: u32 low]`. Damit dominiert
-/// der Regel-Rang den Match-Index (Def. 4.3 mit implizitem M = 2^32).
+/// Layout: `[rule_rank: u32 high][match_idx: u32 low]`. This makes
+/// the rule rank dominate the match index (Def. 4.3 with implicit
+/// M = 2^32).
 pub fn encode_delta_rank(rule_rank: u64, match_idx: usize) -> u64 {
     (rule_rank << 32) | (match_idx as u64 & 0xFFFF_FFFF)
 }
 
-/// Sammelt alle Match-Kandidaten aller Regeln, sortiert in
-/// Rang-absteigender Reihenfolge (`rank_key` von max zu min).
+/// Collects all match candidates of all rules, sorted in descending
+/// rank order (`rank_key` from max to min).
 pub fn collect_candidates<'a, I>(rules: I, graph: &TypedGraph) -> Vec<MatchCandidate<'a>>
 where
     I: IntoIterator<Item = &'a dyn Rule>,
@@ -1075,28 +1076,29 @@ where
             });
         }
     }
-    // Absteigend nach rank_key — std::cmp::Reverse macht es als
-    // sort_by_key kanonisch (clippy-sauber).
+    // Descending by rank_key — std::cmp::Reverse keeps it canonical
+    // under sort_by_key (clippy-clean).
     all.sort_by_key(|c| std::cmp::Reverse(c.rank_key()));
     all
 }
 
-/// Führt einen einzelnen Kaskaden-Schritt durch (Phase 1.3c).
+/// Runs a single cascade step (Phase 1.3c).
 ///
-/// Ablauf (Rang-absteigend, impliziter Backtracking-Pfad):
-/// 1. Sammle alle Match-Kandidaten, sortiert max→min nach Rang.
-/// 2. Für jeden Kandidaten in Rang-absteigender Ordnung:
-///    a) Produziere Primär-Ops via Regel.
-///    b) Erweitere um Retraktions-Kaskade (Def. 3.8); induces-DAG (V₁₂)
-///    wird dabei aufgebaut.
-///    c) Baue voraussichtlichen Anchor aus Pattern-Bindings.
-///    d) Prüfe Duplikation auf der vollen Op-Menge → `any_duplicate`, next.
-///    e) Prüfe Kontradiktion inkl. Vorfahren-Check (V₇) →
-///    `any_contradiction` mit Grund, next.
-///    f) Durchgekommen: DeltaEntry bauen (mit populated `induces`),
-///    anwenden, anhängen, `Running`.
-/// 3. Saturation: wenn kein Kandidat durchkommt, priorisiere
-///    Contradiction > Duplication > Convergence als Terminierungs-Grund.
+/// Flow (rank-descending, implicit backtracking path):
+/// 1. Collect all match candidates, sorted max→min by rank.
+/// 2. For each candidate in rank-descending order:
+///    a) Produce primary ops via the rule.
+///    b) Expand with the retraction cascade (Def. 3.8); the
+///    induces DAG (V₁₂) is built in the process.
+///    c) Build the prospective anchor from pattern bindings.
+///    d) Check duplication on the full op set → `any_duplicate`, next.
+///    e) Check contradiction including the ancestor check (V₇) →
+///    `any_contradiction` with reason, next.
+///    f) Accepted: build the DeltaEntry (with populated `induces`),
+///    apply, append, `Running`.
+/// 3. Saturation: if no candidate passes, prioritize
+///    Contradiction > Duplication > Convergence as the termination
+///    reason.
 pub fn cascade_step(
     cascade: &mut Cascade,
     graph: &mut TypedGraph,
@@ -1112,8 +1114,8 @@ pub fn cascade_step(
     let mut last_contradiction: Option<String> = None;
 
     for candidate in candidates {
-        // NAC-Check (M2) zuerst — vor Produktion. Wenn eine NAC
-        // matcht, ist der Kandidat verboten.
+        // NAC check (M2) first — before production. If any NAC
+        // matches, the candidate is forbidden.
         if nacs_forbid(&candidate.pattern_match, candidate.rule, graph) {
             continue;
         }
@@ -1123,7 +1125,7 @@ pub fn cascade_step(
             continue;
         }
 
-        // Retraktions-Kaskade aufbauen.
+        // Build the retraction cascade.
         let (full_ops, induces) = expand_with_retraction(primary_ops, graph);
 
         let anchor: Vec<GhostId> = candidate
@@ -1144,7 +1146,7 @@ pub fn cascade_step(
             continue;
         }
 
-        // Durchgekommen — DeltaEntry bauen und anwenden.
+        // Accepted — build the DeltaEntry and apply.
         let rank = encode_delta_rank(candidate.rule.rank(), candidate.match_idx);
         let delta = DeltaEntry {
             origin: Origin::Rule {
@@ -1165,7 +1167,7 @@ pub fn cascade_step(
         return Ok(TerminationState::Running);
     }
 
-    // Saturation-Priorisierung: Contradiction > Duplication > Convergence.
+    // Saturation priority: Contradiction > Duplication > Convergence.
     if let Some(reason) = last_contradiction {
         Ok(TerminationState::Contradiction { reason })
     } else if any_duplicate {
@@ -1175,29 +1177,30 @@ pub fn cascade_step(
     }
 }
 
-// ── Re-Validation-Logik (M5.3) ═══════════════════════════════════════════
+// ── Re-validation logic (M5.3) ═══════════════════════════════════════════
 
-/// Ergebnis einer Re-Validation einer Rule-Anwendung nach einer
-/// Op auf einem ihrer Match-Participants.
+/// Result of re-validating a rule application after an op on one of
+/// its match participants.
 #[derive(Debug, Clone)]
 pub enum RevalidationOutcome {
-    /// L-Pattern + NACs + Constraints noch erfüllt; keine Aktion nötig.
+    /// L-pattern + NACs + constraints still satisfied; no action needed.
     StillMatches,
-    /// Match noch da, aber ein gebundenes Attribut hat sich geändert
-    /// und die Rule hat passende Propagation(s).
+    /// Match still present, but a bound attribute has changed and
+    /// the rule has matching propagation(s).
     AttrChanged {
         propagations: Vec<EnginePropagation>,
         l_var: String,
         attr: String,
         new_value: String,
     },
-    /// L-Pattern matcht nicht mehr / NAC trifft jetzt / Constraint
-    /// nicht mehr erfüllt → Rule-Anwendung muss invalidiert werden.
+    /// L-pattern no longer matches / a NAC now fires / a constraint
+    /// is no longer satisfied → the rule application must be
+    /// invalidated.
     NoLongerMatches,
 }
 
-/// Re-Validiert eine bestehende Rule-Anwendung nach einer Op auf
-/// einem Match-Participant.
+/// Re-validates an existing rule application after an op on a
+/// match participant.
 pub fn revalidate_app(
     app_idx: usize,
     cascade: &Cascade,
@@ -1218,21 +1221,20 @@ pub fn revalidate_app(
         None => return RevalidationOutcome::NoLongerMatches,
     };
 
-    // Pattern mit fixierten Bindings re-matchen
+    // Re-match the pattern with pinned bindings.
     let matches = find_matches_with_fixed(rule.pattern(), graph, &entry.bindings);
     if matches.is_empty() {
         return RevalidationOutcome::NoLongerMatches;
     }
     let pm = &matches[0];
 
-    // NACs noch frei?
+    // NACs still clear?
     if nacs_forbid(pm, rule, graph) {
         return RevalidationOutcome::NoLongerMatches;
     }
 
-    // Wenn die Op ein SetAttr auf einem gebundenen Knoten war: prüfe
-    // ob die Rule eine Attribut-Propagation für diese (l_var, attr)-
-    // Kombination hat.
+    // If the op was a SetAttr on a bound node: check whether the rule
+    // has an attribute propagation for this (l_var, attr) combination.
     if let Op::SetAttr { target, key, value } = last_op {
         let l_var = entry.bindings.iter().find_map(|(var, id)| {
             if id == target {
@@ -1257,11 +1259,11 @@ pub fn revalidate_app(
     RevalidationOutcome::StillMatches
 }
 
-// ── Tentative-Tombstone + Konsolidierung (M5.5) ══════════════════════════
+// ── Tentative tombstone + consolidation (M5.5) ═══════════════════════════
 
-/// Markiert das Created-Set einer Rule-Anwendung als
-/// `TentativeTombstone`. Rückgabe: alle Element-IDs, die markiert
-/// wurden (Nodes und Edges).
+/// Marks the created set of a rule application as
+/// `TentativeTombstone`. Returns all element IDs that were marked
+/// (nodes and edges).
 pub fn tentative_invalidate(
     app_idx: usize,
     cascade: &Cascade,
@@ -1276,16 +1278,16 @@ pub fn tentative_invalidate(
     created
 }
 
-/// Konsolidiert nach Phase B: TentativeTombstone-Elemente, die in
-/// `just_created` enthalten sind (Resurrection durch identische
-/// Ghost-ID), werden zurück auf `Solid` gesetzt. Alle anderen
-/// TentativeTombstones werden zu endgültigem `Tombstone`.
+/// Consolidates after Phase B: TentativeTombstone elements that
+/// appear in `just_created` (resurrection by identical Ghost-ID) are
+/// reset to `Solid`. All other TentativeTombstones become final
+/// `Tombstone`.
 pub fn consolidate_tentative(graph: &mut TypedGraph, just_created: &[GhostId]) {
     use std::collections::HashSet;
     let just: HashSet<GhostId> = just_created.iter().copied().collect();
 
-    // Alle TentativeTombstone-Nodes sammeln (wir mutieren während
-    // wir iterieren, daher zuerst Vec).
+    // Collect all TentativeTombstone nodes (we mutate while iterating,
+    // hence the intermediate Vec).
     let tt_nodes: Vec<GhostId> = graph
         .iter_nodes()
         .filter(|n| n.status == Status::TentativeTombstone)
@@ -1298,7 +1300,7 @@ pub fn consolidate_tentative(graph: &mut TypedGraph, just_created: &[GhostId]) {
             graph.set_node_status(&id, Status::Tombstone);
         }
     }
-    // Edges analog
+    // Edges analogously.
     let tt_edges: Vec<GhostId> = graph
         .iter_edges()
         .into_iter()
@@ -1314,24 +1316,24 @@ pub fn consolidate_tentative(graph: &mut TypedGraph, just_created: &[GhostId]) {
     }
 }
 
-/// Match-Observability-fähige Cascade-Loop. Pro User-Delta:
-/// 1. Wende User-Ops an, sammle affected RuleApps.
-/// 2. Phase A: Re-Validate jede affected RuleApp. Bei
-///    `NoLongerMatches` → tentative_invalidate. Bei `AttrChanged`
+/// Match-observability-aware cascade loop. Per user delta:
+/// 1. Apply user ops, collect affected RuleApps.
+/// 2. Phase A: re-validate every affected RuleApp. On
+///    `NoLongerMatches` → tentative_invalidate. On `AttrChanged`
 ///    → apply_attr_propagation.
-/// 3. Phase B: Standard-Cascade-Loop mit `cascade_step`. Neue
-///    Created-Entities sammeln.
-/// 4. Konsolidierung: consolidate_tentative.
+/// 3. Phase B: standard cascade loop with `cascade_step`. Collect
+///    new created entities.
+/// 4. Consolidation: consolidate_tentative.
 ///
-/// Ohne User-Delta in der Cascade läuft sie wie `run_cascade`.
+/// Without a user delta in the cascade it behaves like `run_cascade`.
 pub fn run_cascade_observable(
     cascade: &mut Cascade,
     graph: &mut TypedGraph,
     rules: &[&dyn Rule],
     max_steps: usize,
 ) -> Result<TerminationState, EngineError> {
-    // User-Delta finden — der jüngste mit Origin::User triggert die
-    // Re-Validation.
+    // Find the user delta — the most recent one with Origin::User
+    // triggers re-validation.
     let user_idx = cascade
         .entries
         .iter()
@@ -1340,7 +1342,7 @@ pub fn run_cascade_observable(
     if let Some(idx) = user_idx {
         let user_entry = cascade.entries[idx].clone();
 
-        // Phase A: pro affected RuleApp re-validieren.
+        // Phase A: re-validate per affected RuleApp.
         let mut affected: std::collections::HashSet<usize> = std::collections::HashSet::new();
         for op in &user_entry.op_star {
             for app_idx in watch_op(op, cascade, graph).affected_apps {
@@ -1349,8 +1351,8 @@ pub fn run_cascade_observable(
         }
 
         for app_idx in affected {
-            // Letzte Op die diesen App matcht reicht — prüfe gegen alle
-            // Ops und nimm das schwerwiegendste Outcome.
+            // The last op that matches this app is enough — check
+            // against all ops and take the most severe outcome.
             let mut final_outcome = RevalidationOutcome::StillMatches;
             for op in &user_entry.op_star {
                 let outcome = revalidate_app(app_idx, cascade, graph, rules, op);
@@ -1393,11 +1395,11 @@ pub fn run_cascade_observable(
             }
         }
 
-        // Phase B: Standard-Cascade-Loop. Neue Created-Entities sammeln.
+        // Phase B: standard cascade loop. Collect new created entities.
         let entries_at_phase_b_start = cascade.entries.len();
         let term = run_cascade(cascade, graph, rules, max_steps)?;
 
-        // Sammle alle Ops-Targets ab `entries_at_phase_b_start`.
+        // Collect all op targets starting at `entries_at_phase_b_start`.
         let mut just_created: Vec<GhostId> = Vec::new();
         for entry in cascade.entries.iter().skip(entries_at_phase_b_start) {
             for op in &entry.op_star {
@@ -1407,7 +1409,7 @@ pub fn run_cascade_observable(
             }
         }
 
-        // Phase C: Konsolidierung — Resurrection oder endgültiger Tombstone.
+        // Phase C: consolidation — resurrection or final tombstone.
         consolidate_tentative(graph, &just_created);
 
         Ok(term)
@@ -1416,14 +1418,14 @@ pub fn run_cascade_observable(
     }
 }
 
-// ── Attribut-Propagation (M5.4) ══════════════════════════════════════════
+// ── Attribute propagation (M5.4) ═════════════════════════════════════════
 
-/// Wendet eine Liste von Propagations an: für jede Propagation
-/// wird ein `Op::SetAttr` auf den gebundenen R-Knoten erzeugt,
-/// mit dem `transform_tag`-aufgelösten Wert.
+/// Applies a list of propagations: for each propagation, an
+/// `Op::SetAttr` is emitted on the bound R-node with the value
+/// resolved through `transform_tag`.
 ///
-/// Erzeugt eine neue `DeltaEntry` mit `Origin::Rule { rule_id:
-/// "<rule>@propagate" }` und hängt sie an die Cascade an.
+/// Creates a new `DeltaEntry` with `Origin::Rule { rule_id:
+/// "<rule>@propagate" }` and appends it to the cascade.
 pub fn apply_attr_propagation(
     propagations: &[EnginePropagation],
     bindings: &std::collections::HashMap<String, GhostId>,
@@ -1467,14 +1469,14 @@ pub fn apply_attr_propagation(
     Ok(())
 }
 
-// ── Match-Persistence-Store (M5.1) ═══════════════════════════════════════
+// ── Match persistence store (M5.1) ═══════════════════════════════════════
 
-/// Read-only-Sicht auf alle persistenten Rule-Match-Anwendungen
-/// in einer `Cascade`. Wird vom Watch-Hook (M5.2) genutzt, um zu
-/// affected RuleApps zu finden.
+/// Read-only view onto all persistent rule-match applications in a
+/// `Cascade`. The watch hook (M5.2) uses it to find affected
+/// RuleApps.
 ///
-/// `RuleApplicationId` = Index in `cascade.entries`. Das spart eine
-/// separate ID-Generierung — die Cascade ist sowieso append-only.
+/// `RuleApplicationId` = index into `cascade.entries`. This saves a
+/// separate ID generation — the cascade is append-only anyway.
 pub struct MatchPersistenceStore<'cascade> {
     cascade: &'cascade Cascade,
 }
@@ -1484,8 +1486,8 @@ impl<'cascade> MatchPersistenceStore<'cascade> {
         Self { cascade }
     }
 
-    /// Indizes aller Rule-Anwendungen in der Cascade, deren Bindings
-    /// `id` referenzieren.
+    /// Indices of all rule applications in the cascade whose
+    /// bindings reference `id`.
     pub fn applications_referencing(&self, id: &GhostId) -> Vec<usize> {
         self.cascade
             .entries
@@ -1498,8 +1500,8 @@ impl<'cascade> MatchPersistenceStore<'cascade> {
             .collect()
     }
 
-    /// Created-Set einer Rule-Anwendung — alle GhostIds (Nodes + Edges),
-    /// die durch ihre `op_star`-Sequenz erzeugt wurden.
+    /// Created set of a rule application — all GhostIds (nodes +
+    /// edges) produced by its `op_star` sequence.
     pub fn created_set(&self, app_idx: usize) -> Vec<GhostId> {
         if app_idx >= self.cascade.entries.len() {
             return Vec::new();
@@ -1514,32 +1516,32 @@ impl<'cascade> MatchPersistenceStore<'cascade> {
             .collect()
     }
 
-    /// Bindings einer Rule-Anwendung als Read-Reference.
+    /// Bindings of a rule application as a read reference.
     pub fn bindings(&self, app_idx: usize) -> Option<&std::collections::HashMap<String, GhostId>> {
         self.cascade.entries.get(app_idx).map(|e| &e.bindings)
     }
 }
 
-// ── Watch-Hook (M5.2) ════════════════════════════════════════════════════
+// ── Watch hook (M5.2) ════════════════════════════════════════════════════
 
-/// Resultat eines Watch-Lookups: welche RuleApps sind betroffen, und
-/// hat die Op das Attr-Propagation-Potenzial.
+/// Result of a watch lookup: which RuleApps are affected, and
+/// whether the op carries attribute propagation potential.
 #[derive(Debug, Default, Clone)]
 pub struct WatchOutcome {
-    /// Indizes der Rule-Anwendungen, deren Bindings das berührte
-    /// Element referenzieren.
+    /// Indices of the rule applications whose bindings reference the
+    /// touched element.
     pub affected_apps: Vec<usize>,
-    /// `true`, wenn die Op ein `SetAttr` auf einem gebundenen Knoten ist
-    /// — Kandidat für Attribut-Propagation (M5.4).
+    /// `true` when the op is a `SetAttr` on a bound node — candidate
+    /// for attribute propagation (M5.4).
     pub propagation_candidate: bool,
 }
 
-/// Sucht im MatchPersistenceStore alle RuleApps, deren Bindings das
-/// von `op` berührte Element referenzieren.
+/// Looks up, in the MatchPersistenceStore, all RuleApps whose
+/// bindings reference the element touched by `op`.
 ///
-/// Für Edge-Ops (AddEdge/DelEdge) werden die Endpunkt-Knoten gelookupt,
-/// weil Rule-Bindings selten Edge-IDs enthalten (Edges sind im Pattern
-/// als Edge-Constraints, nicht als Variablen).
+/// For edge ops (AddEdge/DelEdge) the endpoint nodes are looked up,
+/// because rule bindings rarely contain edge IDs (edges appear in
+/// the pattern as edge constraints, not as variables).
 pub fn watch_op(op: &Op, cascade: &Cascade, graph: &TypedGraph) -> WatchOutcome {
     let store = MatchPersistenceStore::new(cascade);
     let mut out = WatchOutcome::default();
@@ -1558,7 +1560,7 @@ pub fn watch_op(op: &Op, cascade: &Cascade, graph: &TypedGraph) -> WatchOutcome 
             out.affected_apps = store.applications_referencing(target);
         }
         Op::DelEdge { target } => {
-            // Endpunkte aus dem Graph-Edge-Index holen.
+            // Fetch endpoints from the graph edge index.
             let mut affected: Vec<usize> = store.applications_referencing(target);
             if let Some((src, tgt)) = graph.edge_endpoints(target) {
                 affected.extend(store.applications_referencing(&src));
@@ -1576,11 +1578,11 @@ pub fn watch_op(op: &Op, cascade: &Cascade, graph: &TypedGraph) -> WatchOutcome 
     out
 }
 
-/// Wendet eine `DeltaEntry` an und sammelt dabei alle RuleApps,
-/// deren Match-Participants berührt wurden.
+/// Applies a `DeltaEntry` and collects all RuleApps whose match
+/// participants were touched.
 ///
-/// Die Cascade wird **vor** dem Anhängen der DeltaEntry konsultiert,
-/// damit der Lookup nicht auf den eigenen Eintrag zurückfällt.
+/// The cascade is consulted **before** the DeltaEntry is appended,
+/// so the lookup does not fall back onto its own entry.
 pub fn apply_with_watch(
     delta: &DeltaEntry,
     graph: &mut TypedGraph,
@@ -1599,7 +1601,7 @@ pub fn apply_with_watch(
     Ok(sorted)
 }
 
-/// Läuft die Kaskade bis zur Terminierung oder bis `max_steps` erreicht ist.
+/// Runs the cascade until termination or until `max_steps` is reached.
 pub fn run_cascade(
     cascade: &mut Cascade,
     graph: &mut TypedGraph,
@@ -1615,15 +1617,15 @@ pub fn run_cascade(
     Err(EngineError::StepLimitExceeded { limit: max_steps })
 }
 
-// ── Echtes Backtracking mit Position-markierten Rang-Limits ══════════════
+// ── Real backtracking with position-tagged rank limits ═══════════════════
 
-/// Führt einen Kaskaden-Schritt mit optionalem Rang-Ceiling durch.
+/// Runs a cascade step with an optional rank ceiling.
 ///
-/// Kandidaten mit `encode_delta_rank(rule.rank, match_idx) >= rank_ceiling`
-/// werden herausgefiltert. Das markiert die aktuelle Kaskaden-Position
-/// als rang-limitiert — eine Einschränkung, die nur lokal an dieser
-/// Position wirkt, nicht global über die Regel (vgl. Def. 3.10,
-/// Korrekturen in $\alpha_{3\text{-}4}$).
+/// Candidates with `encode_delta_rank(rule.rank, match_idx) >= rank_ceiling`
+/// are filtered out. This marks the current cascade position as
+/// rank-limited — a restriction that applies only locally at this
+/// position, not globally across the rule (cf. Def. 3.10,
+/// corrections in $\alpha_{3\text{-}4}$).
 pub fn cascade_step_with_limit(
     cascade: &mut Cascade,
     graph: &mut TypedGraph,
@@ -1644,7 +1646,7 @@ pub fn cascade_step_with_limit(
     let mut last_contradiction: Option<String> = None;
 
     for candidate in candidates {
-        // NAC-Check (M2)
+        // NAC check (M2)
         if nacs_forbid(&candidate.pattern_match, candidate.rule, graph) {
             continue;
         }
@@ -1703,22 +1705,22 @@ pub fn cascade_step_with_limit(
     }
 }
 
-/// Rollt den höchstrangigen Rule-Delta-Eintrag der Kaskade zurück.
+/// Rolls back the highest-ranked rule delta entry of the cascade.
 ///
-/// Findet den höchstrangigen Delta-Eintrag mit `Origin::Rule` (User-Deltas
-/// bleiben per V₇ geschützt). Truncatet die Kaskade ab dieser Position,
-/// replayt den Graph via `base` + verbleibende Ops, und setzt ein
-/// Position-markiertes Rang-Limit.
+/// Finds the highest-ranked delta entry with `Origin::Rule` (user
+/// deltas remain protected by V₇). Truncates the cascade from that
+/// position, replays the graph via `base` + remaining ops, and sets
+/// a position-tagged rank limit.
 ///
-/// Rückgabe: `Some(position)` bei erfolgreichem Rollback,
-/// `None` wenn kein Rule-Delta zum Zurückrollen verfügbar ist (Kapitulation).
+/// Returns `Some(position)` on a successful rollback, or `None` when
+/// no rule delta is available to roll back (capitulation).
 pub fn rollback_highest_rank(
     base: &TypedGraph,
     cascade: &mut Cascade,
     graph: &mut TypedGraph,
     limits: &mut HashMap<usize, u64>,
 ) -> Option<usize> {
-    // Höchstrangigen Rule-Delta-Eintrag finden.
+    // Find the highest-ranked rule delta entry.
     let (highest_pos, highest_rank) = cascade
         .entries
         .iter()
@@ -1727,13 +1729,13 @@ pub fn rollback_highest_rank(
         .map(|(i, e)| (i, e.rank))
         .max_by_key(|(_, r)| *r)?;
 
-    // Kaskade truncaten: Einträge ab Position highest_pos (inkl.) entfernt.
+    // Truncate the cascade: drop entries from highest_pos (inclusive).
     cascade.entries.truncate(highest_pos);
 
-    // Graph replayen: base cloned, dann alle Ops der verbleibenden Einträge
-    // anwenden. Fehler beim Reapply deuten auf Inkonsistenz in der
-    // Kaskaden-Struktur — konservativ werden sie ignoriert, weil der
-    // Zustand vor Rollback reproduzierbar sein muss.
+    // Replay the graph: clone `base`, then apply all ops of the
+    // remaining entries. Reapply errors point to inconsistency in the
+    // cascade structure — they are conservatively ignored because the
+    // pre-rollback state must be reproducible.
     *graph = base.clone();
     for entry in &cascade.entries {
         for op in &entry.op_star {
@@ -1741,9 +1743,9 @@ pub fn rollback_highest_rank(
         }
     }
 
-    // Position-markiertes Limit setzen. Existiert dort bereits ein
-    // niedrigeres Limit (aus früherem Rollback), behalten wir das
-    // niedrigere — limits können nur monoton sinken.
+    // Set a position-tagged limit. If a lower limit already exists
+    // there (from a prior rollback), we keep the lower one — limits
+    // can only decrease monotonically.
     let new_limit = limits
         .get(&highest_pos)
         .map(|existing| (*existing).min(highest_rank))
@@ -1753,22 +1755,22 @@ pub fn rollback_highest_rank(
     Some(highest_pos)
 }
 
-/// Statistik eines Kaskaden-Laufs mit Rollback.
+/// Statistics of a cascade run with rollback.
 #[derive(Clone, Debug, Default)]
 pub struct RollbackStats {
     pub rollback_count: usize,
     pub limits_applied: HashMap<usize, u64>,
 }
 
-/// Läuft die Kaskade mit echtem Backtracking gemäß Def. 3.10.
+/// Runs the cascade with real backtracking per Def. 3.10.
 ///
-/// Bei Kontradiktion: `rollback_highest_rank`, dann Retry mit dem
-/// Position-markierten Limit. Bei Convergence-unter-Limit (keine
-/// Kandidaten passen) ebenfalls Rollback, weil das Limit die Position
-/// nicht-füllbar macht.
+/// On contradiction: `rollback_highest_rank`, then retry with the
+/// position-tagged limit. On convergence-under-limit (no candidate
+/// passes) also roll back, because the limit makes the position
+/// unfillable.
 ///
-/// Rückgabe: `(TerminationState, RollbackStats)`. Kapitulation, wenn
-/// kein Rollback mehr möglich ist oder `max_rollbacks` überschritten.
+/// Returns `(TerminationState, RollbackStats)`. Capitulation when no
+/// further rollback is possible or `max_rollbacks` is exceeded.
 pub fn run_cascade_with_rollback(
     base: &TypedGraph,
     cascade: &mut Cascade,
@@ -1789,8 +1791,9 @@ pub fn run_cascade_with_rollback(
         match cascade_step_with_limit(cascade, graph, rules, ceiling)? {
             TerminationState::Running => continue,
             TerminationState::Convergence if had_ceiling => {
-                // Unter Limit konvergiert — kann an künstlicher Blockade liegen.
-                // Rollback, um evtl. durch Umweg zu anderer Lösung zu kommen.
+                // Converged under the limit — may be due to an
+                // artificial block. Roll back to potentially reach a
+                // different solution via a detour.
                 if rollback_count >= max_rollbacks {
                     return Ok((
                         TerminationState::Convergence,
@@ -1854,7 +1857,7 @@ pub fn run_cascade_with_rollback(
         }
     }
 
-    // Schrittlimit erreicht ohne Terminierung.
+    // Step limit reached without termination.
     let _ = last_contradiction;
     let _ = limits;
     let _ = rollback_count;
@@ -1912,7 +1915,7 @@ mod tests {
         (g, person, car, person_name, car_model)
     }
 
-    // ── Injektivität ─────────────────────────────────────────────────
+    // ── Injectivity ──────────────────────────────────────────────────
 
     #[test]
     fn injectivity_prevents_same_node_twice() {
@@ -1921,17 +1924,17 @@ mod tests {
             .with_node(NodePattern::new("c1", "Class"))
             .with_node(NodePattern::new("c2", "Class"));
         let matches = find_matches(&pattern, &g);
-        // 2 Klassen, zwei Pattern-Variablen, injektiv → 2×1 = 2 Matches
-        // (Person,Car) und (Car,Person).
+        // 2 classes, two pattern variables, injective → 2×1 = 2 matches
+        // (Person,Car) and (Car,Person).
         assert_eq!(matches.len(), 2);
         for m in &matches {
             let c1 = m.get("c1").unwrap();
             let c2 = m.get("c2").unwrap();
-            assert_ne!(c1, c2, "Injektivität: c1 ≠ c2");
+            assert_ne!(c1, c2, "injectivity: c1 ≠ c2");
         }
     }
 
-    // ── Edge-Patterns ────────────────────────────────────────────────
+    // ── Edge patterns ────────────────────────────────────────────────
 
     #[test]
     fn edge_pattern_requires_existing_edge() {
@@ -1941,7 +1944,7 @@ mod tests {
             .with_node(NodePattern::new("a", "Attribute"))
             .with_edge(EdgePattern::new("c", "a", "hasAttribute"));
         let matches = find_matches(&pattern, &g);
-        // Person─hasAttribute→name, Car─hasAttribute→model: 2 Matches.
+        // Person─hasAttribute→name, Car─hasAttribute→model: 2 matches.
         assert_eq!(matches.len(), 2);
     }
 
@@ -1953,7 +1956,7 @@ mod tests {
             .with_node(NodePattern::new("a", "Attribute").with_attr_equals("name", "model"))
             .with_edge(EdgePattern::new("c", "a", "hasAttribute"));
         let matches = find_matches(&pattern, &g);
-        // Person hat kein "model" — Kante fehlt, kein Match.
+        // Person has no "model" — edge missing, no match.
         assert_eq!(matches.len(), 0);
         let _ = person;
         let _ = car_model;
@@ -1961,10 +1964,11 @@ mod tests {
 
     #[test]
     fn membership_edge_matches_corr_in_both_orientations() {
-        // rc7 (S): eine Korrespondenz ist symmetrisch. Ein Membership-
-        // Match (EdgePattern::membership) findet den Corr-Knoten unabhängig
-        // von der corrL/corrR-Orientierung — so erkennt eine Bwd-Regel eine
-        // Forward-etablierte Corr als Kontext (der C1-Befund) und umgekehrt.
+        // rc7 (S): a correspondence is symmetric. A membership match
+        // (EdgePattern::membership) finds the Corr node independent
+        // of the corrL/corrR orientation — that lets a Bwd rule see a
+        // Forward-established Corr as context (the C1 finding), and
+        // vice versa.
         let pattern = Pattern::new()
             .with_node(NodePattern::new("c", "Class"))
             .with_node(NodePattern::new("jc", "JavaClass"))
@@ -1972,7 +1976,7 @@ mod tests {
             .with_edge(EdgePattern::membership("corr", "c"))
             .with_edge(EdgePattern::membership("corr", "jc"));
 
-        // Orientierung A (Forward-erzeugt): Class --corrL--> Corr --corrR--> JavaClass
+        // Orientation A (Forward-emitted): Class --corrL--> Corr --corrR--> JavaClass
         let mut ga = TypedGraph::new();
         let ca = ga.add_baseline_node("Class", "Foo", attrs(&[("name", "Foo")]));
         let corra = ga.add_ghost_node(ca, "corrL", "CorrClass", BTreeMap::new());
@@ -1984,10 +1988,10 @@ mod tests {
         assert_eq!(
             find_matches(&pattern, &ga).len(),
             1,
-            "Membership matcht Forward-Orientierung (Class--corrL-->Corr--corrR-->JavaClass)"
+            "membership matches Forward orientation (Class--corrL-->Corr--corrR-->JavaClass)"
         );
 
-        // Orientierung B (Backward-erzeugt): JavaClass --corrL--> Corr --corrR--> Class
+        // Orientation B (Backward-emitted): JavaClass --corrL--> Corr --corrR--> Class
         let mut gb = TypedGraph::new();
         let jcb = gb.add_baseline_node("JavaClass", "Foo", attrs(&[("name", "Foo")]));
         let corrb = gb.add_ghost_node(jcb, "corrL", "CorrClass", BTreeMap::new());
@@ -1999,7 +2003,7 @@ mod tests {
         assert_eq!(
             find_matches(&pattern, &gb).len(),
             1,
-            "Membership matcht Backward-Orientierung (JavaClass--corrL-->Corr--corrR-->Class)"
+            "membership matches Backward orientation (JavaClass--corrL-->Corr--corrR-->Class)"
         );
     }
 
@@ -2012,18 +2016,18 @@ mod tests {
             .with_edge(EdgePattern::new("c", "a", "hasAttribute"));
         assert_eq!(find_matches(&pattern, &g).len(), 1, "Person→name");
 
-        // Tombstone die einzige passende Kante:
+        // Tombstone the only matching edge:
         let edge_id = GhostId::for_edge(&person, &person_name, "hasAttribute", &BTreeMap::new());
         assert!(g.set_edge_status(&edge_id, Status::Tombstone));
 
         assert_eq!(
             find_matches(&pattern, &g).len(),
             0,
-            "TOMB-Kante nicht mehr matchbar"
+            "TOMB edge no longer matchable"
         );
     }
 
-    // ── Canonical Enumeration ────────────────────────────────────────
+    // ── Canonical enumeration ────────────────────────────────────────
 
     #[test]
     fn canonical_key_is_deterministic() {
@@ -2041,16 +2045,16 @@ mod tests {
             .iter()
             .map(|m| canonical_key(m, &pattern))
             .collect();
-        assert_eq!(keys_a, keys_b, "Reihenfolge ist deterministisch");
+        assert_eq!(keys_a, keys_b, "ordering is deterministic");
     }
 
     #[test]
     fn edge_guided_matching_is_deterministic_and_complete() {
-        // Drei Container mit je zwei Items. Pattern: Container c +
-        // zwei Items i1, i2, beide per `holds`-Edge an c. Der
-        // edge-geleitete Matcher erzeugt i1/i2 aus den Nachbarn von c
-        // (Adjazenz) statt aus der vollen Item-Population — zwei
-        // gleichartige guided Knoten testen Dedup + Injektivität.
+        // Three containers, each with two items. Pattern: container c
+        // + two items i1, i2, both attached to c via a `holds` edge.
+        // The edge-guided matcher generates i1/i2 from the neighbors
+        // of c (adjacency) instead of from the full item population —
+        // two like-kind guided nodes exercise dedup + injectivity.
         let mut g = TypedGraph::new();
         for ci in 0..3 {
             let c = g.add_baseline_node("Container", &format!("c{ci}"), BTreeMap::new());
@@ -2075,9 +2079,9 @@ mod tests {
         let a = find_matches(&pattern, &g);
         let b = find_matches(&pattern, &g);
 
-        // Pro Container: 2 Items, injektiv geordnet → 2×1 = 2 Matches.
-        // Drei Container → 6 Matches.
-        assert_eq!(a.len(), 6, "3 Container × 2 geordnete Item-Paare");
+        // Per container: 2 items, ordered injectively → 2×1 = 2 matches.
+        // Three containers → 6 matches.
+        assert_eq!(a.len(), 6, "3 containers × 2 ordered item pairs");
 
         let keys = |ms: &[PatternMatch]| -> Vec<Vec<[u8; 32]>> {
             ms.iter().map(|m| canonical_key(m, &pattern)).collect()
@@ -2085,20 +2089,20 @@ mod tests {
         assert_eq!(
             keys(&a),
             keys(&b),
-            "edge-geleitete Enumeration ist deterministisch"
+            "edge-guided enumeration is deterministic"
         );
 
         for m in &a {
             let c = m.get("c").unwrap();
             let i1 = m.get("i1").unwrap();
             let i2 = m.get("i2").unwrap();
-            assert_ne!(i1, i2, "Injektivität: i1 ≠ i2");
-            assert!(g.has_edge_between(c, i1, "holds"), "i1 hängt an c");
-            assert!(g.has_edge_between(c, i2, "holds"), "i2 hängt an c");
+            assert_ne!(i1, i2, "injectivity: i1 ≠ i2");
+            assert!(g.has_edge_between(c, i1, "holds"), "i1 attached to c");
+            assert!(g.has_edge_between(c, i2, "holds"), "i2 attached to c");
         }
     }
 
-    // ── Rang-Selektion ───────────────────────────────────────────────
+    // ── Rank selection ───────────────────────────────────────────────
 
     fn dummy_production(_m: &PatternMatch, _g: &TypedGraph) -> Vec<Op> {
         Vec::new()
@@ -2136,8 +2140,8 @@ mod tests {
         );
         let rules: Vec<&dyn Rule> = vec![&rule];
         let chosen = select_highest_rank(rules, &g).unwrap();
-        // Mit zwei Klassen: höchster match_idx gewinnt (rank_key lexikographisch max).
-        assert_eq!(chosen.match_idx, 1, "Kanzellation letzter in μ-Ordnung");
+        // With two classes: highest match_idx wins (rank_key lex-max).
+        assert_eq!(chosen.match_idx, 1, "last in μ ordering selected");
     }
 
     #[test]
@@ -2160,7 +2164,7 @@ mod tests {
         assert!(select_highest_rank(rules, &g).is_none());
     }
 
-    // ── Integration: echte Produktion ────────────────────────────────
+    // ── Integration: real production ─────────────────────────────────
 
     #[test]
     fn basic_rule_produces_ghost_op() {
@@ -2194,7 +2198,7 @@ mod tests {
             } => {
                 assert!(
                     *parent == person_name || {
-                        // Oder car_model — abhängig von μ.
+                        // Or car_model — depending on μ.
                         true
                     }
                 );
@@ -2205,7 +2209,7 @@ mod tests {
         }
     }
 
-    // ── Cascade-Skelett ──────────────────────────────────────────────
+    // ── Cascade skeleton ─────────────────────────────────────────────
 
     #[test]
     fn cascade_append_and_length() {
@@ -2224,12 +2228,12 @@ mod tests {
         assert_eq!(c.len(), 1);
     }
 
-    // ── Duplikations-Prädikat ────────────────────────────────────────
+    // ── Duplication predicate ────────────────────────────────────────
 
     #[test]
     fn duplicate_detection_on_existing_ghost() {
         let (g, person, _, _, _) = setup_uml_graph();
-        // Ein AddNode, der auf ein existierendes Attribut "name" abzielt.
+        // An AddNode that aims at an existing "name" attribute.
         let op = Op::AddNode {
             parent: person,
             edge_type: "hasAttribute".into(),
@@ -2256,28 +2260,28 @@ mod tests {
         let (mut g, person, _, person_name, _) = setup_uml_graph();
         g.set_node_status(&person_name, Status::Tombstone);
 
-        // Derselbe Name jetzt nicht mehr matchbar → nicht mehr als Duplikat
-        // erkennbar.
+        // The same name is no longer matchable → no longer detectable
+        // as a duplicate.
         let op = Op::AddNode {
             parent: person,
             edge_type: "hasAttribute".into(),
             type_id: "Attribute".into(),
             attrs: attrs(&[("name", "name")]),
         };
-        assert!(!is_duplicate(&[op], &g), "TOMB blockiert Duplikation nicht");
+        assert!(!is_duplicate(&[op], &g), "TOMB does not block duplication");
     }
 
     #[test]
     fn mixed_application_is_not_a_duplicate() {
         let (g, person, _, _, _) = setup_uml_graph();
-        // Eine duplizierende Op: Attribut "name" existiert bereits.
+        // A duplicating op: attribute "name" already exists.
         let dup = Op::AddNode {
             parent: person,
             edge_type: "hasAttribute".into(),
             type_id: "Attribute".into(),
             attrs: attrs(&[("name", "name")]),
         };
-        // Eine echt neue Op im selben op_star.
+        // A genuinely new op in the same op_star.
         let novel = Op::AddNode {
             parent: person,
             edge_type: "hasAttribute".into(),
@@ -2286,16 +2290,16 @@ mod tests {
         };
         assert!(
             !is_duplicate(&[dup, novel], &g),
-            "gemischte Anwendung (Duplikat + echte Neuarbeit) darf nicht \
-             als Duplikat verworfen werden"
+            "mixed application (duplicate + genuine new work) must not \
+             be rejected as a duplicate"
         );
     }
 
     #[test]
     fn add_edge_for_existing_edge_is_duplicate() {
         let (g, person, _, person_name, _) = setup_uml_graph();
-        // Die Kante person → person_name ("hasAttribute") existiert
-        // bereits in setup_uml_graph.
+        // The edge person → person_name ("hasAttribute") already
+        // exists in setup_uml_graph.
         let op = Op::AddEdge {
             source: person,
             target: person_name,
@@ -2308,7 +2312,7 @@ mod tests {
     #[test]
     fn add_edge_for_novel_edge_is_not_duplicate() {
         let (g, person, _, _, car_model) = setup_uml_graph();
-        // Eine Kante person → car_model gibt es nicht.
+        // No edge person → car_model exists.
         let op = Op::AddEdge {
             source: person,
             target: car_model,
@@ -2321,7 +2325,7 @@ mod tests {
     #[test]
     fn del_ops_never_count_as_duplicate() {
         let (g, person, _, person_name, _) = setup_uml_graph();
-        // Del-Ops erzeugen nichts — sie sind nie Duplikate.
+        // Del-ops produce nothing — they are never duplicates.
         assert!(!is_duplicate(&[Op::DelNode { target: person }], &g));
         assert!(!is_duplicate(
             &[Op::DelEdge {
@@ -2331,27 +2335,28 @@ mod tests {
         ));
     }
 
-    // ── B5-rc5: SetAttr-Duplikat (Reverse-Cascade-Termination) ───────
+    // ── B5-rc5: SetAttr duplicate (reverse-cascade termination) ──────
 
     #[test]
     fn setattr_for_already_equal_value_is_duplicate() {
-        // Regression rc4→rc5: B5 lieferte attrs_to_set → produce()
-        // emittiert in jedem Step die gleiche SetAttr. Vor dem Fix
-        // war is_duplicate `_ => false` für SetAttr — Folge: jeder
-        // Step galt als „productive", cascade_step returnte ewig
-        // Running. Idempotenz-Semantik (analog zu AddNode/AddEdge):
-        // SetAttr ist Duplikat, wenn der Zielknoten matchbar+non-
-        // tentative ist und der gewünschte Wert bereits gleich ist.
+        // Regression rc4→rc5: B5 emitted attrs_to_set → produce()
+        // emits the same SetAttr in every step. Before the fix,
+        // is_duplicate had `_ => false` for SetAttr — consequence:
+        // every step counted as "productive", cascade_step kept
+        // returning Running forever. Idempotency semantics (analogous
+        // to AddNode/AddEdge): SetAttr is a duplicate when the target
+        // node is matchable+non-tentative and the desired value is
+        // already equal.
         let (g, _, _, person_name, _) = setup_uml_graph();
         let op = Op::SetAttr {
             target: person_name,
             key: "name".into(),
-            value: "name".into(), // person_name trägt schon name="name"
+            value: "name".into(), // person_name already carries name="name"
         };
         assert!(
             is_duplicate(&[op], &g),
-            "SetAttr mit bereits identischem Wert muss als Duplikat zählen, \
-             sonst loopt die Cascade auf jeder attrs_to_set-Rule"
+            "SetAttr with an already identical value must count as a duplicate, \
+             otherwise the cascade loops on every attrs_to_set rule"
         );
     }
 
@@ -2365,7 +2370,7 @@ mod tests {
         };
         assert!(
             !is_duplicate(&[op], &g),
-            "SetAttr mit abweichendem Zielwert ist echte Arbeit — kein Duplikat"
+            "SetAttr with a differing target value is real work — not a duplicate"
         );
     }
 
@@ -2403,11 +2408,11 @@ mod tests {
         };
         assert!(
             !is_duplicate(&[op], &g),
-            "TOMB-Knoten ist nicht matchbar → SetAttr ist kein Duplikat"
+            "TOMB node is not matchable → SetAttr is not a duplicate"
         );
     }
 
-    // ── Kontradiktions-Prädikat ──────────────────────────────────────
+    // ── Contradiction predicate ──────────────────────────────────────
 
     #[test]
     fn contradiction_on_solid_deletion() {
@@ -2453,13 +2458,13 @@ mod tests {
         assert!(reason.unwrap().contains("TOMB"));
     }
 
-    // ── Encode-Rank ──────────────────────────────────────────────────
+    // ── Encode rank ──────────────────────────────────────────────────
 
     #[test]
     fn encode_rank_dominated_by_rule() {
         let a = encode_delta_rank(1, 999);
         let b = encode_delta_rank(2, 0);
-        assert!(b > a, "Regel-Rang dominiert Match-Index");
+        assert!(b > a, "rule rank dominates match index");
     }
 
     #[test]
@@ -2469,7 +2474,7 @@ mod tests {
         assert!(b > a);
     }
 
-    // ── Cascade-Step: Runs ───────────────────────────────────────────
+    // ── Cascade step: runs ───────────────────────────────────────────
 
     #[test]
     fn cascade_step_convergence_on_empty_rules() {
@@ -2485,7 +2490,7 @@ mod tests {
         let (mut g, _, _, _, _) = setup_uml_graph();
         let mut c = Cascade::new();
 
-        // Eine Regel, die ein neues Attribut "derived" an jede Klasse hängt.
+        // A rule that attaches a new "derived" attribute to every class.
         let rule = BasicRule::new(
             "AddDerived",
             1,
@@ -2531,8 +2536,8 @@ mod tests {
 
     #[test]
     fn run_cascade_terminates_via_convergence() {
-        // Regel, die jede Klasse mit einem derived-Attribut versieht —
-        // genau einmal (per Duplikations-Detektion beim zweiten Versuch).
+        // Rule that adds a derived attribute to every class — exactly
+        // once (via duplication detection on the second attempt).
         let (mut g, _, _, _, _) = setup_uml_graph();
         let mut c = Cascade::new();
 
@@ -2553,30 +2558,30 @@ mod tests {
         let rules: Vec<&dyn Rule> = vec![&rule];
 
         let state = run_cascade(&mut c, &mut g, &rules, 100).unwrap();
-        // Zwei Klassen → zwei Deltas, dann Duplikation.
-        assert_eq!(c.len(), 2, "zwei Durchläufe, einer pro Klasse");
+        // Two classes → two deltas, then duplication.
+        assert_eq!(c.len(), 2, "two iterations, one per class");
         assert!(
             matches!(
                 state,
                 TerminationState::Duplication | TerminationState::Convergence
             ),
-            "unerwarteter State: {state:?}"
+            "unexpected state: {state:?}"
         );
     }
 
-    // ── Retraktions-Kaskade ──────────────────────────────────────────
+    // ── Retraction cascade ───────────────────────────────────────────
 
     #[test]
     fn retraction_cascade_includes_incident_edges() {
         let (g, person, _, person_name, _) = setup_uml_graph();
-        // Kante: person → person_name (via hasAttribute, vom setup_uml_graph erzeugt).
+        // Edge: person → person_name (via hasAttribute, emitted by setup_uml_graph).
         let del_op = Op::DelNode { target: person };
         let induced = retraction_cascade_for(&del_op, &g);
-        // Mindestens eine DelEdge wird induziert (person→person_name).
+        // At least one DelEdge is induced (person→person_name).
         assert!(!induced.is_empty());
         assert!(
             induced.iter().all(|op| matches!(op, Op::DelEdge { .. })),
-            "Retraktions-Kaskade produziert nur DelEdges"
+            "retraction cascade produces only DelEdges"
         );
         let _ = person_name;
     }
@@ -2602,18 +2607,18 @@ mod tests {
         let (full_ops, induces) = expand_with_retraction(primary, &g);
         assert!(!full_ops.is_empty());
         assert_eq!(full_ops.len(), induces.len());
-        // Primär-Op (index 0) sollte induces einträge haben, wenn
-        // person_name inzidente Kanten hat.
+        // The primary op (index 0) should have induces entries when
+        // person_name has incident edges.
         if full_ops.len() > 1 {
-            assert!(!induces[0].is_empty(), "Primär-Op induziert Folge-Ops");
+            assert!(!induces[0].is_empty(), "primary op induces follow-up ops");
             for idx in &induces[0] {
-                assert!(*idx > 0, "induzierte Op hat Index > 0");
+                assert!(*idx > 0, "induced op has index > 0");
                 assert!(matches!(full_ops[*idx], Op::DelEdge { .. }));
             }
         }
     }
 
-    // ── V₇-Vorfahren-Check ───────────────────────────────────────────
+    // ── V₇ ancestor check ────────────────────────────────────────────
 
     #[test]
     fn ancestor_check_identifies_creators() {
@@ -2621,11 +2626,11 @@ mod tests {
         let (g, _, _, _, _) = setup_uml_graph();
         let mut c = Cascade::new();
 
-        // Simuliere eine Kaskade: d_0 erzeugt einen Ghost, d_1 verwendet ihn als Anchor.
+        // Simulate a cascade: d_0 creates a ghost, d_1 uses it as anchor.
         let parent = g.matchable_nodes().next().unwrap().id;
         let ghost_id = GhostId::from_parent(&parent, "test-edge", "TestType", &BTreeMap::new());
 
-        // d_0: erzeugt ghost_id
+        // d_0: creates ghost_id
         c.append(DeltaEntry {
             origin: Origin::User,
             rank: 0,
@@ -2640,7 +2645,7 @@ mod tests {
             bindings: std::collections::HashMap::new(),
         });
 
-        // d_1: hat ghost_id als Anchor
+        // d_1: has ghost_id as anchor
         c.append(DeltaEntry {
             origin: Origin::Rule {
                 rule_id: "r1".into(),
@@ -2662,7 +2667,7 @@ mod tests {
         let (mut g, person, _, _, _) = setup_uml_graph();
         let mut c = Cascade::new();
 
-        // d_0 (User): trivialer User-Delta mit person als Anchor.
+        // d_0 (User): trivial user delta with person as anchor.
         c.append(DeltaEntry {
             origin: crate::ops::Origin::User,
             rank: 0,
@@ -2672,8 +2677,8 @@ mod tests {
             bindings: std::collections::HashMap::new(),
         });
 
-        // Eine Regel, die versuchen würde, einen Ghost zu erzeugen UND den
-        // Parent (person, SOLID) zu tombstonen. V₇ muss das abfangen.
+        // A rule that would try to create a ghost AND tombstone the
+        // parent (person, SOLID). V₇ must catch this.
         let rule = BasicRule::new(
             "BadRule",
             1,
@@ -2686,7 +2691,7 @@ mod tests {
         let rules: Vec<&dyn Rule> = vec![&rule];
 
         let state = cascade_step(&mut c, &mut g, &rules).unwrap();
-        // SOLID-Schutz greift (Teilmenge V₇): person ist SOLID → Contradiction.
+        // SOLID protection kicks in (subset of V₇): person is SOLID → Contradiction.
         assert!(matches!(state, TerminationState::Contradiction { .. }));
     }
 
@@ -2696,7 +2701,7 @@ mod tests {
         let (mut g, person, _, _, _) = setup_uml_graph();
         let mut c = Cascade::new();
 
-        // d_0 (User): erzeugt einen Ghost-Attribut.
+        // d_0 (User): creates a ghost attribute.
         let user_op = Op::AddNode {
             parent: person,
             edge_type: "hasAttribute".into(),
@@ -2708,7 +2713,7 @@ mod tests {
             _ => panic!(),
         };
 
-        // Auf Graph anwenden:
+        // Apply to graph:
         user_op.apply(&mut g).unwrap();
 
         c.append(DeltaEntry {
@@ -2720,7 +2725,7 @@ mod tests {
             bindings: std::collections::HashMap::new(),
         });
 
-        // Regel, die genau dieses d_0-Ghost löschen will.
+        // Rule that tries to delete exactly this d_0 ghost.
         let rule = BasicRule::new(
             "EraseD0",
             1,
@@ -2730,19 +2735,19 @@ mod tests {
         let rules: Vec<&dyn Rule> = vec![&rule];
 
         let state = cascade_step(&mut c, &mut g, &rules).unwrap();
-        // V₇ sollte d_0-Element schützen.
+        // V₇ should protect the d_0 element.
         assert!(matches!(state, TerminationState::Contradiction { .. }));
         if let TerminationState::Contradiction { reason } = state {
             assert!(
                 reason.contains("V₇") || reason.contains("d_0") || reason.contains("SOLID"),
-                "Reason sollte V₇ referenzieren: {reason}"
+                "reason should reference V₇: {reason}"
             );
         }
     }
 
-    // ── Contradiction-Saturation statt sofortigem Abort ───────────────
+    // ── Contradiction saturation instead of immediate abort ───────────
 
-    // ── Rollback-Szenarien (Phase 1.3d) ──────────────────────────────
+    // ── Rollback scenarios (Phase 1.3d) ──────────────────────────────
 
     #[test]
     fn rollback_truncates_and_sets_limit() {
@@ -2779,7 +2784,7 @@ mod tests {
             origin: Origin::Rule {
                 rule_id: "r2".into(),
             },
-            rank: 100, // höchste
+            rank: 100, // highest
             op_star: vec![op2],
             anchor: vec![person],
             induces: vec![Vec::new()],
@@ -2808,13 +2813,13 @@ mod tests {
         let mut limits: HashMap<usize, u64> = HashMap::new();
 
         let rolled_pos = rollback_highest_rank(&base, &mut c, &mut g, &mut limits);
-        assert_eq!(rolled_pos, Some(1), "rank 100 Delta war an Position 1");
+        assert_eq!(rolled_pos, Some(1), "rank 100 delta was at position 1");
 
-        // Cascade jetzt abgeschnitten auf [r1].
+        // Cascade now truncated to [r1].
         assert_eq!(c.len(), 1);
-        // Limit gesetzt an Position 1.
+        // Limit set at position 1.
         assert_eq!(limits.get(&1), Some(&100));
-        // Graph-Zustand: 4 Baseline-Knoten + a1 = 5; a2 und a3 sind weg.
+        // Graph state: 4 baseline nodes + a1 = 5; a2 and a3 are gone.
         assert_eq!(g.matchable_nodes().count(), 5);
     }
 
@@ -2824,7 +2829,7 @@ mod tests {
         let base = g.clone();
         let mut c = Cascade::new();
 
-        // Einziger Eintrag ist ein User-Delta.
+        // Only entry is a user delta.
         c.append(DeltaEntry {
             origin: Origin::User,
             rank: 0,
@@ -2837,19 +2842,19 @@ mod tests {
         let mut limits: HashMap<usize, u64> = HashMap::new();
 
         let result = rollback_highest_rank(&base, &mut c, &mut g, &mut limits);
-        assert_eq!(result, None, "kein Rule-Delta → kein Rollback");
-        assert_eq!(c.len(), 1, "User-Delta bleibt");
+        assert_eq!(result, None, "no rule delta → no rollback");
+        assert_eq!(c.len(), 1, "user delta remains");
     }
 
     #[test]
     fn run_cascade_with_rollback_recovers_from_contradiction() {
-        // Szenario:
-        //   R_problem (rank 100): auf Class → erzeugt Attribute "x".
-        //   R_kill (rank 5): auf Attribute "x" → versucht es zu löschen
-        //     (V₇-Verletzung, da R_problem Vorfahre).
+        // Scenario:
+        //   R_problem (rank 100): on Class → creates Attribute "x".
+        //   R_kill (rank 5): on Attribute "x" → tries to delete it
+        //     (V₇ violation, since R_problem is an ancestor).
         //
-        // Erwartung: ohne Rollback → Contradiction.
-        //            mit Rollback → R_problem rausgerollt, Konvergenz.
+        // Expectation: without rollback → Contradiction.
+        //              with rollback → R_problem rolled out, convergence.
         let (mut g, _, _, _, _) = setup_uml_graph();
         let base = g.clone();
         let mut c = Cascade::new();
@@ -2887,25 +2892,25 @@ mod tests {
 
         assert!(
             stats.rollback_count >= 1,
-            "Mindestens ein Rollback erwartet, stats = {stats:?}"
+            "at least one rollback expected, stats = {stats:?}"
         );
-        assert!(!stats.limits_applied.is_empty(), "Limits gesetzt");
-        // Terminierung via Convergence oder Duplication (nachdem R_problem
-        // rausgerollt wurde und R_kill keinen Match mehr hat).
+        assert!(!stats.limits_applied.is_empty(), "limits set");
+        // Termination via Convergence or Duplication (after R_problem
+        // is rolled out and R_kill no longer has a match).
         assert!(
             matches!(
                 state,
                 TerminationState::Convergence | TerminationState::Duplication
             ),
-            "nach Rollback valider Endzustand: {state:?}"
+            "valid end state after rollback: {state:?}"
         );
     }
 
     #[test]
     fn run_cascade_with_rollback_capitulates_when_exhausted() {
-        // Szenario: Rule, die direkt eine SOLID-Deletion versucht —
-        // kein Rollback kann das lösen, weil das Problem nicht in einer
-        // früheren Rule-Entscheidung liegt, sondern an der Regel selbst.
+        // Scenario: rule that directly attempts a SOLID deletion —
+        // no rollback can resolve it because the problem is not in a
+        // prior rule decision but in the rule itself.
         let (mut g, person, _, _, _) = setup_uml_graph();
         let base = g.clone();
         let mut c = Cascade::new();
@@ -2921,8 +2926,8 @@ mod tests {
         let (state, _stats) =
             run_cascade_with_rollback(&base, &mut c, &mut g, &rules, 50, 10).unwrap();
 
-        // Kein Rule-Delta in der Kaskade → kein Rollback möglich →
-        // Contradiction bleibt.
+        // No rule delta in the cascade → no rollback possible →
+        // contradiction remains.
         assert!(matches!(state, TerminationState::Contradiction { .. }));
     }
 
@@ -2931,8 +2936,8 @@ mod tests {
         let (mut g, _, _, _, _) = setup_uml_graph();
         let mut c = Cascade::new();
 
-        // Zwei Regeln: eine mit höherem Rang, die kontradiktorisch wäre,
-        // eine mit niedrigerem Rang, die valide ist.
+        // Two rules: a higher-ranked one that would be contradictory,
+        // and a lower-ranked one that is valid.
         let person_id = g
             .matchable_nodes()
             .find(|n| n.type_id == "Class" && n.attrs.get("name") == Some(&"Person".to_string()))
@@ -2943,7 +2948,7 @@ mod tests {
             "HighBad",
             10,
             Pattern::new().with_node(NodePattern::new("c", "Class")),
-            move |_m, _g| vec![Op::DelNode { target: person_id }], // SOLID-Erase
+            move |_m, _g| vec![Op::DelNode { target: person_id }], // SOLID erase
         );
 
         let low_good = BasicRule::new(
@@ -2963,15 +2968,15 @@ mod tests {
 
         let rules: Vec<&dyn Rule> = vec![&high_bad, &low_good];
         let state = cascade_step(&mut c, &mut g, &rules).unwrap();
-        // Die kontradiktorische hohe Regel wird übersprungen; die niedrige
-        // Regel läuft durch.
+        // The contradictory high-ranked rule is skipped; the low-
+        // ranked rule fires.
         assert_eq!(state, TerminationState::Running);
         assert_eq!(c.len(), 1);
     }
 
     #[test]
     fn run_cascade_respects_step_limit() {
-        // Regel, die immer neue Ghosts produziert (nicht-kontraktiv).
+        // Rule that keeps producing fresh ghosts (non-contractive).
         let (mut g, _, _, _, _) = setup_uml_graph();
         let mut c = Cascade::new();
 
@@ -2981,9 +2986,9 @@ mod tests {
             Pattern::new().with_node(NodePattern::new("c", "Class")),
             |m, _g| {
                 let c = *m.get("c").unwrap();
-                // Wir produzieren einen Ghost mit einem eindeutigen Suffix
-                // basierend auf dem aktuellen Hash — um Duplikation zu
-                // vermeiden in diesem Stress-Test.
+                // Produce a ghost with a unique suffix based on the
+                // current hash — to avoid duplication in this stress
+                // test.
                 let unique = format!("derived-{}", c.short());
                 vec![Op::AddNode {
                     parent: c,
@@ -2995,10 +3000,10 @@ mod tests {
         );
         let rules: Vec<&dyn Rule> = vec![&rule];
 
-        // Mit Limit 1 sollte es nicht durchlaufen.
-        // Bei 2 Klassen: Step 1 produziert, Step 2 produziert, Step 3 matcht
-        // erneut aber Attribut "derived-…" existiert — Duplikation.
-        // Mit max_steps = 1 erreichen wir also den Limit-Error.
+        // With limit 1 it should not run to completion.
+        // With 2 classes: step 1 produces, step 2 produces, step 3
+        // matches again but the "derived-…" attribute exists —
+        // duplication. So with max_steps = 1 we hit the limit error.
         let state = run_cascade(&mut c, &mut g, &rules, 1);
         assert!(matches!(state, Err(EngineError::StepLimitExceeded { .. })));
     }
@@ -3025,11 +3030,11 @@ mod tests {
         let mut cas = Cascade::new();
         let _ = run_cascade(&mut cas, &mut g, &rules, 5).unwrap();
 
-        // Sollte 2 Rule-Anwendungen geben (eine pro Class).
+        // There should be 2 rule applications (one per class).
         let store = MatchPersistenceStore::new(&cas);
         let refs_p1 = store.applications_referencing(&p1);
-        assert_eq!(refs_p1.len(), 1, "C1 wird genau 1× gebunden");
-        // Bindings müssen gefüllt sein
+        assert_eq!(refs_p1.len(), 1, "C1 is bound exactly once");
+        // Bindings must be populated.
         let bindings = store.bindings(refs_p1[0]).unwrap();
         assert!(bindings.contains_key("c"));
     }
@@ -3053,10 +3058,10 @@ mod tests {
         let _ = run_cascade(&mut cas, &mut g, &rules, 5).unwrap();
         let store = MatchPersistenceStore::new(&cas);
         let created = store.created_set(0);
-        assert!(!created.is_empty(), "Mindestens 1 erzeugtes Element");
+        assert!(!created.is_empty(), "at least 1 created element");
     }
 
-    // ── M5.2: Watch-Hook ─────────────────────────────────────────────────
+    // ── M5.2: Watch hook ─────────────────────────────────────────────────
 
     #[test]
     fn watch_op_finds_rule_apps_referencing_node() {
@@ -3077,7 +3082,7 @@ mod tests {
         let mut cas = Cascade::new();
         let _ = run_cascade(&mut cas, &mut g, &rules, 5).unwrap();
 
-        // Op auf p1 — sollte 1 RuleApp finden.
+        // Op on p1 — should find 1 RuleApp.
         let op = Op::DelNode { target: p1 };
         let outcome = watch_op(&op, &cas, &g);
         assert_eq!(outcome.affected_apps.len(), 1);
@@ -3137,12 +3142,12 @@ mod tests {
             vec![p1, p2],
         );
         let affected = apply_with_watch(&user, &mut g, &snapshot_cas).unwrap();
-        // 2 RuleApps (eine pro Class) — beide gefunden, sortiert, ohne Duplikate
+        // 2 RuleApps (one per class) — both found, sorted, deduplicated.
         assert_eq!(affected.len(), 2);
         assert!(affected[0] < affected[1]);
     }
 
-    // ── M5.3: Revalidate ─────────────────────────────────────────────────
+    // ── M5.3: Re-validation ──────────────────────────────────────────────
 
     #[test]
     fn revalidate_still_matches_when_unchanged() {
@@ -3161,7 +3166,7 @@ mod tests {
         let rules: Vec<&dyn Rule> = vec![&rule];
         let mut cas = Cascade::new();
         let _ = run_cascade(&mut cas, &mut g, &rules, 5).unwrap();
-        // Re-Validate gegen eine harmlose Op (gleicher Knoten, gleicher Status)
+        // Re-validate against a harmless op (same node, same status).
         let outcome = revalidate_app(
             0,
             &cas,
@@ -3245,11 +3250,11 @@ mod tests {
                 assert_eq!(new_value, "C1Renamed");
                 assert_eq!(propagations.len(), 1);
             }
-            other => panic!("erwartet AttrChanged, got {other:?}"),
+            other => panic!("expected AttrChanged, got {other:?}"),
         }
     }
 
-    // ── M5.4: Attribut-Propagation ───────────────────────────────────────
+    // ── M5.4: Attribute propagation ──────────────────────────────────────
 
     #[test]
     fn apply_attr_propagation_emits_setattr() {
@@ -3258,7 +3263,7 @@ mod tests {
         let r_node = g.add_baseline_node("Doc", "D1", attrs(&[("label", "old")]));
 
         let mut cas = Cascade::new();
-        // Stelle Bindings: c → p1, d → r_node
+        // Set up bindings: c → p1, d → r_node
         let mut bindings = std::collections::HashMap::new();
         bindings.insert("c".to_string(), p1);
         bindings.insert("d".to_string(), r_node);
@@ -3281,12 +3286,12 @@ mod tests {
         )
         .unwrap();
 
-        // Cascade hat jetzt einen Entry mit @propagate
+        // Cascade now has an entry with @propagate
         assert_eq!(cas.entries.len(), 1);
         let origin = &cas.entries[0].origin;
         assert!(matches!(origin, Origin::Rule { rule_id } if rule_id == "MyRule@propagate"));
 
-        // R-Node hat neuen label-Wert
+        // R-node has the new label value
         let r_data = g.get_node(&r_node).unwrap();
         assert_eq!(r_data.attrs["label"], "C1Renamed");
     }
@@ -3324,7 +3329,7 @@ mod tests {
         assert_eq!(m.attrs["name"], "getSalary");
     }
 
-    // ── M5.5: Tentative-Tombstone + Konsolidierung ───────────────────────
+    // ── M5.5: Tentative tombstone + consolidation ────────────────────────
 
     #[test]
     fn tentative_invalidate_marks_created_set() {
@@ -3360,10 +3365,10 @@ mod tests {
         let p1 = g.add_baseline_node("Class", "C1", attrs(&[("name", "C1")]));
         let m1 = g.add_ghost_node(p1, "m", "M", attrs(&[("name", "m1")]));
         let m2 = g.add_ghost_node(p1, "m", "M", attrs(&[("name", "m2")]));
-        // Markiere beide als TentativeTombstone
+        // Mark both as TentativeTombstone
         g.set_node_status(&m1, Status::TentativeTombstone);
         g.set_node_status(&m2, Status::TentativeTombstone);
-        // Konsolidiere: nur m1 wurde "neu erstellt" → Resurrection
+        // Consolidate: only m1 was "freshly created" → resurrection
         consolidate_tentative(&mut g, &[m1]);
         assert_eq!(g.get_node(&m1).unwrap().status, Status::Solid);
         assert_eq!(g.get_node(&m2).unwrap().status, Status::Tombstone);
@@ -3371,9 +3376,9 @@ mod tests {
 
     #[test]
     fn run_cascade_observable_invalidates_orphan_ruleapp() {
-        // Zwei Klassen, Rule erzeugt Marker pro Klasse.
-        // Dann User löscht eine Klasse → Marker dieser App muss
-        // invalidiert (Tombstone) werden.
+        // Two classes, rule produces a marker per class.
+        // Then the user deletes one class → the marker of that app
+        // must be invalidated (tombstoned).
         let mut g = TypedGraph::new();
         let p1 = g.add_baseline_node("Class", "C1", attrs(&[("name", "C1")]));
         let _p2 = g.add_baseline_node("Class", "C2", attrs(&[("name", "C2")]));
@@ -3390,18 +3395,18 @@ mod tests {
         let rules: Vec<&dyn Rule> = vec![&rule];
         let mut cas = Cascade::new();
         let _ = run_cascade(&mut cas, &mut g, &rules, 5).unwrap();
-        // Nach Initial-Sync: 2 Marker-Nodes
+        // After initial sync: 2 marker nodes
         let marker_count = g.iter_nodes().filter(|n| n.type_id == "M").count();
         assert_eq!(marker_count, 2);
 
-        // User-Delta: lösche p1
+        // User delta: delete p1
         let user = DeltaEntry::new_user(vec![Op::DelNode { target: p1 }], vec![p1]);
         user.apply(&mut g).unwrap();
         cas.append(user);
 
         let _ = run_cascade_observable(&mut cas, &mut g, &rules, 5).unwrap();
 
-        // Marker, die noch nicht Tombstone sind (Solid oder Ghost) zählen.
+        // Count markers that are not yet tombstoned (Solid or Ghost).
         let active_markers = g
             .iter_nodes()
             .filter(|n| n.type_id == "M" && n.status != Status::Tombstone)
@@ -3410,16 +3415,16 @@ mod tests {
             .iter_nodes()
             .filter(|n| n.type_id == "M" && n.status == Status::Tombstone)
             .count();
-        assert_eq!(active_markers, 1, "p2's Marker bleibt aktiv");
-        assert_eq!(tombstoned_markers, 1, "p1's Marker wurde tombstoned");
+        assert_eq!(active_markers, 1, "p2's marker stays active");
+        assert_eq!(tombstoned_markers, 1, "p1's marker was tombstoned");
     }
 
     #[test]
     fn user_delta_has_empty_bindings() {
         let cas = Cascade::with_user_delta(DeltaEntry::new_user(vec![], vec![]));
         let store = MatchPersistenceStore::new(&cas);
-        // User-Delta wird nicht von applications_referencing erfasst,
-        // weil sie nur Origin::Rule berücksichtigt.
+        // User delta is not picked up by applications_referencing,
+        // since it only considers Origin::Rule.
         let id = GhostId::from_baseline("dummy");
         assert!(store.applications_referencing(&id).is_empty());
         assert!(store.bindings(0).unwrap().is_empty());

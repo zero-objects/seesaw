@@ -1,11 +1,11 @@
-//! Ops-Modul — T₁, T₂, T₃.
+//! Ops module — T₁, T₂, T₃.
 //!
-//! Zuständigkeit:
-//! - Edit-Skripte (Def. 1.1, 1.2)
-//! - Delta-Einträge mit Kaskaden-Annotation (Def. 2.1, Def. 3.9)
-//! - Overlay-Anwendung auf TypedGraph (Def. 2.5)
-//! - Rollup-Index κ (Def. 5.4)
-//! - Nullifikations-Prädikat (Def. 5.5)
+//! Responsibilities:
+//! - Edit scripts (Def. 1.1, 1.2)
+//! - Delta entries with cascade annotation (Def. 2.1, Def. 3.9)
+//! - Overlay application onto TypedGraph (Def. 2.5)
+//! - Rollup index κ (Def. 5.4)
+//! - Nullification predicate (Def. 5.5)
 
 use crate::graph::{GhostId, Status, TypedGraph};
 use serde::{Deserialize, Serialize};
@@ -13,11 +13,11 @@ use std::collections::BTreeMap;
 use std::fmt;
 use thiserror::Error;
 
-// ── Rollup-Index κ ═══════════════════════════════════════════════════════
+// ── Rollup index κ ═══════════════════════════════════════════════════════
 
-/// Rollup-Index κ = (delta_idx, op_idx), lexikographisch geordnet.
+/// Rollup index κ = (delta_idx, op_idx), lexicographically ordered.
 ///
-/// Siehe Def. 5.4 im PDF. Die größere κ-Op gewinnt bei Target-Überlagerung.
+/// See Def. 5.4 in the paper. The larger κ-op wins on target overlay.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct Kappa {
     pub delta_idx: usize,
@@ -32,31 +32,31 @@ impl fmt::Display for Kappa {
 
 // ── Atomic Operation ═════════════════════════════════════════════════════
 
-/// Atomare Operation auf einem Graphen.
+/// Atomic operation on a graph.
 ///
-/// Siehe Def. 1.1 im PDF. Parent-Referenz für AddNode gemäß
-/// Def. 5.3 (Parent-rooted Ghost-ID).
+/// See Def. 1.1 in the paper. Parent reference for AddNode per
+/// Def. 5.3 (parent-rooted Ghost-ID).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Op {
-    /// Fügt einen Ghost-Knoten anchored an `parent` hinzu.
+    /// Adds a ghost node anchored at `parent`.
     AddNode {
         parent: GhostId,
         edge_type: String,
         type_id: String,
         attrs: BTreeMap<String, String>,
     },
-    /// Fügt eine Ghost-Kante hinzu.
+    /// Adds a ghost edge.
     AddEdge {
         source: GhostId,
         target: GhostId,
         type_id: String,
         attrs: BTreeMap<String, String>,
     },
-    /// Tombstoned einen Knoten.
+    /// Tombstones a node.
     DelNode { target: GhostId },
-    /// Tombstoned eine Kante.
+    /// Tombstones an edge.
     DelEdge { target: GhostId },
-    /// Modifiziert ein Attribut (Phase 1: überschreibend; Phase 3: Shadow-Stack).
+    /// Modifies an attribute (Phase 1: overwriting; Phase 3: shadow stack).
     SetAttr {
         target: GhostId,
         key: String,
@@ -64,25 +64,25 @@ pub enum Op {
     },
 }
 
-/// Zielelement einer Op (für Rollup-Überlagerung).
+/// Target element of an Op (for rollup overlay).
 ///
-/// Zwei Ops mit gleichem Target werden unter Rollup-Semantik
-/// überlagert (der spätere gewinnt).
+/// Two Ops with the same target are overlaid under rollup
+/// semantics (the later one wins).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum OpTarget {
-    /// Knoten-Ziel (Add/Del auf einem Knoten).
+    /// Node target (Add/Del on a node).
     Node(GhostId),
-    /// Kanten-Ziel (Add/Del auf einer Kante).
+    /// Edge target (Add/Del on an edge).
     Edge(GhostId),
-    /// Attribut-Ziel (SetAttr auf (node, key)).
+    /// Attribute target (SetAttr on (node, key)).
     Attr(GhostId, String),
 }
 
 impl Op {
-    /// Das Target dieser Op für Rollup-Überlagerung (Def. 5.5 (i)).
+    /// The target of this Op for rollup overlay (Def. 5.5 (i)).
     ///
-    /// Für AddNode ist das Target der neue Ghost, für AddEdge die neue Kante,
-    /// für Del/SetAttr das referenzierte Element.
+    /// For AddNode the target is the new ghost, for AddEdge the new edge,
+    /// for Del/SetAttr the referenced element.
     pub fn target(&self) -> OpTarget {
         match self {
             Op::AddNode {
@@ -109,8 +109,8 @@ impl Op {
         }
     }
 
-    /// Prüft, ob diese Op und `other` ein klassisches Kanzellationspaar bilden
-    /// (Def. 5.5 (ii)): Add + Del auf demselben Target.
+    /// Checks whether this Op and `other` form a classic cancellation pair
+    /// (Def. 5.5 (ii)): Add + Del on the same target.
     pub fn cancels_with(&self, other: &Op) -> bool {
         match (self, other) {
             (Op::AddNode { .. }, Op::DelNode { target: del_t })
@@ -127,9 +127,9 @@ impl Op {
         }
     }
 
-    /// Wendet diese Op auf `graph` an (Overlay-Operation ⊕, Def. 2.5).
+    /// Applies this Op to `graph` (overlay operation ⊕, Def. 2.5).
     ///
-    /// Rückgabe: bei Add-Ops die Ghost-ID des neuen Elements; bei
+    /// Returns: for Add-Ops the Ghost-ID of the new element; for
     /// Del/SetAttr `None`.
     pub fn apply(&self, graph: &mut TypedGraph) -> Result<Option<GhostId>, OpError> {
         match self {
@@ -143,7 +143,7 @@ impl Op {
                     return Err(OpError::ParentNotFound(*parent));
                 }
                 let new_id = graph.add_ghost_node(*parent, edge_type, type_id, attrs.clone());
-                // Zusätzlich eine Kante vom Parent zum neuen Ghost:
+                // Additionally an edge from the parent to the new ghost:
                 graph
                     .add_edge(*parent, new_id, edge_type, BTreeMap::new(), Status::Ghost)
                     .ok_or(OpError::EdgeCreationFailed)?;
@@ -188,51 +188,50 @@ impl Op {
     }
 }
 
-/// Fehler bei Op-Anwendung.
+/// Error during Op application.
 #[derive(Debug, Error)]
 pub enum OpError {
-    #[error("Parent-Knoten {0:?} nicht gefunden")]
+    #[error("Parent node {0:?} not found")]
     ParentNotFound(GhostId),
-    #[error("Knoten {0:?} nicht gefunden")]
+    #[error("Node {0:?} not found")]
     NodeNotFound(GhostId),
-    #[error("Kante {0:?} nicht gefunden")]
+    #[error("Edge {0:?} not found")]
     EdgeNotFound(GhostId),
-    #[error("Kanten-Erzeugung fehlgeschlagen")]
+    #[error("Edge creation failed")]
     EdgeCreationFailed,
-    #[error("Noch nicht implementiert: {0}")]
+    #[error("Not yet implemented: {0}")]
     NotYetImplemented(&'static str),
 }
 
 // ── Delta Entry ══════════════════════════════════════════════════════════
 
-/// Herkunft eines Delta-Eintrags.
+/// Origin of a delta entry.
 ///
-/// Siehe Def. 2.1 im PDF.
+/// See Def. 2.1 in the paper.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Origin {
     User,
     Rule { rule_id: String },
 }
 
-/// Delta-Eintrag mit Kaskaden-Annotation.
+/// Delta entry with cascade annotation.
 ///
-/// Siehe Def. 2.1 (Basis) und Def. 3.9 (Kaskaden-Annotation) im PDF.
+/// See Def. 2.1 (base) and Def. 3.9 (cascade annotation) in the paper.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct DeltaEntry {
     pub origin: Origin,
     pub rank: u64,
-    /// Geordnete Op-Liste, |op_star| ≤ k.
+    /// Ordered Op list, |op_star| ≤ k.
     pub op_star: Vec<Op>,
-    /// Anchor-Knoten (referenzierte Elemente).
+    /// Anchor nodes (referenced elements).
     pub anchor: Vec<GhostId>,
-    /// Induziert-Relation aus V₁₂.
-    /// `induces[i]` = Liste der Indizes der durch `op_star[i]` induzierten Ops.
+    /// Induces relation from V₁₂.
+    /// `induces[i]` = list of indices of Ops induced by `op_star[i]`.
     pub induces: Vec<Vec<usize>>,
-    /// Match-Bindings dieser Rule-Anwendung (M5).
-    /// Leer für `Origin::User`. Für `Origin::Rule` enthält es die
-    /// Pattern-Variable → GhostId-Bindings, die beim Match
-    /// produziert wurden. Wird vom Watch-Hook (M5.2) verwendet,
-    /// um affected Rule-Anwendungen zu finden.
+    /// Match bindings of this rule application (M5).
+    /// Empty for `Origin::User`. For `Origin::Rule` it contains the
+    /// pattern-variable → GhostId bindings produced during the match.
+    /// Used by the watch hook (M5.2) to find affected rule applications.
     #[serde(default)]
     pub bindings: std::collections::HashMap<String, GhostId>,
 }
@@ -250,7 +249,7 @@ impl DeltaEntry {
         }
     }
 
-    /// Wendet alle Ops in `op_star` nacheinander auf `graph` an.
+    /// Applies all Ops in `op_star` sequentially to `graph`.
     pub fn apply(&self, graph: &mut TypedGraph) -> Result<Vec<Option<GhostId>>, OpError> {
         self.op_star.iter().map(|op| op.apply(graph)).collect()
     }
@@ -294,7 +293,7 @@ mod tests {
         assert_eq!(
             g.edge_count(),
             1,
-            "AddNode erzeugt implizit Kante zum Parent"
+            "AddNode implicitly creates an edge to the parent"
         );
     }
 
@@ -321,10 +320,10 @@ mod tests {
         let node = g.get_node(&person).unwrap();
         assert_eq!(node.status, Status::Tombstone);
         assert_eq!(g.matchable_nodes().count(), 0);
-        assert_eq!(g.node_count(), 1, "TOMB bleibt physisch");
+        assert_eq!(g.node_count(), 1, "TOMB remains physical");
     }
 
-    // ── Add/Remove-Edge — Op-Ebene ───────────────────────────────────
+    // ── Add/Remove edge — Op layer ───────────────────────────────────
 
     fn setup_two_classes() -> (TypedGraph, GhostId, GhostId) {
         let mut g = TypedGraph::new();
@@ -359,8 +358,8 @@ mod tests {
         let first = add_edge_op(a, b).apply(&mut g).unwrap().unwrap();
         let second = add_edge_op(a, b).apply(&mut g).unwrap().unwrap();
 
-        assert_eq!(first, second, "gleiche Kante → gleiche Ghost-ID");
-        assert_eq!(g.edge_count(), 1, "Re-Apply erzeugt kein Kanten-Duplikat");
+        assert_eq!(first, second, "same edge → same Ghost-ID");
+        assert_eq!(g.edge_count(), 1, "re-apply creates no edge duplicate");
     }
 
     #[test]
@@ -379,7 +378,7 @@ mod tests {
         Op::DelEdge { target: edge_id }.apply(&mut g).unwrap();
 
         assert_eq!(g.get_edge(&edge_id).unwrap().status, Status::Tombstone);
-        assert_eq!(g.edge_count(), 1, "TOMB bleibt physisch");
+        assert_eq!(g.edge_count(), 1, "TOMB remains physical");
     }
 
     #[test]
@@ -405,11 +404,7 @@ mod tests {
             type_id: "T".into(),
             attrs: attrs(&[("k", "v")]),
         };
-        assert_eq!(
-            op1.target(),
-            op2.target(),
-            "gleiche Eingabe → gleiches Target"
-        );
+        assert_eq!(op1.target(), op2.target(), "same input → same target");
     }
 
     #[test]
@@ -421,7 +416,7 @@ mod tests {
             type_id: "T".into(),
             attrs: BTreeMap::new(),
         };
-        // Die erzeugte Ghost-ID:
+        // The generated Ghost-ID:
         let OpTarget::Node(id) = add.target() else {
             panic!("Node target expected");
         };
@@ -446,9 +441,9 @@ mod tests {
             op_idx: 7,
         };
 
-        assert!(a < b, "delta_idx dominiert op_idx");
-        assert!(a < c, "gleicher delta_idx → op_idx entscheidet");
-        assert!(c < b, "lexikographisch");
+        assert!(a < b, "delta_idx dominates op_idx");
+        assert!(a < c, "same delta_idx → op_idx decides");
+        assert!(c < b, "lexicographic");
     }
 
     #[test]
@@ -474,8 +469,8 @@ mod tests {
 
         let results = delta.apply(&mut g).unwrap();
         assert_eq!(results.len(), 2);
-        assert_eq!(g.node_count(), 3, "Person + 2 Attribute");
-        assert_eq!(g.edge_count(), 2, "2 hasAttribute-Kanten");
+        assert_eq!(g.node_count(), 3, "Person + 2 attributes");
+        assert_eq!(g.edge_count(), 2, "2 hasAttribute edges");
     }
 
     #[test]
@@ -489,7 +484,7 @@ mod tests {
         };
         let attr_id = add_attr.apply(&mut g).unwrap().unwrap();
 
-        // Die durch AddNode erzeugte Parent-Kante hat eine berechnete ID.
+        // The parent edge created by AddNode has a computed ID.
         let edge_id = GhostId::for_edge(&person, &attr_id, "hasAttribute", &BTreeMap::new());
 
         let del = Op::DelEdge { target: edge_id };
@@ -525,9 +520,9 @@ mod tests {
         assert!(matches!(set.apply(&mut g), Err(OpError::NodeNotFound(_))));
     }
 
-    /// Reconciliation-Szenario: Attribut wird hinzugefügt und wieder entfernt.
-    /// Nach der Kaskade ist das Attribut tombstoned; die Rollup-/Kanzellations-
-    /// Detektion in Phase 1.3 wird dann das Paar erkennen.
+    /// Reconciliation scenario: an attribute is added and then removed again.
+    /// After the cascade the attribute is tombstoned; the rollup/cancellation
+    /// detection in phase 1.3 will then identify the pair.
     #[test]
     fn add_then_del_results_in_tombstone() {
         let (mut g, person) = setup_person_graph();
@@ -544,7 +539,7 @@ mod tests {
         del_op.apply(&mut g).unwrap();
         assert_eq!(g.get_node(&new_id).unwrap().status, Status::Tombstone);
 
-        // Das Kanzellationspaar lässt sich erkennen:
+        // The cancellation pair can be detected:
         assert!(add_op.cancels_with(&del_op));
     }
 }

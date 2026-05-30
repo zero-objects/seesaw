@@ -1,8 +1,8 @@
-//! Edge-Case-Tests für den `kind_index` (F15-Mitigation,
-//! Match-Indexing). Stellen sicher, dass `matchable_nodes_by_kind`
-//! korrekt mit Status-Übergängen, Resurrection und leerem Inventar
-//! umgeht — und dass die Reihenfolge deterministisch (BTreeSet-Ord)
-//! ist, was die Canonical-μ-Match-Enumeration aus F11 fundiert.
+//! Edge-case tests for the `kind_index` (F15 mitigation,
+//! match indexing). Ensure that `matchable_nodes_by_kind`
+//! handles status transitions, resurrection, and empty inventory
+//! correctly — and that the order is deterministic (BTreeSet-ord),
+//! which grounds the canonical-μ match enumeration from F11.
 
 use std::collections::BTreeMap;
 
@@ -26,12 +26,12 @@ fn index_returns_only_requested_kind() {
         .matchable_nodes_by_kind("Person")
         .map(|n| n.attrs.get("name").unwrap().as_str())
         .collect();
-    assert_eq!(persons.len(), 2, "2 Persons im Index");
+    assert_eq!(persons.len(), 2, "2 Persons in the index");
     let cars: Vec<&str> = g
         .matchable_nodes_by_kind("Car")
         .map(|n| n.attrs.get("name").unwrap().as_str())
         .collect();
-    assert_eq!(cars.len(), 1, "1 Car im Index");
+    assert_eq!(cars.len(), 1, "1 Car in the index");
 }
 
 #[test]
@@ -40,7 +40,7 @@ fn index_returns_empty_for_unknown_kind() {
     g.add_baseline_node("Person", "alice", BTreeMap::new());
 
     let count = g.matchable_nodes_by_kind("UnknownType").count();
-    assert_eq!(count, 0, "kind ohne Knoten liefert leeren Iterator");
+    assert_eq!(count, 0, "kind without nodes returns empty iterator");
 }
 
 #[test]
@@ -55,15 +55,15 @@ fn index_excludes_tombstone() {
     assert_eq!(
         g.matchable_nodes_by_kind("Person").count(),
         0,
-        "Tombstone wird vom Lookup-Status-Filter ausgeschlossen"
+        "tombstone is excluded by the lookup status filter"
     );
 }
 
 #[test]
 fn index_includes_tentative_tombstone_for_resurrection() {
-    // M5/F13: TentativeTombstone bleibt matchbar, damit Resurrection
-    // funktioniert (eine neue Rule-Anwendung mit identischer Ghost-ID
-    // kann den Knoten wiederbeleben).
+    // M5/F13: TentativeTombstone stays matchable so resurrection
+    // works (a new rule application with an identical ghost id
+    // can revive the node).
     let mut g = TypedGraph::new();
     let p = g.add_baseline_node("Person", "alice", BTreeMap::new());
 
@@ -72,15 +72,15 @@ fn index_includes_tentative_tombstone_for_resurrection() {
     let count = g.matchable_nodes_by_kind("Person").count();
     assert_eq!(
         count, 1,
-        "TentativeTombstone bleibt im Match-Index sichtbar (F13)"
+        "TentativeTombstone stays visible in the match index (F13)"
     );
 }
 
 #[test]
 fn index_deterministic_iteration_order_via_btreeset() {
-    // Der Index nutzt BTreeSet → Iteration sortiert nach
-    // GhostId-Lex-Order. Zwei Graphen mit identischen Insertions
-    // müssen identische Match-Reihenfolge produzieren.
+    // The index uses BTreeSet, so iteration is sorted by
+    // GhostId lex order. Two graphs with identical insertions
+    // must produce identical match order.
     let mut g1 = TypedGraph::new();
     let mut g2 = TypedGraph::new();
     for n in ["alice", "bob", "carol", "dave"] {
@@ -97,22 +97,22 @@ fn index_deterministic_iteration_order_via_btreeset() {
         .collect();
     assert_eq!(
         order1, order2,
-        "deterministische Reihenfolge bei identischer Insertion"
+        "deterministic order under identical insertion"
     );
 }
 
 #[test]
 fn index_iteration_order_independent_of_insertion_order() {
-    // Stärkerer Determinismus-Test: zwei Graphen mit unterschiedlicher
-    // Insertion-Reihenfolge müssen ebenfalls identische Match-
-    // Reihenfolge liefern, weil BTreeSet by GhostId sortiert (nicht
-    // by Insertion-Order). Das ist der Punkt von canonical-μ.
+    // Stronger determinism test: two graphs with different
+    // insertion order must also yield identical match order,
+    // because BTreeSet sorts by GhostId (not by insertion order).
+    // That is the point of canonical-μ.
     let mut g1 = TypedGraph::new();
     let mut g2 = TypedGraph::new();
     g1.add_baseline_node("Person", "alice", BTreeMap::new());
     g1.add_baseline_node("Person", "bob", BTreeMap::new());
     g1.add_baseline_node("Person", "carol", BTreeMap::new());
-    // Andere Insertion-Reihenfolge in g2
+    // Different insertion order in g2
     g2.add_baseline_node("Person", "carol", BTreeMap::new());
     g2.add_baseline_node("Person", "alice", BTreeMap::new());
     g2.add_baseline_node("Person", "bob", BTreeMap::new());
@@ -126,30 +126,30 @@ fn index_iteration_order_independent_of_insertion_order() {
         .collect();
     assert_eq!(
         order1, order2,
-        "BTreeSet-Reihenfolge ist insertion-unabhängig (canonical μ)"
+        "BTreeSet order is insertion-independent (canonical μ)"
     );
 }
 
 #[test]
 fn index_handles_repeated_insertion_idempotently() {
-    // Mehrfache Inserts mit gleichem Ghost-ID-Hash sollen den Index
-    // nicht aufblähen (insert_node hat early-return für bekannte IDs).
+    // Repeated inserts with the same ghost-id hash must not bloat
+    // the index (insert_node early-returns for known ids).
     let mut g = TypedGraph::new();
     let id_a = g.add_baseline_node("Person", "alice", attrs(&[("name", "alice")]));
     let id_b = g.add_baseline_node("Person", "alice", attrs(&[("name", "alice")]));
-    assert_eq!(id_a, id_b, "identische Baseline-Namen → identische ID");
+    assert_eq!(id_a, id_b, "identical baseline names yield identical id");
     assert_eq!(
         g.matchable_nodes_by_kind("Person").count(),
         1,
-        "doppelte Insertion mit gleicher ID erzeugt nur einen Index-Eintrag"
+        "duplicate insertion with the same id produces only one index entry"
     );
 }
 
 #[test]
 fn index_consistent_with_matchable_nodes_total() {
-    // Sanity: Summe der Per-Kind-Counts == Total-Matchable-Count.
-    // Wenn das nicht passt, verliert der Index Knoten oder
-    // dupliziert sie.
+    // Sanity: sum of per-kind counts == total matchable count.
+    // If this does not hold, the index loses nodes or
+    // duplicates them.
     let mut g = TypedGraph::new();
     g.add_baseline_node("Person", "alice", BTreeMap::new());
     g.add_baseline_node("Person", "bob", BTreeMap::new());
@@ -164,52 +164,48 @@ fn index_consistent_with_matchable_nodes_total() {
         .sum();
     assert_eq!(
         total_via_iter, total_via_index,
-        "Index-Sum gleicht Iter-Total"
+        "index sum equals iter total"
     );
 }
 
 #[test]
 fn index_after_status_round_trip_solid_to_tombstone_to_solid_via_resurrection() {
-    // Resurrection-Round-Trip: Solid → TentativeTombstone → Tombstone
-    // → Solid (via insert_node mit gleicher ID auf TT). Der Index
-    // muss in jedem Schritt korrekt sein.
+    // Resurrection round-trip: Solid → TentativeTombstone → Tombstone
+    // → Solid (via insert_node with the same id on TT). The index
+    // must stay correct at every step.
     let mut g = TypedGraph::new();
     let p = g.add_baseline_node("Person", "alice", attrs(&[("name", "alice")]));
     assert_eq!(
         g.matchable_nodes_by_kind("Person").count(),
         1,
-        "Solid: matchbar"
+        "Solid: matchable"
     );
 
     g.set_node_status(&p, Status::TentativeTombstone);
     assert_eq!(
         g.matchable_nodes_by_kind("Person").count(),
         1,
-        "TT: weiterhin matchbar"
+        "TT: still matchable"
     );
 
     g.set_node_status(&p, Status::Tombstone);
     assert_eq!(
         g.matchable_nodes_by_kind("Person").count(),
         0,
-        "Tombstone: nicht matchbar"
+        "Tombstone: not matchable"
     );
 
-    // Resurrection durch erneutes insert mit identischer Baseline-ID
-    // funktioniert nur via TentativeTombstone-Pfad in insert_node;
-    // direkter Tombstone → Resurrection ist nicht im Insert-Pfad
-    // implementiert. Wir testen: TT → Solid via insert.
+    // Resurrection via re-insert with an identical baseline id
+    // only works through the TentativeTombstone path in insert_node;
+    // direct Tombstone → resurrection is not implemented in the
+    // insert path. We test: TT → Solid via insert.
     g.set_node_status(&p, Status::TentativeTombstone);
     g.add_baseline_node("Person", "alice", attrs(&[("name", "alice")]));
     let resurrected = g.get_node(&p).unwrap();
-    assert_eq!(
-        resurrected.status,
-        Status::Solid,
-        "Resurrection setzt Solid"
-    );
+    assert_eq!(resurrected.status, Status::Solid, "resurrection sets Solid");
     assert_eq!(
         g.matchable_nodes_by_kind("Person").count(),
         1,
-        "nach Resurrection wieder matchbar"
+        "matchable again after resurrection"
     );
 }

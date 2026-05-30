@@ -1,4 +1,4 @@
-//! DOT-Renderer für `TypedGraph` und `Cascade`.
+//! DOT renderer for `TypedGraph` and `Cascade`.
 
 use crate::engine::Cascade;
 use crate::graph::{Status, TypedGraph};

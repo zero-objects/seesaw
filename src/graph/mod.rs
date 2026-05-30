@@ -1,9 +1,9 @@
-//! Graph-Modul — T₂, T₅.
+//! Graph module — T₂, T₅.
 //!
-//! Zuständigkeit:
-//! - Typisierte attributierte Graphen (L, R, D)
-//! - Status-Annotation (SOLID, GHOST, TOMB) — siehe Def. 2.4
-//! - Parent-rooted Ghost-ID via SHA-256 — siehe Def. 5.3
+//! Responsibilities:
+//! - Typed attributed graphs (L, R, D)
+//! - Status annotation (SOLID, GHOST, TOMB) — see Def. 2.4
+//! - Parent-rooted Ghost-ID via SHA-256 — see Def. 5.3
 
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
@@ -13,36 +13,36 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
-/// Status eines Elements im Ghost-Graphen.
+/// Status of an element in the ghost graph.
 ///
-/// Siehe Def. 2.4 im PDF.
+/// See Def. 2.4 in the paper.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Status {
-    /// Element aus der Baseline L_0/R_0, unberührt.
+    /// Element from the baseline L_0/R_0, untouched.
     Solid,
-    /// Virtuell hinzugefügt, noch nicht materialisiert.
+    /// Virtually added, not yet materialized.
     Ghost,
-    /// **M5.5**: Vorläufiger Tombstone während einer Cascade-
-    /// Invalidations-Phase. Wird in der Konsolidierungs-Phase
-    /// entweder zu `Solid` zurück (Resurrection durch identische
-    /// Ghost-ID einer neuen Rule-Anwendung) oder zu `Tombstone`
-    /// (endgültige Invalidation).
+    /// **M5.5**: Tentative tombstone during a cascade
+    /// invalidation phase. Resolves in the consolidation phase
+    /// either back to `Solid` (resurrection via identical
+    /// Ghost-ID of a new rule application) or to `Tombstone`
+    /// (final invalidation).
     ///
-    /// Bleibt matchbar (siehe `Status::is_matchable`), damit eine
-    /// neue Rule-Anwendung die Identität wiederbeanspruchen kann.
+    /// Remains matchable (see `Status::is_matchable`) so that a
+    /// new rule application can reclaim the identity.
     TentativeTombstone,
-    /// Virtuell gelöscht; für Pattern-Matching unsichtbar,
-    /// für Konfliktdetektion und V₁₂-Induktion sichtbar.
+    /// Virtually deleted; invisible to pattern matching,
+    /// visible to conflict detection and V₁₂ induction.
     Tombstone,
 }
 
 impl Status {
-    /// Elemente, die für Pattern-Matching sichtbar sind.
+    /// Elements visible to pattern matching.
     ///
-    /// Solid + Ghost klassisch. **TentativeTombstone** ist bewusst
-    /// matchbar (M5.5): während der Konsolidierungs-Phase soll eine
-    /// neue Rule-Anwendung das Element via gleicher Ghost-ID
-    /// beanspruchen können (Resurrection).
+    /// Solid + Ghost as usual. **TentativeTombstone** is deliberately
+    /// matchable (M5.5): during the consolidation phase a new rule
+    /// application may reclaim the element via the same Ghost-ID
+    /// (resurrection).
     pub fn is_matchable(&self) -> bool {
         matches!(
             self,
@@ -51,18 +51,18 @@ impl Status {
     }
 }
 
-/// Parent-rooted Ghost-ID (SHA-256 Hash).
+/// Parent-rooted Ghost-ID (SHA-256 hash).
 ///
-/// Siehe Def. 5.3 im PDF. 32-Byte SHA-256-Hash der Kaskaden-Historie
-/// eines Elements.
+/// See Def. 5.3 in the paper. 32-byte SHA-256 hash over the cascade
+/// history of an element.
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct GhostId([u8; 32]);
 
 impl GhostId {
-    /// Erzeugt eine Baseline-ID für ein SOLID-Element aus einem stabilen Namen.
+    /// Builds a baseline ID for a SOLID element from a stable name.
     ///
-    /// Benutzt für Wurzel-Elemente in L_0/R_0 — die Rekursionsverankerung
-    /// für Def. 5.3.
+    /// Used for root elements in L_0/R_0 — the recursion anchor
+    /// for Def. 5.3.
     pub fn from_baseline(name: &str) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(b"SOLID\0");
@@ -70,7 +70,7 @@ impl GhostId {
         Self(hasher.finalize().into())
     }
 
-    /// Erzeugt eine Ghost-ID für ein GHOST-Element, gemäß Def. 5.3:
+    /// Builds a Ghost-ID for a GHOST element, per Def. 5.3:
     ///
     /// ```text
     /// id(e) = H(id(parent(e)) || edgedata(e) || σ(e))
@@ -98,7 +98,7 @@ impl GhostId {
         Self(hasher.finalize().into())
     }
 
-    /// Erzeugt eine Ghost-ID für eine Kante aus Endpunkten und Typinformation.
+    /// Builds a Ghost-ID for an edge from endpoints and type information.
     pub fn for_edge(
         source: &GhostId,
         target: &GhostId,
@@ -121,7 +121,7 @@ impl GhostId {
         Self(hasher.finalize().into())
     }
 
-    /// Kurze hexadezimale Darstellung (8 Zeichen) für UI und Logging.
+    /// Short hexadecimal form (8 characters) for UI and logging.
     pub fn short(&self) -> String {
         format!(
             "{:02x}{:02x}{:02x}{:02x}",
@@ -129,9 +129,9 @@ impl GhostId {
         )
     }
 
-    /// Volle 64-stellige Hex-Darstellung (32 Bytes). Wird über die
-    /// JNI-Grenze gereicht, damit die Pilot-Seite eine cascade-erzeugte
-    /// Identität verlustfrei zurückgeben kann (rc7 Rückweg-Bridge).
+    /// Full 64-character hex form (32 bytes). Passed across the
+    /// JNI boundary so the pilot side can return a cascade-generated
+    /// identity losslessly (rc7 return-path bridge).
     pub fn hex(&self) -> String {
         let mut s = String::with_capacity(64);
         for b in &self.0 {
@@ -141,8 +141,8 @@ impl GhostId {
         s
     }
 
-    /// Parst die 64-stellige Hex-Form zurück; `None` bei ungültiger
-    /// Länge oder Nicht-Hex-Zeichen.
+    /// Parses the 64-character hex form back; returns `None` on invalid
+    /// length or non-hex characters.
     pub fn from_hex(s: &str) -> Option<Self> {
         if s.len() != 64 {
             return None;
@@ -155,15 +155,15 @@ impl GhostId {
         Some(Self(bytes))
     }
 
-    /// Raw 32-Byte-Hash.
+    /// Raw 32-byte hash.
     pub fn as_bytes(&self) -> [u8; 32] {
         self.0
     }
 
-    /// ID aus einem opaken externen Identifier (z.\,B.\ EMF-URI-Fragment
-    /// oder JDT-Handle-Identifier). Wird an der Integrations-Grenze
-    /// benutzt, wo die externe Welt eigene Identitäten trägt, die wir
-    /// nicht strukturell re-ableiten können.
+    /// ID derived from an opaque external identifier (e.g.\ EMF URI fragment
+    /// or JDT handle identifier). Used at the integration boundary,
+    /// where the external world carries its own identities that we
+    /// cannot structurally re-derive.
     pub fn from_opaque(opaque: &str) -> Self {
         let mut hasher = Sha256::new();
         hasher.update(b"OPAQUE\0");
@@ -178,7 +178,7 @@ impl fmt::Debug for GhostId {
     }
 }
 
-/// Typisierte Knoten-Daten im TypedGraph.
+/// Typed node data inside the TypedGraph.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct NodeData {
     pub id: GhostId,
@@ -187,7 +187,7 @@ pub struct NodeData {
     pub status: Status,
 }
 
-/// Typisierte Kanten-Daten im TypedGraph.
+/// Typed edge data inside the TypedGraph.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EdgeData {
     pub id: GhostId,
@@ -196,24 +196,24 @@ pub struct EdgeData {
     pub status: Status,
 }
 
-/// Typisierter attributierter Graph mit Status.
+/// Typed attributed graph with status.
 ///
-/// Realisiert die Ghost-Projektion φ_L (bzw. φ_R) oder den
-/// Korrespondenzgraphen D inkl. aller Ghost/Tombstone-Annotationen.
+/// Realizes the ghost projection φ_L (or φ_R) or the
+/// correspondence graph D, including all ghost/tombstone annotations.
 #[derive(Clone, Debug, Default)]
 pub struct TypedGraph {
     inner: Graph<NodeData, EdgeData>,
     node_index: HashMap<GhostId, NodeIndex>,
     edge_index: HashMap<GhostId, EdgeIndex>,
-    /// Match-Index (F15-Mitigation): kind → Set der Knoten-IDs dieses
-    /// Typs. Erlaubt `O(matching_kind_count)` Lookup statt
-    /// `O(graph_size)` für jede Pattern-Position. BTreeSet für
-    /// deterministische Reihenfolge (canonical μ).
+    /// Match index (F15 mitigation): kind → set of node IDs of that
+    /// type. Enables `O(matching_kind_count)` lookup instead of
+    /// `O(graph_size)` for each pattern position. BTreeSet for
+    /// deterministic ordering (canonical μ).
     ///
-    /// Status-Filter (Solid/Ghost/TentativeTombstone vs. Tombstone)
-    /// erfolgt beim Lookup; der Index trackt nur den Typ, nicht den
-    /// Status. Das hält Index-Updates auf Insert-only — kein Update
-    /// bei Status-Änderungen nötig.
+    /// Status filtering (Solid/Ghost/TentativeTombstone vs. Tombstone)
+    /// happens at lookup time; the index tracks only the type, not the
+    /// status. This keeps index updates insert-only — no update
+    /// is needed on status changes.
     kind_index: BTreeMap<String, BTreeSet<GhostId>>,
 }
 
@@ -222,7 +222,7 @@ impl TypedGraph {
         Self::default()
     }
 
-    /// Fügt einen SOLID-Baseline-Knoten hinzu.
+    /// Adds a SOLID baseline node.
     pub fn add_baseline_node(
         &mut self,
         type_id: &str,
@@ -239,7 +239,7 @@ impl TypedGraph {
         id
     }
 
-    /// Fügt einen GHOST-Knoten mit Parent-Referenz hinzu.
+    /// Adds a GHOST node with a parent reference.
     pub fn add_ghost_node(
         &mut self,
         parent: GhostId,
@@ -257,9 +257,9 @@ impl TypedGraph {
         id
     }
 
-    /// Fügt einen SOLID-Knoten mit Parent-Referenz hinzu (für Baseline-
-    /// Elemente, die strukturell an einem Elternknoten hängen, aber
-    /// bereits Teil der initialen Baseline sind — keine Ghosts).
+    /// Adds a SOLID node with a parent reference (for baseline
+    /// elements that structurally hang off a parent node but
+    /// already belong to the initial baseline — not ghosts).
     pub fn add_solid_child_node(
         &mut self,
         parent: GhostId,
@@ -279,16 +279,16 @@ impl TypedGraph {
 
     fn insert_node(&mut self, node: NodeData) {
         if let Some(idx) = self.node_index.get(&node.id) {
-            // M5: Resurrection — wenn ein TentativeTombstone-Knoten
-            // mit identischer ID neu beansprucht wird, setzen wir
-            // den Status auf den neuen Status (Solid/Ghost) zurück.
+            // M5: resurrection — when a TentativeTombstone node
+            // with an identical ID is reclaimed, restore its
+            // status to the new status (Solid/Ghost).
             if let Some(existing) = self.inner.node_weight_mut(*idx) {
                 if existing.status == Status::TentativeTombstone {
                     existing.status = node.status;
                 }
             }
-            // Index ist bereits aktuell (Knoten existiert mit
-            // identischem Typ via Ghost-ID-Hash).
+            // Index is already current (node exists with
+            // identical type via Ghost-ID hash).
             return;
         }
         let id = node.id;
@@ -298,8 +298,8 @@ impl TypedGraph {
         self.kind_index.entry(kind).or_default().insert(id);
     }
 
-    /// Fügt eine Kante hinzu. Rückgabe: Ghost-ID der Kante oder `None`, wenn
-    /// einer der Endpunkte nicht existiert.
+    /// Adds an edge. Returns the edge's Ghost-ID, or `None` if
+    /// either endpoint does not exist.
     pub fn add_edge(
         &mut self,
         source: GhostId,
@@ -312,8 +312,8 @@ impl TypedGraph {
         let target_idx = *self.node_index.get(&target)?;
         let id = GhostId::for_edge(&source, &target, edge_type, &attrs);
         if let Some(existing_idx) = self.edge_index.get(&id) {
-            // M5: Resurrection für Edge — falls TentativeTombstone, neu
-            // setzen mit gewünschtem Status.
+            // M5: edge resurrection — if TentativeTombstone, reset
+            // to the requested status.
             if let Some(existing) = self.inner.edge_weight_mut(*existing_idx) {
                 if existing.status == Status::TentativeTombstone {
                     existing.status = status;
@@ -332,7 +332,7 @@ impl TypedGraph {
         Some(id)
     }
 
-    /// Setzt den Status eines Knotens (Tombstone-Marker).
+    /// Sets the status of a node (tombstone marker).
     pub fn set_node_status(&mut self, id: &GhostId, status: Status) -> bool {
         if let Some(idx) = self.node_index.get(id) {
             self.inner[*idx].status = status;
@@ -342,7 +342,7 @@ impl TypedGraph {
         }
     }
 
-    /// Setzt den Status einer Kante (Tombstone-Marker).
+    /// Sets the status of an edge (tombstone marker).
     pub fn set_edge_status(&mut self, id: &GhostId, status: Status) -> bool {
         if let Some(idx) = self.edge_index.get(id) {
             self.inner[*idx].status = status;
@@ -352,9 +352,9 @@ impl TypedGraph {
         }
     }
 
-    /// Setzt ein Attribut eines Knotens (Phase 1: überschreibend).
+    /// Sets an attribute on a node (phase 1: overwriting).
     ///
-    /// Phase 3 (geplant): Shadow-Stack mit κ-Tagging für Step-Zurück-Semantik.
+    /// Phase 3 (planned): shadow stack with κ-tagging for step-back semantics.
     pub fn set_node_attr(&mut self, id: &GhostId, key: &str, value: &str) -> bool {
         if let Some(idx) = self.node_index.get(id) {
             self.inner[*idx]
@@ -366,17 +366,17 @@ impl TypedGraph {
         }
     }
 
-    /// Liest einen Knoten nach ID.
+    /// Reads a node by ID.
     pub fn get_node(&self, id: &GhostId) -> Option<&NodeData> {
         self.node_index.get(id).map(|idx| &self.inner[*idx])
     }
 
-    /// Liest eine Kante nach ID.
+    /// Reads an edge by ID.
     pub fn get_edge(&self, id: &GhostId) -> Option<&EdgeData> {
         self.edge_index.get(id).map(|idx| &self.inner[*idx])
     }
 
-    /// Liefert die Endpunkt-IDs einer Kante (Source, Target).
+    /// Returns the endpoint IDs of an edge (source, target).
     pub fn edge_endpoints(&self, id: &GhostId) -> Option<(GhostId, GhostId)> {
         let idx = *self.edge_index.get(id)?;
         let (src_idx, tgt_idx) = self.inner.edge_endpoints(idx)?;
@@ -385,19 +385,19 @@ impl TypedGraph {
         Some((src_data.id, tgt_data.id))
     }
 
-    /// Anzahl der Knoten (inkl. TOMB).
+    /// Node count (including TOMB).
     pub fn node_count(&self) -> usize {
         self.inner.node_count()
     }
 
-    /// Anzahl der Kanten (inkl. TOMB).
+    /// Edge count (including TOMB).
     pub fn edge_count(&self) -> usize {
         self.inner.edge_count()
     }
 
-    /// Iteriert über matchbare Knoten eines bestimmten Typs (F15-
-    /// Mitigation: indizierter Lookup statt vollständiger Iteration).
-    /// Gibt nur Knoten mit `status.is_matchable()` zurück.
+    /// Iterates matchable nodes of a given type (F15
+    /// mitigation: indexed lookup instead of full iteration).
+    /// Returns only nodes with `status.is_matchable()`.
     pub fn matchable_nodes_by_kind<'a>(
         &'a self,
         kind: &str,
@@ -411,15 +411,15 @@ impl TypedGraph {
             .filter(|n| n.status.is_matchable())
     }
 
-    /// Iteriert über alle matchbaren Knoten (SOLID + GHOST).
+    /// Iterates all matchable nodes (SOLID + GHOST).
     pub fn matchable_nodes(&self) -> impl Iterator<Item = &NodeData> {
         self.inner
             .node_weights()
             .filter(|n| n.status.is_matchable())
     }
 
-    /// Prüft, ob zwischen `source` und `target` eine matchbare Kante
-    /// mit dem angegebenen Typ existiert.
+    /// Checks whether a matchable edge of the given type exists
+    /// between `source` and `target`.
     pub fn has_edge_between(&self, source: &GhostId, target: &GhostId, edge_type: &str) -> bool {
         let src_idx = match self.node_index.get(source) {
             Some(i) => *i,
@@ -436,12 +436,12 @@ impl TypedGraph {
         })
     }
 
-    /// rc7 (S): existiert IRGENDEINE matchbare Kante zwischen `a` und `b`
-    /// (beliebige Richtung, beliebige Art)? Für das symmetrische
-    /// Korrespondenz-Mitgliedschafts-Matching (siehe
-    /// `EdgePattern::membership`). Ein Korrespondenz-Knoten verkabelt nur
-    /// seine zwei Endpunkte, daher identifiziert „irgendeine Kante" hier
-    /// korrekt die Corr-Mitgliedschaft, ohne corrL/corrR zu kennen.
+    /// rc7 (S): does ANY matchable edge exist between `a` and `b`
+    /// (any direction, any kind)? Used for symmetric
+    /// correspondence-membership matching (see
+    /// `EdgePattern::membership`). A correspondence node wires only
+    /// its two endpoints, so "any edge" here correctly identifies
+    /// correspondence membership without needing to know corrL/corrR.
     pub fn has_any_edge_either_dir(&self, a: &GhostId, b: &GhostId) -> bool {
         let a_idx = match self.node_index.get(a) {
             Some(i) => *i,
@@ -460,7 +460,7 @@ impl TypedGraph {
                 .any(|e| e.target() == a_idx && e.weight().status.is_matchable())
     }
 
-    /// Alle matchbaren ausgehenden Kanten eines Knotens mit Zielknoten-ID.
+    /// All matchable outgoing edges of a node, paired with the target node ID.
     pub fn outgoing_edges(&self, source: &GhostId) -> Vec<(&EdgeData, GhostId)> {
         let src_idx = match self.node_index.get(source) {
             Some(i) => *i,
@@ -473,7 +473,7 @@ impl TypedGraph {
             .collect()
     }
 
-    /// Alle matchbaren eingehenden Kanten eines Knotens mit Quellknoten-ID.
+    /// All matchable incoming edges of a node, paired with the source node ID.
     pub fn incoming_edges(&self, target: &GhostId) -> Vec<(&EdgeData, GhostId)> {
         let tgt_idx = match self.node_index.get(target) {
             Some(i) => *i,
@@ -486,19 +486,19 @@ impl TypedGraph {
             .collect()
     }
 
-    /// Alle matchbaren inzidenten Kanten eines Knotens (aus- und eingehend).
+    /// All matchable incident edges of a node (outgoing and incoming).
     pub fn incident_edges(&self, node: &GhostId) -> Vec<(&EdgeData, GhostId)> {
         let mut out = self.outgoing_edges(node);
         out.extend(self.incoming_edges(node));
         out
     }
 
-    /// Iteriert über alle Knoten, unabhängig vom Status.
+    /// Iterates all nodes regardless of status.
     pub fn iter_nodes(&self) -> impl Iterator<Item = &NodeData> {
         self.inner.node_weights()
     }
 
-    /// Iteriert über alle Kanten mit Quell- und Ziel-IDs.
+    /// Iterates all edges with source and target IDs.
     pub fn iter_edges(&self) -> Vec<(GhostId, GhostId, &EdgeData)> {
         self.inner
             .edge_references()
@@ -512,15 +512,15 @@ impl TypedGraph {
             .collect()
     }
 
-    /// Fügt einen Knoten mit bereits berechneter `NodeData` ein.
-    /// Ignoriert, falls die ID bereits existiert.
+    /// Inserts a node from a precomputed `NodeData`.
+    /// Skipped if the ID already exists.
     ///
-    /// Muss zusätzlich zum `node_index` auch den `kind_index` pflegen —
-    /// `matchable_nodes_by_kind` (Pattern-Matcher-Hot-Path) iteriert
-    /// ausschließlich darüber. Ohne diese Eintragung blieben Nodes
-    /// unsichtbar für jede Rule, die per LHS-`kind` matched (Regression
-    /// von Mai-Commit 8401f0e/F15-Match-Indexing — `insert_node` wurde
-    /// korrekt erweitert, `insert_node_data` übersehen).
+    /// Must maintain the `kind_index` in addition to the `node_index` —
+    /// `matchable_nodes_by_kind` (pattern-matcher hot path) iterates
+    /// only over it. Without this entry, nodes would be invisible
+    /// to any rule that matches by LHS `kind` (regression from
+    /// the May commit 8401f0e/F15 match indexing — `insert_node` was
+    /// extended correctly, `insert_node_data` was overlooked).
     pub fn insert_node_data(&mut self, data: NodeData) {
         if !self.node_index.contains_key(&data.id) {
             let id = data.id;
@@ -531,8 +531,8 @@ impl TypedGraph {
         }
     }
 
-    /// Fügt eine Kante mit bereits berechneter `EdgeData` ein. Setzt
-    /// voraus, dass `source` und `target` existieren.
+    /// Inserts an edge from a precomputed `EdgeData`. Requires
+    /// that `source` and `target` already exist.
     pub fn insert_edge_data(&mut self, source: GhostId, target: GhostId, data: EdgeData) -> bool {
         let src_idx = match self.node_index.get(&source) {
             Some(i) => *i,
@@ -548,16 +548,16 @@ impl TypedGraph {
         true
     }
 
-    /// Materialisiert den Graphen (Def. 5.1): erzeugt einen neuen
-    /// `TypedGraph`, in dem alle TOMB-Elemente entfernt sind und alle
-    /// verbleibenden GHOST-Elemente SOLID-Status tragen.
+    /// Materializes the graph (Def. 5.1): builds a new
+    /// `TypedGraph` in which all TOMB elements are removed and all
+    /// remaining GHOST elements carry SOLID status.
     ///
-    /// Gibt Kanten aus, deren Endpunkte in der materialisierten Knoten-
-    /// Menge existieren; Endpunkte, die entfielen, fallen mit der Kante.
+    /// Emits edges whose endpoints survive in the materialized node
+    /// set; edges with dropped endpoints fall away with them.
     pub fn materialize(&self) -> TypedGraph {
         let mut new_g = TypedGraph::new();
 
-        // Knoten kopieren (ohne TOMB), status → SOLID.
+        // Copy nodes (excluding TOMB); status → SOLID.
         for node in self.inner.node_weights() {
             if node.status == Status::Tombstone {
                 continue;
@@ -570,7 +570,7 @@ impl TypedGraph {
             });
         }
 
-        // Kanten kopieren (ohne TOMB) — nur wenn beide Endpunkte existieren.
+        // Copy edges (excluding TOMB) — only when both endpoints exist.
         for edge_ref in self.inner.edge_references() {
             let data = edge_ref.weight();
             if data.status == Status::Tombstone {
@@ -616,10 +616,10 @@ mod tests {
         assert_eq!(a, b);
     }
 
-    /// rc7 Rückweg-Bridge: für die JNI-Übergabe an die Pilot-Seite (die
-    /// die volle ID braucht, um sie wieder einzutragen) muss `hex()` die
-    /// 64-stellige Volldarstellung liefern, und `from_hex` muss sie
-    /// verlustfrei zurückparsen.
+    /// rc7 return-path bridge: for the JNI hand-off to the pilot side
+    /// (which needs the full ID to re-register it), `hex()` must yield
+    /// the full 64-character form, and `from_hex` must parse it back
+    /// losslessly.
     #[test]
     fn ghost_id_hex_round_trip() {
         let a = GhostId::from_baseline("Person");
@@ -693,16 +693,16 @@ mod tests {
         assert_ne!(a, b);
     }
 
-    /// Integrations-Test: Mini-UML mit Person, Car, Attributen, Assoziation.
+    /// Integration test: mini UML with Person, Car, attributes, association.
     #[test]
     fn mini_uml_example() {
         let mut g = TypedGraph::new();
 
-        // Klassen
+        // Classes
         let person = g.add_baseline_node("Class", "Person", attrs(&[("name", "Person")]));
         let car = g.add_baseline_node("Class", "Car", attrs(&[("name", "Car")]));
 
-        // Attribute
+        // Attributes
         let person_name = g.add_ghost_node(
             person,
             "hasAttribute",
@@ -716,7 +716,7 @@ mod tests {
             attrs(&[("name", "model"), ("type", "String")]),
         );
 
-        // Kanten
+        // Edges
         g.add_edge(
             person,
             person_name,
@@ -734,7 +734,7 @@ mod tests {
         )
         .unwrap();
 
-        // Assoziation Person ──owns──▶ Car
+        // Association Person ──owns──▶ Car
         g.add_edge(
             person,
             car,
@@ -752,7 +752,7 @@ mod tests {
             "alle SOLID + GHOST sind matchbar"
         );
 
-        // Tombstone ein Attribut
+        // Tombstone one attribute
         assert!(g.set_node_status(&person_name, Status::Tombstone));
         assert_eq!(g.matchable_nodes().count(), 3, "TOMB nicht mehr matchbar");
         assert_eq!(g.node_count(), 4, "TOMB bleibt physisch erhalten");

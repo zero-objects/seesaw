@@ -1,15 +1,15 @@
-//! Case 1a — STTT2021 Package re-parenting mit 3-Rule Minimal
-//! (bidirektionale Opt.1-Fassung, 2026-04-24).
+//! Case 1a — STTT2021 package re-parenting with the 3-rule minimal
+//! bidirectional Opt.1 version (2026-04-24).
 //!
-//! Ablauf:
-//!   1. Pre-Graph (L-Seite only): rootP → subPackages → p → classes → c
-//!   2. Initial-Sync-Kaskade: Root, Sub, Leaf erzeugen R-Seite
-//!      (Folders + DocFile + Corrs)
-//!   3. User-Delta: DelEdge(rootP → p, subPackages)
-//!   4. Post-Delta-Kaskade
-//!   5. Assertions α/β/γ auf den finalen Graph
+//! Flow:
+//!   1. Pre-graph (L-side only): rootP → subPackages → p → classes → c
+//!   2. Initial-sync cascade: Root, Sub, Leaf build the R-side
+//!      (folders + DocFile + corrs)
+//!   3. User delta: DelEdge(rootP → p, subPackages)
+//!   4. Post-delta cascade
+//!   5. Assertions α/β/γ on the final graph
 //!
-//! Snapshots pro Step nur mit `--features regen_graphs`.
+//! Snapshots per step only with `--features regen_graphs`.
 
 #[path = "fixtures/package_folder_mm.rs"]
 mod package_folder_mm;
@@ -24,7 +24,7 @@ use seesaw_tgg::rule::{compile, instantiate};
 const FIXTURE: &str = include_str!("fixtures/rules_fase2019_3rule.json");
 
 fn load_rules() -> Vec<Box<dyn Rule>> {
-    let rs = parse_ruleset(FIXTURE).expect("fixture parst");
+    let rs = parse_ruleset(FIXTURE).expect("fixture parses");
     rs.rules
         .iter()
         .map(|r| instantiate(&compile(r).expect("compile")))
@@ -37,16 +37,16 @@ fn find_edge_id(graph: &TypedGraph, src: GhostId, tgt: GhostId, edge_type: &str)
         .into_iter()
         .find(|(s, t, data)| *s == src && *t == tgt && data.type_id == edge_type)
         .map(|(_, _, data)| data.id)
-        .expect("edge exists in Pre-Graph")
+        .expect("edge exists in pre-graph")
 }
 
-/// Hilfsfunktion: führt Initial-Sync durch (baut R-Seite auf).
-/// Rückgabe: Cascade nach Initial-Sync.
+/// Helper: runs initial sync (builds the R-side).
+/// Returns: cascade after initial sync.
 fn initial_sync(graph: &mut TypedGraph, rules: &[&dyn Rule]) -> Cascade {
     let mut cascade = Cascade::new();
     let term = run_cascade(&mut cascade, graph, rules, 100).expect("initial sync");
     eprintln!(
-        "Initial-Sync terminiert: {term:?}, entries: {}",
+        "initial sync terminates: {term:?}, entries: {}",
         cascade.entries.len()
     );
     for (i, e) in cascade.entries.iter().enumerate() {
@@ -74,7 +74,7 @@ fn case01a_initial_sync_creates_r_side() {
     let rule_refs: Vec<&dyn Rule> = rules.iter().map(|r| r.as_ref()).collect();
     let _ = initial_sync(&mut graph, &rule_refs);
 
-    // Nach Sync: im Graph existieren Folder-Nodes (R-Seite) und Corrs.
+    // After sync: the graph contains Folder nodes (R-side) and corrs.
     let folders: Vec<_> = graph
         .iter_nodes()
         .filter(|n| n.type_id == "Folder")
@@ -92,10 +92,10 @@ fn case01a_initial_sync_creates_r_side() {
     eprintln!("Corrs: {}", corrs.len());
     eprintln!("DocFiles: {}", docs.len());
 
-    // Expected: mindestens 1 Folder für rootP, 1 Folder für p (via Sub-Rule),
-    // 1 DocFile für c (via Leaf-Rule), einige Corrs.
-    assert!(!folders.is_empty(), "Mindestens 1 Folder via Root-Rule");
-    assert!(!corrs.is_empty(), "Mindestens 1 CorrPackage via Root-Rule");
+    // Expected: at least 1 Folder for rootP, 1 Folder for p (via Sub-Rule),
+    // 1 DocFile for c (via Leaf-Rule), some corrs.
+    assert!(!folders.is_empty(), "at least 1 Folder via Root-Rule");
+    assert!(!corrs.is_empty(), "at least 1 CorrPackage via Root-Rule");
 
     // Silence unused
     let _ = snap;
@@ -106,10 +106,10 @@ fn run_case_1a_full_scenario() -> (TypedGraph, Cascade, SubtreeSnapshot) {
     let rules = load_rules();
     let rule_refs: Vec<&dyn Rule> = rules.iter().map(|r| r.as_ref()).collect();
 
-    // Phase 1: Initial-Sync
+    // Phase 1: initial sync
     let mut cascade = initial_sync(&mut graph, &rule_refs);
 
-    // Phase 2: User-Delta
+    // Phase 2: user delta
     let edge_id = find_edge_id(&graph, snap.ids["rootP"], snap.ids["p"], "subPackages");
     let user = DeltaEntry::new_user(
         vec![Op::DelEdge { target: edge_id }],
@@ -118,10 +118,10 @@ fn run_case_1a_full_scenario() -> (TypedGraph, Cascade, SubtreeSnapshot) {
     user.apply(&mut graph).expect("user-delta applies");
     cascade.append(user);
 
-    // Phase 3: Post-Delta-Kaskade mit Match-Observability (M5).
+    // Phase 3: post-delta cascade with match observability (M5).
     let term =
         run_cascade_observable(&mut cascade, &mut graph, &rule_refs, 100).expect("post-delta");
-    eprintln!("Post-Delta-Kaskade (observable) terminiert: {term:?}");
+    eprintln!("post-delta cascade (observable) terminates: {term:?}");
 
     (graph, cascade, snap)
 }
@@ -130,51 +130,51 @@ fn run_case_1a_full_scenario() -> (TypedGraph, Cascade, SubtreeSnapshot) {
 fn case01a_alpha_structure_and_content_preserved() {
     let (graph, _cascade, snap) = run_case_1a_full_scenario();
 
-    // α — Struktur + Attribute:
+    // α — structure + attributes:
     let edge_id = find_edge_id(&graph, snap.ids["rootP"], snap.ids["p"], "subPackages");
     let removed_edge = graph.get_edge(&edge_id).expect("edge still in graph");
     assert_eq!(
         removed_edge.status,
         Status::Tombstone,
-        "gelöschte subPackages-Kante ist Tombstone"
+        "deleted subPackages edge is Tombstone"
     );
 
-    // L-Seite intakt
-    let c = graph.get_node(&snap.ids["c"]).expect("class c existiert");
-    assert_eq!(c.attrs["name"], "c", "α: c.name unverändert");
+    // L-side intact
+    let c = graph.get_node(&snap.ids["c"]).expect("class c exists");
+    assert_eq!(c.attrs["name"], "c", "α: c.name unchanged");
 
-    // R-Seite: DocFile für c existiert, content == c.name (via identity-transform)
+    // R-side: DocFile for c exists, content == c.name (via identity transform)
     let docs: Vec<_> = graph
         .iter_nodes()
         .filter(|n| n.type_id == "DocFile")
         .collect();
-    assert!(!docs.is_empty(), "α: mindestens 1 DocFile auf R-Seite");
+    assert!(!docs.is_empty(), "α: at least 1 DocFile on R-side");
     let c_doc = docs
         .iter()
         .find(|d| d.attrs.get("content").map(|s| s.as_str()) == Some("c"));
     assert!(
         c_doc.is_some(),
-        "α: DocFile mit content='c' (via identity-Transform auf Class.name)"
+        "α: DocFile with content='c' (via identity transform on Class.name)"
     );
 
-    // α-Struktur-Hierarchie:
-    // - 2 Folders existieren (rootP_folder + p_folder), beide aktiv
-    //   (Solid oder Ghost) — keine durch M5-Konsolidierung Tombstone.
-    // - subFolders-Edge: nach M5-Iteration 4 ist sie endgültig
-    //   Tombstone, weil Sub-Rule's Match invalidiert wurde und
-    //   Phase B keine neue Sub-Rule-Anwendung zulässt.
+    // α structural hierarchy:
+    // - 2 Folders exist (rootP_folder + p_folder), both active
+    //   (Solid or Ghost) — none turned Tombstone by M5 consolidation.
+    // - subFolders edge: after M5 iteration 4 it is finally
+    //   Tombstone, because Sub-Rule's match was invalidated and
+    //   phase B does not admit a new Sub-Rule application.
     let folders: Vec<_> = graph
         .iter_nodes()
         .filter(|n| n.type_id == "Folder")
         .collect();
-    assert_eq!(folders.len(), 2, "α: 2 Folder-Knoten existieren");
+    assert_eq!(folders.len(), 2, "α: 2 Folder nodes exist");
     let active_folders = folders
         .iter()
         .filter(|n| n.status != Status::Tombstone)
         .count();
     assert_eq!(
         active_folders, 2,
-        "α: beide Folder bleiben aktiv (Resurrection bewahrt sie)"
+        "α: both Folders stay active (resurrection preserves them)"
     );
 
     let sub_folders_edges: Vec<_> = graph
@@ -192,8 +192,8 @@ fn case01a_alpha_structure_and_content_preserved() {
         .count();
     assert_eq!(
         active_sub_folders, 0,
-        "α (M5-Iter4): subFolders-Edge ist Tombstone — Sub-Rule \
-         invalidiert, kein Resurrection-Match"
+        "α (M5 iter 4): subFolders edge is Tombstone — Sub-Rule \
+         invalidated, no resurrection match"
     );
 }
 
@@ -201,8 +201,8 @@ fn case01a_alpha_structure_and_content_preserved() {
 fn case01a_beta_cascade_origin_sequence() {
     let (_graph, cascade, _snap) = run_case_1a_full_scenario();
 
-    // β — Cascade-Origin-Sequenz:
-    // Initial-Sync-Block (nur Rule-Origins) + User + Post-Delta-Block.
+    // β — cascade origin sequence:
+    // Initial-sync block (rule origins only) + User + post-delta block.
     let user_positions: Vec<usize> = cascade
         .entries
         .iter()
@@ -213,13 +213,13 @@ fn case01a_beta_cascade_origin_sequence() {
     assert_eq!(
         user_positions.len(),
         1,
-        "Genau 1 User-Entry (der User-Delta)"
+        "exactly 1 user entry (the user delta)"
     );
 
     let sync_block_len = user_positions[0];
     let post_block_len = cascade.entries.len() - user_positions[0] - 1;
     eprintln!(
-        "Case 1a — Sync-Block: {sync_block_len} Rule-Steps | User | Post-Block: {post_block_len} Rule-Steps"
+        "Case 1a — sync block: {sync_block_len} rule steps | user | post block: {post_block_len} rule steps"
     );
 
     let rule_ids: Vec<String> = cascade
@@ -233,22 +233,22 @@ fn case01a_beta_cascade_origin_sequence() {
             }
         })
         .collect();
-    eprintln!("Case 1a — Alle Rule-IDs: {rule_ids:?}");
+    eprintln!("Case 1a — all rule ids: {rule_ids:?}");
 
-    // Mindestens Root-Rule feuert im Sync-Block:
+    // At least Root-Rule fires in the sync block:
     assert!(
         rule_ids.contains(&"Root-Rule".to_string()),
-        "β: Root-Rule feuert mindestens einmal"
+        "β: Root-Rule fires at least once"
     );
 }
 
 #[test]
 fn case01a_gamma_merkle_id_stability() {
-    // γ in zwei Varianten:
-    //  (γ-L) L-Seiten-Knoten behalten ihre Baseline-IDs trivially
-    //  (γ-R) R-Seiten-Ghost-Knoten: starkes Merkle-Argument
+    // γ in two variants:
+    //  (γ-L) L-side nodes trivially keep their baseline ids
+    //  (γ-R) R-side ghost nodes: strong Merkle argument
 
-    // Pfad 1: Referenz-Lauf ohne User-Delta, um Post-Sync-IDs zu snapshoten.
+    // Path 1: reference run without user delta, to snapshot post-sync ids.
     let (mut ref_graph, ref_snap) = build_fig3a_graph();
     let rules = load_rules();
     let rule_refs: Vec<&dyn Rule> = rules.iter().map(|r| r.as_ref()).collect();
@@ -262,37 +262,34 @@ fn case01a_gamma_merkle_id_stability() {
         .collect();
     let _ = ref_snap;
 
-    // Pfad 2: voller Szenario-Lauf mit User-Delta.
+    // Path 2: full scenario run with user delta.
     let (full_graph, _cascade, snap) = run_case_1a_full_scenario();
 
-    // γ-L: L-Seiten-Baseline-IDs unverändert findbar
+    // γ-L: L-side baseline ids still findable unchanged
     for name in ["rootP", "p", "c"] {
         let pre_id = snap.ids[name];
         assert!(
             full_graph.get_node(&pre_id).is_some(),
-            "γ-L-FAIL: {name} GhostId nicht mehr findbar"
+            "γ-L FAIL: {name} GhostId no longer findable"
         );
     }
 
-    // γ-R: R-Seiten-Ghost-IDs, die im Ref-Lauf erzeugt wurden,
-    // sind auch im vollen Szenario findbar (mit gleicher ID).
+    // γ-R: R-side ghost ids produced in the reference run
+    // are also findable in the full scenario (same id).
     let r_found: usize = r_side_ids_before
         .iter()
         .filter(|id| full_graph.get_node(id).is_some())
         .count();
     eprintln!(
-        "γ-R: von {} Ref-IDs nach User-Delta+Kaskade noch {} findbar",
+        "γ-R: of {} ref ids, {} still findable after user delta + cascade",
         r_side_ids_before.len(),
         r_found
     );
-    // Mindestens die Hälfte sollte stabil bleiben (Paper-Claim: volle
-    // Stabilität im Subtree unter p; rootP-Projektionen dürfen wandern).
-    // Initial: Wir loggen nur, keine harte Assertion — erst nach erstem
-    // Lauf wird klar, was der tatsächliche Wert ist und ob der Claim hält.
-    assert!(
-        r_found >= 1,
-        "γ-R: mindestens 1 R-Seiten-ID muss stabil sein"
-    );
+    // At least half should stay stable (paper claim: full stability in
+    // the subtree under p; rootP projections may shift).
+    // Initially we only log, no hard assertion — only after the first
+    // run does the actual value and claim become clear.
+    assert!(r_found >= 1, "γ-R: at least 1 R-side id must stay stable");
 }
 
 #[cfg(feature = "regen_graphs")]
@@ -323,22 +320,22 @@ fn case01a_regen_snapshots() {
     let opts = DotOpts::default();
     let mut trace = String::from("# Case 1a — Execution Trace\n\n");
     trace.push_str(
-        "Automatisch generiert aus `repro_fase2019_package_1a.rs::case01a_regen_snapshots`.\n\n",
+        "Automatically generated from `repro_fase2019_package_1a.rs::case01a_regen_snapshots`.\n\n",
     );
 
-    // Phase 0: L-seitiger Pre-Graph
+    // Phase 0: L-side pre-graph
     write_snapshot_triple(&out_root.join("00_initial_l_side"), &graph, &opts).unwrap();
-    trace.push_str("## 00 Initial (L-Seite only)\n");
+    trace.push_str("## 00 Initial (L-side only)\n");
     trace.push_str(
         "[source](00_initial_l_side/source.svg) · \
          [target](00_initial_l_side/target.svg) · \
          [corr](00_initial_l_side/corr.svg)\n\n",
     );
 
-    // Phase 1: Initial-Sync mit Step-Loop
+    // Phase 1: initial sync with step loop
     let mut cascade = Cascade::new();
     let sync_dir = out_root.join("phase_01_initial_sync");
-    trace.push_str("## Phase 1 — Initial-Sync (R-Seite erzeugen)\n\n");
+    trace.push_str("## Phase 1 — initial sync (build R-side)\n\n");
     let mut step_idx = 0;
     loop {
         let entries_before = cascade.entries.len();
@@ -361,13 +358,13 @@ fn case01a_regen_snapshots() {
                 }
             }
             other => {
-                trace.push_str(&format!("**Sync-Terminierung:** `{other:?}`\n\n"));
+                trace.push_str(&format!("**sync termination:** `{other:?}`\n\n"));
                 break;
             }
         }
     }
 
-    // Phase 2: User-Delta
+    // Phase 2: user delta
     let edge_id = find_edge_id(&graph, snap.ids["rootP"], snap.ids["p"], "subPackages");
     let user = DeltaEntry::new_user(
         vec![Op::DelEdge { target: edge_id }],
@@ -377,11 +374,11 @@ fn case01a_regen_snapshots() {
     cascade.append(user);
     let delta_dir = out_root.join("phase_02_user_delta");
     write_snapshot_triple(&delta_dir.join("00_user_op"), &graph, &opts).unwrap();
-    trace.push_str("## Phase 2 — User-Delta: DeleteEdge(rootP → p, subPackages)\n\n");
+    trace.push_str("## Phase 2 — user delta: DeleteEdge(rootP → p, subPackages)\n\n");
     trace.push_str("### 00 user_op\n[source](phase_02_user_delta/00_user_op/source.svg)\n\n");
 
-    // Phase 3: Post-Delta-Kaskade
-    trace.push_str("## Phase 3 — Post-Delta-Kaskade\n\n");
+    // Phase 3: post-delta cascade
+    trace.push_str("## Phase 3 — post-delta cascade\n\n");
     let post_dir = out_root.join("phase_03_post_delta");
     let mut post_step = 0;
     loop {
@@ -407,12 +404,12 @@ fn case01a_regen_snapshots() {
             other => {
                 if post_step == 0 {
                     trace.push_str(&format!(
-                        "**Keine Post-Delta-Steps.** Kaskade ist saturiert (`{other:?}`). \
-                         Engine-Mechanik: bestehende R-Seiten-Struktur gilt nach User-Delta \
-                         als stabile Lösung, γ-Invarianz ist die Begründung.\n\n",
+                        "**No post-delta steps.** Cascade is saturated (`{other:?}`). \
+                         Engine mechanics: the existing R-side structure is the stable \
+                         solution after the user delta; γ invariance is the rationale.\n\n",
                     ));
                 } else {
-                    trace.push_str(&format!("**Post-Terminierung:** `{other:?}`\n\n"));
+                    trace.push_str(&format!("**post-termination:** `{other:?}`\n\n"));
                 }
                 break;
             }

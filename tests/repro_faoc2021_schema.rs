@@ -1,15 +1,15 @@
-//! Case 7a/7b/7c — FAoC2021 Schema-Violations (Weidmann/Anjorin 2021).
+//! Case 7a/7b/7c — FAOC2021 schema violations (Weidmann/Anjorin 2021).
 //!
-//! Drei Sub-Cases:
-//! - 7a NoTwoGlossaries: für einen Doc darf nur ein Glossary entstehen.
-//!   In Seesaw automatisch durch Duplikations-Saturation (F11 Säule 1).
-//! - 7b NoEmptyClass: leere Class wird nicht übersetzt. In Seesaw
-//!   durch Pattern-Strenge (Rule verlangt methods-Edge im L-Pattern).
-//! - 7c SameNameSameGlossaryEntry: zwei Methods mit gleichem Namen
-//!   sollten denselben GlossaryEntry teilen. In aktuellen
-//!   Seesaw-Engine **nicht voll erfüllt** — wir erzeugen pro Method
-//!   einen separaten GlossaryEntry. Ehrliche Abgrenzung als
-//!   Trade-Off gegen eMoflon's ILP-Lösung.
+//! Three sub-cases:
+//! - 7a NoTwoGlossaries: for one Doc only one Glossary may emerge.
+//!   In Seesaw, automatic via duplication saturation (F11 pillar 1).
+//! - 7b NoEmptyClass: an empty Class is not translated. In Seesaw,
+//!   via pattern strictness (the rule requires a methods edge in L).
+//! - 7c SameNameSameGlossaryEntry: two methods with the same name
+//!   should share the same GlossaryEntry. In the current
+//!   Seesaw engine **not fully satisfied** — we produce one separate
+//!   GlossaryEntry per method. Honest delimitation as a
+//!   trade-off versus eMoflon's ILP solution.
 
 #[path = "fixtures/java_javadoc_mm.rs"]
 mod java_javadoc_mm;
@@ -25,7 +25,7 @@ use seesaw_tgg::rule::{compile, instantiate};
 const FIXTURE: &str = include_str!("fixtures/rules_faoc2021_schema.json");
 
 fn load_rules() -> Vec<Box<dyn Rule>> {
-    let rs = parse_ruleset(FIXTURE).expect("fixture parst");
+    let rs = parse_ruleset(FIXTURE).expect("fixture parses");
     rs.rules
         .iter()
         .map(|r| instantiate(&compile(r).expect("compile")))
@@ -37,7 +37,7 @@ fn fixture_parses_and_compiles() {
     let rs = parse_ruleset(FIXTURE).unwrap();
     assert_eq!(rs.rules.len(), 3);
     for r in &rs.rules {
-        let _ = compile(r).unwrap_or_else(|e| panic!("Rule {} kompiliert nicht: {e:?}", r.name));
+        let _ = compile(r).unwrap_or_else(|e| panic!("rule {} does not compile: {e:?}", r.name));
     }
 }
 
@@ -55,14 +55,14 @@ fn case07a_no_two_glossaries_for_one_doc() {
         .iter_nodes()
         .filter(|n| n.type_id == "Glossary" && n.status != Status::Tombstone)
         .count();
-    eprintln!("Case 7a: Anzahl Glossaries = {glossaries}");
+    eprintln!("Case 7a: glossary count = {glossaries}");
     assert_eq!(
         glossaries, 1,
-        "7a: NoTwoGlossaries durch Duplikations-Saturation — exakt 1 Glossary für 1 Doc"
+        "7a: NoTwoGlossaries via duplication saturation — exactly 1 Glossary per Doc"
     );
 
-    // Wie oft hätte DocToGlossary versucht zu feuern? Nur 1× pro
-    // Doc — das L-Pattern matcht nur 1× (nur 1 Doc).
+    // How often would DocToGlossary have tried to fire? Only 1×
+    // per Doc — the L-pattern matches only once (only 1 Doc).
     let doc_to_glossary_apps = cas
         .entries
         .iter()
@@ -85,16 +85,16 @@ fn case07b_empty_class_not_translated() {
     let mut cas = Cascade::new();
     let _ = run_cascade(&mut cas, &mut graph, &refs, 200).unwrap();
 
-    // C1 hat Method M1, also wird C1→Doc übersetzt.
-    // C2 hat keine Method, ClassWithMethodToDoc-Pattern matcht nicht.
+    // C1 has method M1, so C1 → Doc is translated.
+    // C2 has no method, so the ClassWithMethodToDoc pattern does not match.
     let docs = graph
         .iter_nodes()
         .filter(|n| n.type_id == "Doc" && n.status != Status::Tombstone)
         .count();
-    eprintln!("Case 7b: Anzahl Docs = {docs}");
+    eprintln!("Case 7b: doc count = {docs}");
     assert_eq!(
         docs, 1,
-        "7b: NoEmptyClass durch Pattern-Strenge — nur C1 (mit Method) wird zu Doc übersetzt"
+        "7b: NoEmptyClass via pattern strictness — only C1 (with method) is translated to Doc"
     );
 
     let corr_classes = graph
@@ -108,11 +108,10 @@ fn case07b_empty_class_not_translated() {
 
 #[test]
 fn case07c_two_methods_same_name_partial_belegt() {
-    // EHRLICHE ABGRENZUNG: Seesaw's aktuelle Engine erzeugt für zwei
-    // Methods mit gleichem Namen ZWEI GlossaryEntries (einen pro
-    // Method-Corr-Subtree). eMoflon's ILP-Lösung kann das via globaler
-    // Optimierung auf einen GlossaryEntry kollabieren. Seesaw macht
-    // das nicht.
+    // HONEST DELIMITATION: Seesaw's current engine produces TWO
+    // GlossaryEntries for two methods with the same name (one per
+    // method corr subtree). eMoflon's ILP solution can collapse this
+    // to one GlossaryEntry via global optimization. Seesaw does not.
     let (mut graph, _snap) = build_two_methods_same_name();
     let rules = load_rules();
     let refs: Vec<&dyn Rule> = rules.iter().map(|r| r.as_ref()).collect();
@@ -123,15 +122,15 @@ fn case07c_two_methods_same_name_partial_belegt() {
         .iter_nodes()
         .filter(|n| n.type_id == "GlossaryEntry" && n.status != Status::Tombstone)
         .count();
-    eprintln!("Case 7c: Anzahl GlossaryEntries für 2 Methods (gleicher Name) = {glossary_entries}");
-    // Seesaw produziert 2 separate Entries (einen pro Method).
-    // Das ist *partielle* Lösung — schwächer als ILP.
+    eprintln!("Case 7c: GlossaryEntry count for 2 methods (same name) = {glossary_entries}");
+    // Seesaw produces 2 separate entries (one per method).
+    // This is a *partial* solution — weaker than ILP.
     assert_eq!(
         glossary_entries, 2,
-        "7c: Seesaw erzeugt 2 separate GlossaryEntries (Trade-Off vs. ILP)"
+        "7c: Seesaw produces 2 separate GlossaryEntries (trade-off vs. ILP)"
     );
 
-    // Das ist die ehrliche Abgrenzung: Seesaw löst 7a + 7b strukturell,
-    // aber 7c braucht eMoflon's Global-Optimization-Mechanismus.
-    // Test belegt diese Trennung explizit.
+    // This is the honest delimitation: Seesaw solves 7a + 7b structurally,
+    // but 7c needs eMoflon's global-optimization mechanism.
+    // The test makes this separation explicit.
 }

@@ -1,12 +1,13 @@
-//! Cross-Modul-Kompatibilität: das Java-seitige
-//! `RuleSetJsonExporter` produziert JSON, das der Rust-Spec-
-//! Deserialisierer 1:1 frisst. Der Test lädt ein Java-erzeugtes
-//! Fixture und validiert Struktur gegen den `DemoRules`-Kontrakt.
+//! Cross-module compatibility: the Java-side
+//! `RuleSetJsonExporter` produces JSON that the Rust spec
+//! deserializer consumes 1:1. The test loads a Java-produced
+//! fixture and validates its structure against the `DemoRules`
+//! contract.
 //!
-//! Die Fixture-Datei wird initial vom Java-Test-Setup erzeugt. Wenn
-//! sich der Java-Exporter-Output ändert (z.B. umbenannte Felder), muss
-//! die Fixture neu exportiert werden — dann schlagen diese Tests an
-//! und machen die Inkompatibilität sichtbar.
+//! The fixture file is initially produced by the Java test setup.
+//! When the Java exporter output changes (e.g. renamed fields), the
+//! fixture must be re-exported — these tests then trip and make
+//! the incompatibility visible.
 
 use seesaw_tgg::rule::spec::{parse_ruleset, AttrTransform};
 
@@ -14,7 +15,7 @@ const DEMO_FIXTURE: &str = include_str!("fixtures/demo-ruleset.json");
 
 #[test]
 fn demo_ruleset_fixture_deserialisiert() {
-    let rs = parse_ruleset(DEMO_FIXTURE).expect("fixture parst");
+    let rs = parse_ruleset(DEMO_FIXTURE).expect("fixture parses");
     assert_eq!(rs.name.as_deref(), Some("seesaw-demo"));
     assert_eq!(rs.rules.len(), 4);
 }
@@ -29,8 +30,8 @@ fn demo_rules_haben_erwartete_namen_und_ranks() {
         ("R_Setter", 10),
     ];
     for (i, (name, rank)) in expected.iter().enumerate() {
-        assert_eq!(rs.rules[i].name, *name, "Rule {i} Name");
-        assert_eq!(rs.rules[i].rank, *rank, "Rule {i} Rank");
+        assert_eq!(rs.rules[i].name, *name, "rule {i} name");
+        assert_eq!(rs.rules[i].rank, *rank, "rule {i} rank");
     }
 }
 
@@ -44,7 +45,7 @@ fn r_class_hat_model_als_shared_anchor() {
     let r_has_m = r.nodes.iter().any(|n| n.id == "m" && n.kind == "Model");
     assert!(
         l_has_m && r_has_m,
-        "R_Class muss den Model-Knoten als shared anchor auf beiden Seiten haben"
+        "R_Class must have the Model node as shared anchor on both sides"
     );
 }
 
@@ -68,14 +69,14 @@ fn r_getter_hat_drei_corrs_und_getter_name_binding() {
     assert_eq!(r_getter.name, "R_Getter");
     assert_eq!(r_getter.correspondence_links.len(), 3);
 
-    // Die 3. Corr (CorrGetter) hat `getter_name`-Binding auf name
+    // The 3rd corr (CorrGetter) has a `getter_name` binding on name
     let cg = &r_getter.correspondence_links[2];
     assert_eq!(cg.kind.as_deref(), Some("CorrGetter"));
     let name_binding = cg
         .attribute_bindings
         .iter()
         .find(|b| b.l_attr_name == "name")
-        .expect("name-binding existiert");
+        .expect("name binding exists");
     let t = AttrTransform::parse(name_binding.transformation.as_deref()).unwrap();
     assert_eq!(t, AttrTransform::GetterName);
     assert_eq!(t.apply("name"), "getName");
@@ -84,9 +85,9 @@ fn r_getter_hat_drei_corrs_und_getter_name_binding() {
 
 #[test]
 fn alle_patterns_sind_adjazenz_vollstaendig() {
-    // Spiegelbild zum Java-Test `allDemoRulesHaveAdjacencyClosedPatterns`:
-    // jeder Knoten ab 2+ Knoten pro Pattern muss durch mindestens eine
-    // Kante verbunden sein.
+    // Mirror of the Java test `allDemoRulesHaveAdjacencyClosedPatterns`:
+    // for patterns with 2+ nodes, every node must be connected via
+    // at least one edge.
     let rs = parse_ruleset(DEMO_FIXTURE).unwrap();
     for r in &rs.rules {
         for (label, pat) in [("l", r.l_pattern.as_ref()), ("r", r.r_pattern.as_ref())] {
@@ -102,7 +103,7 @@ fn alle_patterns_sind_adjazenz_vollstaendig() {
             for n in &p.nodes {
                 assert!(
                     connected.contains(n.id.as_str()),
-                    "{}.{}: Knoten '{}' ({}) ist ohne Kante — Adjazenz-Lücke",
+                    "{}.{}: node '{}' ({}) has no edge — adjacency gap",
                     r.name,
                     label,
                     n.id,
@@ -115,9 +116,9 @@ fn alle_patterns_sind_adjazenz_vollstaendig() {
 
 #[test]
 fn rcount_sum_ueber_correspondence_links_matcht() {
-    // Summary-Invariante: Gesamt-Anzahl correspondence_links im
-    // Demo-RuleSet — explizit verdrahtet, damit eine stille Zählungs-
-    // Änderung auf Java-Seite hier sichtbar wird.
+    // Summary invariant: total number of correspondence_links in the
+    // demo rule set — wired explicitly so a silent count change on
+    // the Java side becomes visible here.
     let rs = parse_ruleset(DEMO_FIXTURE).unwrap();
     let total: usize = rs.rules.iter().map(|r| r.correspondence_links.len()).sum();
     // R_Class=1, R_Attr=2, R_Getter=3, R_Setter=3

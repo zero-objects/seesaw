@@ -1,13 +1,13 @@
 //! Case 2 — LMCS2024 Terrace-House higher-order edit.
 //!
-//! Variante C: alle 3 HouseTypes (Nook/Villa/Cube) mit vollen
-//! Construction-Sub-Komponenten (Cellar/Floor/SaddleRoof nach Typ).
+//! Variant C: all 3 HouseTypes (Nook/Villa/Cube) with full
+//! Construction sub-components (Cellar/Floor/SaddleRoof by type).
 //!
-//! Pre-Graph: h₁(Nook) → h₂(Villa) → h₃(Cube)
-//! User-Delta (Multi-Op): DelEdge(h1→h2,next) + DelEdge(h2→h3,next)
+//! Pre-graph: h₁(Nook) → h₂(Villa) → h₃(Cube)
+//! User delta (multi-op): DelEdge(h1→h2,next) + DelEdge(h2→h3,next)
 //!                         + SetAttr(h3, type, Villa)
-//! Expected-Post: h₁→h₃(Villa), c₂ Tombstone, c₃ re-typed; Floor+SaddleRoof
-//! unter c₃ bleiben (Paper-γ).
+//! Expected post: h₁ → h₃(Villa), c₂ Tombstone, c₃ re-typed; Floor+SaddleRoof
+//! under c₃ persist (paper γ).
 
 #[path = "fixtures/house_plan_mm.rs"]
 mod house_plan_mm;
@@ -22,7 +22,7 @@ use seesaw_tgg::rule::{compile, instantiate};
 const FIXTURE: &str = include_str!("fixtures/rules_lmcs2024_terrace.json");
 
 fn load_rules() -> Vec<Box<dyn Rule>> {
-    let rs = parse_ruleset(FIXTURE).expect("fixture parst");
+    let rs = parse_ruleset(FIXTURE).expect("fixture parses");
     rs.rules
         .iter()
         .map(|r| instantiate(&compile(r).expect("compile")))
@@ -34,7 +34,7 @@ fn fixture_parses_and_compiles() {
     let rs = parse_ruleset(FIXTURE).unwrap();
     assert_eq!(rs.rules.len(), 4);
     for r in &rs.rules {
-        let _ = compile(r).unwrap_or_else(|e| panic!("Rule {} kompiliert nicht: {e:?}", r.name));
+        let _ = compile(r).unwrap_or_else(|e| panic!("rule {} does not compile: {e:?}", r.name));
     }
 }
 
@@ -53,7 +53,7 @@ fn case02_initial_sync_produces_r_side() {
     let mut cascade = Cascade::new();
     let term = run_cascade(&mut cascade, &mut graph, &rule_refs, 200).expect("sync");
     eprintln!(
-        "Case 2 Initial-Sync terminiert: {term:?}, entries: {}",
+        "Case 2 initial sync terminates: {term:?}, entries: {}",
         cascade.entries.len()
     );
     for (i, e) in cascade.entries.iter().enumerate() {
@@ -66,7 +66,7 @@ fn case02_initial_sync_produces_r_side() {
 
     let counts = |kind: &str| graph.iter_nodes().filter(|n| n.type_id == kind).count();
     eprintln!(
-        "Graph-Inventar: Construction={}, Cellar={}, Floor={}, SaddleRoof={}, CorrHouse={}",
+        "Graph inventory: Construction={}, Cellar={}, Floor={}, SaddleRoof={}, CorrHouse={}",
         counts("Construction"),
         counts("Cellar"),
         counts("Floor"),
@@ -74,14 +74,14 @@ fn case02_initial_sync_produces_r_side() {
         counts("CorrHouse"),
     );
 
-    // Erwartete R-Seite nach Initial-Sync:
-    // - 3 Constructions (eine pro House)
-    // - 1 Cellar (nur h3=Cube)
+    // Expected R-side after initial sync:
+    // - 3 Constructions (one per House)
+    // - 1 Cellar (only h3=Cube)
     // - 2 Floors (h2=Villa, h3=Cube)
     // - 2 SaddleRoofs (h2=Villa, h3=Cube)
     // - 3 CorrHouses
     assert_eq!(counts("Construction"), 3, "3 Constructions");
-    assert_eq!(counts("Cellar"), 1, "1 Cellar (nur Cube)");
+    assert_eq!(counts("Cellar"), 1, "1 Cellar (Cube only)");
     assert_eq!(counts("Floor"), 2, "2 Floors (Villa+Cube)");
     assert_eq!(counts("SaddleRoof"), 2, "2 SaddleRoofs (Villa+Cube)");
     assert_eq!(counts("CorrHouse"), 3, "3 CorrHouses");
@@ -89,22 +89,22 @@ fn case02_initial_sync_produces_r_side() {
 
 #[test]
 fn case02_probe_nextrule_matching() {
-    // Diagnose: Feuert NextRule? Wenn nicht, was matcht / matcht nicht?
+    // Diagnostic: does NextRule fire? If not, what matches / does not match?
     use seesaw_tgg::engine::find_matches;
     let (mut graph, _snap) = build_fig3a_graph();
     let rules = load_rules();
     let rule_refs: Vec<&dyn Rule> = rules.iter().map(|r| r.as_ref()).collect();
 
-    // Erst Typ-Rules feuern lassen.
+    // First let the type rules fire.
     let mut cascade = Cascade::new();
     let _ = run_cascade(&mut cascade, &mut graph, &rule_refs, 200).unwrap();
     eprintln!(
-        "Nach Initial-Sync: {} Entries. Edges im Graph: {}",
+        "After initial sync: {} entries. Edges in graph: {}",
         cascade.entries.len(),
         graph.iter_edges().len()
     );
 
-    // NextRule ist die letzte Rule; ihr Pattern inspizieren.
+    // NextRule is the last rule; inspect its pattern.
     let next_rule = rules.iter().find(|r| r.id() == "NextRule").unwrap();
     eprintln!(
         "NextRule pattern: {} nodes, {} edges",
@@ -122,7 +122,7 @@ fn case02_probe_nextrule_matching() {
     }
 
     let matches = find_matches(next_rule.pattern(), &graph);
-    eprintln!("NextRule Matches: {}", matches.len());
+    eprintln!("NextRule matches: {}", matches.len());
     for (i, m) in matches.iter().enumerate() {
         eprintln!("  match {i}: {:?}", m.bindings);
     }
@@ -134,21 +134,21 @@ fn find_edge_id(graph: &TypedGraph, src: GhostId, tgt: GhostId, edge_type: &str)
         .into_iter()
         .find(|(s, t, data)| *s == src && *t == tgt && data.type_id == edge_type)
         .map(|(_, _, data)| data.id)
-        .expect("edge exists in Pre-Graph")
+        .expect("edge exists in pre-graph")
 }
 
-/// Läuft das volle LMCS2024-Szenario: Initial-Sync, Multi-Delta,
-/// Post-Delta-Kaskade.
+/// Runs the full LMCS2024 scenario: initial sync, multi-delta,
+/// post-delta cascade.
 fn run_full_scenario() -> (TypedGraph, Cascade, HouseSnapshot) {
     let (mut graph, snap) = build_fig3a_graph();
     let rules = load_rules();
     let rule_refs: Vec<&dyn Rule> = rules.iter().map(|r| r.as_ref()).collect();
 
-    // Phase 1: Initial-Sync
+    // Phase 1: initial sync
     let mut cascade = Cascade::new();
     let _ = run_cascade(&mut cascade, &mut graph, &rule_refs, 200).expect("sync");
 
-    // Phase 2: Multi-Delta als ein User-Entry.
+    // Phase 2: multi-delta as a single user entry.
     let e_h1_h2 = find_edge_id(&graph, snap.ids["h1"], snap.ids["h2"], "next");
     let e_h2_h3 = find_edge_id(&graph, snap.ids["h2"], snap.ids["h3"], "next");
     let user = DeltaEntry::new_user(
@@ -169,9 +169,9 @@ fn run_full_scenario() -> (TypedGraph, Cascade, HouseSnapshot) {
     user.apply(&mut graph).expect("multi-delta apply");
     cascade.append(user);
 
-    // Phase 3: Post-Delta-Kaskade mit Match-Observability (M5).
+    // Phase 3: post-delta cascade with match observability (M5).
     let term = run_cascade_observable(&mut cascade, &mut graph, &rule_refs, 200).expect("post");
-    eprintln!("Case 2 Post-Delta (observable) terminiert: {term:?}");
+    eprintln!("Case 2 post-delta (observable) terminates: {term:?}");
 
     (graph, cascade, snap)
 }
@@ -180,8 +180,8 @@ fn run_full_scenario() -> (TypedGraph, Cascade, HouseSnapshot) {
 fn case02_full_scenario_diagnostic() {
     let (graph, cascade, snap) = run_full_scenario();
 
-    // Diagnose-Log
-    eprintln!("Cascade-Entries insgesamt: {}", cascade.entries.len());
+    // Diagnostic log
+    eprintln!("Total cascade entries: {}", cascade.entries.len());
     for (i, e) in cascade.entries.iter().enumerate() {
         let origin = match &e.origin {
             Origin::User => "USER".to_string(),
@@ -198,7 +198,7 @@ fn case02_full_scenario_diagnostic() {
         .iter_nodes()
         .filter(|n| n.type_id == "Construction" && n.status == Status::Tombstone)
         .count();
-    eprintln!("Constructions: {active_constr} aktiv, {tomb_constr} tombstone");
+    eprintln!("Constructions: {active_constr} active, {tomb_constr} tombstone");
 
     for kind in ["Cellar", "Floor", "SaddleRoof"] {
         let active = graph
@@ -209,7 +209,7 @@ fn case02_full_scenario_diagnostic() {
             .iter_nodes()
             .filter(|n| n.type_id == kind && n.status == Status::Tombstone)
             .count();
-        eprintln!("{kind}: {active} aktiv, {tomb} tombstone");
+        eprintln!("{kind}: {active} active, {tomb} tombstone");
     }
 
     let h2 = graph.get_node(&snap.ids["h2"]).unwrap();
@@ -224,10 +224,10 @@ fn case02_full_scenario_diagnostic() {
 #[test]
 fn case02_alpha_post_delta_structure() {
     let (graph, _cascade, snap) = run_full_scenario();
-    // α: nach Multi-Delta sollte:
+    // α: after the multi-delta:
     // - h2 Tombstone
     // - h3.type = Villa
-    // - 2 aktive Constructions (für h1 und h3); c2 endgültig Tombstone
+    // - 2 active Constructions (for h1 and h3); c2 finally Tombstone
     let h2 = graph.get_node(&snap.ids["h2"]).unwrap();
     assert_eq!(h2.status, Status::Tombstone);
     let h3 = graph.get_node(&snap.ids["h3"]).unwrap();
@@ -239,7 +239,7 @@ fn case02_alpha_post_delta_structure() {
         .count();
     assert_eq!(
         active_constr, 2,
-        "α: 2 aktive Constructions (für h1 und h3)"
+        "α: 2 active Constructions (for h1 and h3)"
     );
 }
 
@@ -271,15 +271,15 @@ fn case02_regen_snapshots() {
     let opts = DotOpts::default();
     let mut trace = String::from("# Case 2 — Execution Trace\n\n");
     trace.push_str(
-        "Automatisch generiert aus `repro_lmcs2024_terrace.rs::case02_regen_snapshots`.\n\n",
+        "Automatically generated from `repro_lmcs2024_terrace.rs::case02_regen_snapshots`.\n\n",
     );
 
     write_snapshot_triple(&out_root.join("00_initial_l_side"), &graph, &opts).unwrap();
-    trace.push_str("## 00 Initial (L-Seite only — h1(Nook) → h2(Villa) → h3(Cube))\n\n");
+    trace.push_str("## 00 Initial (L-side only — h1(Nook) → h2(Villa) → h3(Cube))\n\n");
 
     let mut cascade = Cascade::new();
     let sync_dir = out_root.join("phase_01_initial_sync");
-    trace.push_str("## Phase 1 — Initial-Sync\n\n");
+    trace.push_str("## Phase 1 — initial sync\n\n");
     let mut step_idx = 0;
     loop {
         let eb = cascade.entries.len();
@@ -299,13 +299,13 @@ fn case02_regen_snapshots() {
                 }
             }
             other => {
-                trace.push_str(&format!("**Sync-Terminierung:** `{other:?}`\n\n"));
+                trace.push_str(&format!("**sync termination:** `{other:?}`\n\n"));
                 break;
             }
         }
     }
 
-    // Multi-Delta-User-Op
+    // Multi-delta user op
     let e_h1_h2 = find_edge_id(&graph, snap.ids["h1"], snap.ids["h2"], "next");
     let e_h2_h3 = find_edge_id(&graph, snap.ids["h2"], snap.ids["h3"], "next");
     let user = DeltaEntry::new_user(
@@ -327,15 +327,15 @@ fn case02_regen_snapshots() {
     cascade.append(user);
     let delta_dir = out_root.join("phase_02_user_delta");
     write_snapshot_triple(&delta_dir.join("00_user_op"), &graph, &opts).unwrap();
-    trace.push_str("## Phase 2 — User-Delta (Multi-Op)\n\n");
+    trace.push_str("## Phase 2 — user delta (multi-op)\n\n");
     trace.push_str("- DelEdge(next h1→h2)\n- DelEdge(next h2→h3)\n- DelNode(h2)\n- SetAttr(h3, type, Villa)\n\n");
 
-    // Phase 3: Post-Delta mit M5 Match-Observability
+    // Phase 3: post-delta with M5 match observability
     use seesaw_tgg::engine::run_cascade_observable;
     let entries_before = cascade.entries.len();
     let _ = run_cascade_observable(&mut cascade, &mut graph, &rule_refs, 200).unwrap();
     let post_dir = out_root.join("phase_03_post_delta");
-    trace.push_str("## Phase 3 — Post-Delta-Kaskade (Match-Observability)\n\n");
+    trace.push_str("## Phase 3 — post-delta cascade (match observability)\n\n");
     for (i, entry) in cascade.entries.iter().enumerate().skip(entries_before) {
         let name = match &entry.origin {
             Origin::Rule { rule_id } => rule_id.clone(),
@@ -347,9 +347,7 @@ fn case02_regen_snapshots() {
         trace.push_str(&format!("### {step:02} {name}\n\n"));
     }
     if cascade.entries.len() == entries_before {
-        trace.push_str(
-            "**Keine Engine-Folge-Steps.** Cascade hat nur Konsolidierung durchgeführt.\n\n",
-        );
+        trace.push_str("**No engine follow-up steps.** Cascade only performed consolidation.\n\n");
     }
 
     std::fs::write(out_root.join("trace.md"), trace).unwrap();
@@ -357,13 +355,12 @@ fn case02_regen_snapshots() {
 
 #[test]
 fn case02_gamma_floor_and_roof_under_h3_resurrected() {
-    // γ-Beweis Case 2: Floor und SaddleRoof unter c3 bleiben unter
-    // dem Re-Typing Cube → Villa stabil (Resurrection durch
-    // identische Ghost-IDs zwischen CubeRule- und VillaRule-
-    // Produktion). Cellar wird endgültig Tombstone (VillaConstr
-    // hat keinen Cellar).
+    // γ proof Case 2: Floor and SaddleRoof under c3 stay stable
+    // through the re-typing Cube → Villa (resurrection via
+    // identical ghost ids across CubeRule and VillaRule
+    // production). Cellar ends Tombstone (VillaConstr has none).
 
-    // Referenz-Lauf: nur Initial-Sync, kein Multi-Delta.
+    // Reference run: initial sync only, no multi-delta.
     let (mut ref_graph, _) = build_fig3a_graph();
     let rules = load_rules();
     let refs: Vec<&dyn Rule> = rules.iter().map(|r| r.as_ref()).collect();
@@ -387,8 +384,8 @@ fn case02_gamma_floor_and_roof_under_h3_resurrected() {
 
     let (graph, _cas, _snap) = run_full_scenario();
 
-    // Mindestens 1 Floor + 1 SaddleRoof aus dem Ref-Lauf müssen
-    // im voll Szenario noch aktiv sein (Resurrection für h3).
+    // At least 1 Floor + 1 SaddleRoof from the reference run must
+    // still be active in the full scenario (resurrection for h3).
     let active_floors = ref_floor_ids
         .iter()
         .filter(|id| {
@@ -407,17 +404,17 @@ fn case02_gamma_floor_and_roof_under_h3_resurrected() {
                 .unwrap_or(false)
         })
         .count();
-    eprintln!("Aktive Floors aus Ref: {active_floors}, Roofs: {active_roofs}");
-    assert!(active_floors >= 1, "γ: mindestens 1 Floor stabil");
-    assert!(active_roofs >= 1, "γ: mindestens 1 SaddleRoof stabil");
+    eprintln!("Active floors from ref: {active_floors}, roofs: {active_roofs}");
+    assert!(active_floors >= 1, "γ: at least 1 Floor stable");
+    assert!(active_roofs >= 1, "γ: at least 1 SaddleRoof stable");
 
-    // Cellar endgültig Tombstone — VillaConstr hat keinen.
+    // Cellar finally Tombstone — VillaConstr has none.
     let active_cellars = graph
         .iter_nodes()
         .filter(|n| n.type_id == "Cellar" && n.status != Status::Tombstone)
         .count();
     assert_eq!(
         active_cellars, 0,
-        "γ: Cellar Tombstone (VillaConstr hat keinen)"
+        "γ: Cellar Tombstone (VillaConstr has none)"
     );
 }

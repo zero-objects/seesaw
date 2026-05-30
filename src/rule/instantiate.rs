@@ -1,24 +1,24 @@
-//! Instantiierung: `CompiledRuleSpec → Box<dyn Rule>`.
+//! Instantiation: `CompiledRuleSpec → Box<dyn Rule>`.
 //!
-//! Übersetzt den statisch analysierten Plan in eine konkrete
-//! `BasicRule`, die in der Cascade-Engine läuft. Die Engine-Topology
-//! folgt der aktuellen Pilot-Konvention:
+//! Translates the statically analyzed plan into a concrete
+//! `BasicRule` that runs in the cascade engine. The engine topology
+//! follows the current pilot convention:
 //!
-//! - Ein neu etablierter Correspondence-Link wird als **Graph-Knoten**
-//!   materialisiert, der als Kind des L-Knotens hängt (Edge-Typ
-//!   `corrL`) und den neu erzeugten R-Knoten als Kind trägt (Edge-Typ
-//!   `corrR`).
-//! - Context-Correspondences erscheinen bereits im Match-Pattern —
-//!   die Rule greift nur, wenn sie im Graph vorliegen.
-//! - AttrBindings werden zur Match-Zeit angewendet: L-Attribut-Wert
-//!   via `AttrTransform` auf den R-Node propagiert. Gleichzeitig
-//!   wird der Corr-Node selbst mit den L-Attributen annotiert
-//!   (Engine-Konvention für deterministische Ghost-IDs).
+//! - A newly established correspondence link is materialized as a
+//!   **graph node** that hangs as a child of the L-node (edge type
+//!   `corrL`) and carries the newly created R-node as its child (edge
+//!   type `corrR`).
+//! - Context correspondences appear already in the match pattern —
+//!   the rule fires only when they are present in the graph.
+//! - AttrBindings are applied at match time: the L attribute value is
+//!   propagated to the R-node via `AttrTransform`. At the same time
+//!   the corr node itself is annotated with the L attributes
+//!   (engine convention for deterministic ghost IDs).
 //!
-//! Diese Konvention ist paper-zitierbar als
-//! „operational topology mapping" und gehört ins Implementation-
-//! Experience-Report-Kapitel „Von deklarativer Rule-Spec zur
-//! operationalen Engine-Form".
+//! This convention is paper-citable as
+//! "operational topology mapping" and belongs in the implementation
+//! experience report chapter "From declarative rule spec to
+//! operational engine form".
 
 use std::collections::{BTreeMap, HashMap};
 
@@ -31,10 +31,10 @@ use crate::ops::Op;
 use super::compile::{CompiledRuleSpec, EdgeSide};
 use super::spec::{AttrTransform, CorrespondenceLinkSpec};
 
-/// Kompiliert einen [`CompiledRuleSpec`] in eine konkrete
-/// Engine-Rule.
+/// Compiles a [`CompiledRuleSpec`] into a concrete
+/// engine rule.
 pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
-    // ── Match-Pattern aufbauen ──────────────────────────────────────
+    // ── Build the match pattern ─────────────────────────────────────
     let mut pat = Pattern::new();
     for mn in &compiled.match_plan.nodes {
         let mut np = NodePattern::new(&mn.var, &mn.kind);
@@ -49,8 +49,8 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
     for me in &compiled.match_plan.edges {
         pat = pat.with_edge(EdgePattern::new(&me.source_var, &me.target_var, &me.kind));
     }
-    // Context-Corrs zum Match-Pattern hinzufügen: ein synthetischer
-    // Knoten mit stabiler Var-ID, plus `corrL`/`corrR`-Kanten.
+    // Add context correspondences to the match pattern: a synthetic
+    // node with a stable var id, plus `corrL`/`corrR` edges.
     for (i, cc) in compiled
         .match_plan
         .context_correspondences
@@ -63,17 +63,17 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
             .clone()
             .unwrap_or_else(|| "Correspondence".to_string());
         pat = pat.with_node(NodePattern::new(&corr_var, &corr_kind));
-        // rc7 (S): symmetrische Korrespondenz — der Kontext-Match ist
-        // richtungs- UND kind-agnostisch (Membership): der Corr-Knoten muss
-        // mit beiden Endpunkten verbunden sein, egal wie corrL/corrR
-        // orientiert sind. So wird eine in EINER Richtung etablierte
-        // Korrespondenz von Regeln BEIDER Richtungen als Kontext erkannt
-        // (corrL/corrR werden richtungs-relativ erzeugt — der C1-Befund).
+        // rc7 (S): symmetric correspondence — the context match is
+        // direction- AND kind-agnostic (membership): the corr node must
+        // be connected to both endpoints, regardless of how corrL/corrR
+        // are oriented. This way a correspondence established in ONE
+        // direction is recognized as context by rules of BOTH directions
+        // (corrL/corrR are created direction-relative — the C1 finding).
         pat = pat.with_edge(EdgePattern::membership(&corr_var, &cc.l_node_id));
         pat = pat.with_edge(EdgePattern::membership(&corr_var, &cc.r_node_id));
     }
 
-    // ── Production-Closure aufbauen (owned clones für move) ─────────
+    // ── Build the production closure (owned clones for move) ────────
     let rule_name = compiled.name.clone();
     let rank: u64 = compiled.rank.max(0) as u64;
     let creation = compiled.creation_plan.clone();
@@ -82,33 +82,33 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
     let production = move |m: &PatternMatch, g: &TypedGraph| -> Vec<Op> {
         let mut ops: Vec<Op> = Vec::new();
 
-        // Neu erzeugte Knoten-IDs pro Var — nötig, damit nachfolgende
-        // edges_to_create ihre Endpunkte auflösen können.
+        // Newly created node IDs per var — needed so that subsequent
+        // edges_to_create can resolve their endpoints.
         let mut created: HashMap<String, GhostId> = HashMap::new();
 
-        // 1. Correspondence-Nodes + ihre R-Target-Nodes materialisieren.
+        // 1. Materialize correspondence nodes + their R target nodes.
         //
-        // rc7 A8 (Fix A) — Identität vom propagierten Attribut entkoppelt:
-        // Die Ghost-ID von Corr und Ziel wird NUR aus strukturellen +
-        // Identitäts-Attributen gebildet (creation_attrs), NICHT aus den
-        // gebundenen (propagierten) Attributen. Letztere werden nach der
-        // Knoten-Erzeugung als `Op::SetAttr` geschrieben. Folge: die
-        // Identität ist stabil unter Attribut-Änderungen — ein Rename des
-        // Quell-Elements re-derivt denselben Ziel-Knoten (Struktur-Op wird
-        // idempotenter No-op) und aktualisiert nur dessen Wert, statt ein
-        // Duplikat mit neuer Identität zu erzeugen.
+        // rc7 A8 (Fix A) — identity decoupled from the propagated attribute:
+        // the ghost ID of corr and target is formed ONLY from structural +
+        // identity attributes (creation_attrs), NOT from the bound
+        // (propagated) attributes. The latter are written as `Op::SetAttr`
+        // after node creation. Consequence: the identity is stable under
+        // attribute changes — a rename of the source element re-derives the
+        // same target node (the structural op becomes an idempotent no-op)
+        // and only updates its value, instead of creating a duplicate with
+        // a new identity.
         for cc in &creation.correspondences_to_create {
             let l_id = match m.get(&cc.l_node_id) {
                 Some(id) => *id,
-                None => continue, // L-Seite nicht gebunden — Rule-Variante unsupported
+                None => continue, // L side not bound — rule variant unsupported
             };
 
             let corr_kind = cc
                 .kind
                 .clone()
                 .unwrap_or_else(|| "Correspondence".to_string());
-            // Corr-Identität ist rein strukturell (Quell-Element + Kind);
-            // keine gebundenen Attribute im Hash.
+            // Corr identity is purely structural (source element + kind);
+            // no bound attributes in the hash.
             let corr_id = GhostId::from_parent(&l_id, "corrL", &corr_kind, &BTreeMap::new());
             ops.push(Op::AddNode {
                 parent: l_id,
@@ -117,8 +117,8 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
                 attrs: BTreeMap::new(),
             });
 
-            // R-Target-Node: ist er in nodes_to_create oder schon
-            // gematched?
+            // R target node: is it in nodes_to_create or already
+            // matched?
             let r_var = &cc.r_node_id;
             let r_kind = creation
                 .nodes_to_create
@@ -128,8 +128,8 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
 
             let target_id: Option<GhostId> = match (m.get(r_var), r_kind) {
                 (Some(existing_r), _) => {
-                    // R-Node war schon im Match — nur die Corr-Edge
-                    // muss noch gezogen werden.
+                    // R-node was already in the match — only the corr
+                    // edge still needs to be drawn.
                     ops.push(Op::AddEdge {
                         source: corr_id,
                         target: *existing_r,
@@ -139,9 +139,9 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
                     Some(*existing_r)
                 }
                 (None, Some(kind)) => {
-                    // R-Node ist neu zu erzeugen, als Kind des Corr-Nodes.
-                    // Nur Identitäts-Attribute (creation_attrs, rc6 B6)
-                    // fließen in die GhostId; gebundene Werte folgen als
+                    // R-node is to be newly created, as a child of the corr node.
+                    // Only identity attributes (creation_attrs, rc6 B6)
+                    // flow into the GhostId; bound values follow as
                     // SetAttr (rc7 A8).
                     let r_identity = collect_r_identity_attrs(cc, &creation.creation_attrs);
                     let r_id = GhostId::from_parent(&corr_id, "corrR", &kind, &r_identity);
@@ -155,16 +155,16 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
                     Some(r_id)
                 }
                 (None, None) => {
-                    // R-Var in keiner Plan-Tabelle → unsauberer
-                    // CompiledRuleSpec; wir ignorieren still.
+                    // R var in no plan table → unclean
+                    // CompiledRuleSpec; we silently ignore.
                     None
                 }
             };
 
-            // rc7 A8: gebundene Attribut-Werte als SetAttr auf das Ziel
-            // propagieren. Idempotent — wenn der Wert schon stimmt, ist die
-            // Op ein No-op (saturiert zu Duplication). Beim Rename trägt sie
-            // den neuen Wert auf den (identitäts-stabilen) Ziel-Knoten.
+            // rc7 A8: propagate bound attribute values as SetAttr onto the
+            // target. Idempotent — if the value already matches, the op is
+            // a no-op (saturates to duplication). On rename it carries the
+            // new value onto the (identity-stable) target node.
             if let Some(tid) = target_id {
                 for (attr, value) in collect_propagated_attrs(cc, m, g, &propagation) {
                     ops.push(Op::SetAttr {
@@ -176,12 +176,12 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
             }
         }
 
-        // 2. Zusätzliche R-Kanten materialisieren (edges_to_create).
-        //    Erwartung: mindestens ein Endpunkt ist in `created`, der
-        //    andere im Match gebunden.
+        // 2. Materialize additional R edges (edges_to_create).
+        //    Expectation: at least one endpoint is in `created`, the
+        //    other bound in the match.
         for e in &creation.edges_to_create {
-            // Nur R-Side-Edges tatsächlich emittieren; L-Edges sind
-            // Match-Constraints.
+            // Only actually emit R-side edges; L edges are
+            // match constraints.
             if e.side != EdgeSide::R {
                 continue;
             }
@@ -197,12 +197,12 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
             }
         }
 
-        // 3. attrs_to_set: R-Pattern-Literal-Constraints, die ein
-        //    Attribut auf einem im Match gebundenen (Kontext-)Knoten
-        //    auf einen neuen Wert setzen. Pendant zu Schritt 2 auf der
-        //    Attribut-Seite — vor rc4 wurde dieser Pfad gar nicht
-        //    emittiert; der Workaround in dry-cleaner war Schema-
-        //    Verzerrung (Kind-Knoten statt Attribute).
+        // 3. attrs_to_set: R-pattern literal constraints that set an
+        //    attribute on a (context) node bound in the match to a new
+        //    value. Counterpart to step 2 on the attribute side —
+        //    before rc4 this path was not emitted at all; the
+        //    workaround in dry-cleaner was a schema distortion
+        //    (child node instead of attributes).
         for ats in &creation.attrs_to_set {
             if let Some(id) = resolve_var(&ats.node_var, m, &created) {
                 ops.push(Op::SetAttr {
@@ -216,7 +216,7 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
         ops
     };
 
-    // NACs des Rule-Specs in Engine-NacPatterns konvertieren.
+    // Convert the rule spec's NACs to engine NacPatterns.
     let nacs: Vec<NacPattern> = compiled
         .nacs
         .iter()
@@ -244,7 +244,7 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
         })
         .collect();
 
-    // Propagations für Re-Validation (M5.3) übersetzen.
+    // Translate propagations for re-validation (M5.3).
     let propagations: Vec<EnginePropagation> = compiled
         .propagation_plan
         .iter()
@@ -266,36 +266,35 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Helfer
+// Helpers
 // ══════════════════════════════════════════════════════════════════════
 
 fn resolve_var(var: &str, m: &PatternMatch, created: &HashMap<String, GhostId>) -> Option<GhostId> {
     m.get(var).copied().or_else(|| created.get(var).copied())
 }
 
-/// Sammelt die Attribute, die auf dem neu zu erzeugenden R-Node
-/// landen sollen. Drei Quellen, in dieser Reihenfolge:
+/// Collects the attributes that should land on the newly created
+/// R-node. Three sources, in this order:
 ///
-/// 1. `attribute_bindings` des Corr-Links — propagierte L→R-Werte.
-/// 2. Zusätzliche `propagation_plan`-Einträge mit gleichem (L,R)-Paar.
-/// 3. **rc6 (B6)**: `creation_attrs` für diesen R-Var — Identitäts-
-///    Attribute aus R-Pattern-Literal-Constraints auf R-only-Creation-
-///    Knoten. Vor rc6 landeten diese in `attrs_to_set` und wurden
-///    nach der Knoten-Erzeugung via `Op::SetAttr` geschrieben; das
-///    machte zwei Rules mit verschiedenen Literal-Werten aber sonst
-///    identischer Struktur kollidieren (selbe GhostId, oszillierende
-///    SetAttrs). Jetzt fließen sie in `r_attrs` und damit in den
-///    GhostId-Hash → zwei verschiedene Werte → zwei verschiedene
-///    Knoten, keine Kollision.
+/// 1. `attribute_bindings` of the corr link — propagated L→R values.
+/// 2. Additional `propagation_plan` entries with the same (L,R) pair.
+/// 3. **rc6 (B6)**: `creation_attrs` for this R var — identity
+///    attributes from R-pattern literal constraints on R-only-creation
+///    nodes. Before rc6 these landed in `attrs_to_set` and were
+///    written via `Op::SetAttr` after node creation; that caused two
+///    rules with different literal values but otherwise identical
+///    structure to collide (same GhostId, oscillating SetAttrs).
+///    Now they flow into `r_attrs` and thus into the
+///    GhostId hash → two different values → two different
+///    nodes, no collision.
 ///
-/// rc7 A8 — Identitäts-Attribute des neu erzeugten R-Knotens: NUR
-/// `creation_attrs` (rc6 B6: R-Pattern-Literal-Constraints auf R-only-
-/// Creation-Knoten). Diese fließen in die Ghost-ID, weil sie das Ziel
-/// strukturell identifizieren (zwei Rules mit verschiedenen Literal-
-/// Werten → zwei verschiedene Knoten, keine Kollision). Gebundene
-/// (propagierte) Werte gehören NICHT hierher — sie sind Wert, nicht
-/// Identität, und werden via [`collect_propagated_attrs`] als SetAttr
-/// geschrieben.
+/// rc7 A8 — identity attributes of the newly created R-node: ONLY
+/// `creation_attrs` (rc6 B6: R-pattern literal constraints on R-only-
+/// creation nodes). These flow into the ghost ID because they
+/// identify the target structurally (two rules with different literal
+/// values → two different nodes, no collision). Bound
+/// (propagated) values do NOT belong here — they are value, not
+/// identity, and are written as SetAttr via [`collect_propagated_attrs`].
 fn collect_r_identity_attrs(
     cc: &CorrespondenceLinkSpec,
     creation_attrs: &[super::compile::CreationAttr],
@@ -309,13 +308,13 @@ fn collect_r_identity_attrs(
     attrs
 }
 
-/// rc7 A8 — gebundene (propagierte) Attribut-Werte für das Ziel: aus den
-/// `attribute_bindings` (L→R via Transform) plus deckungsgleichen
-/// `propagation_plan`-Einträgen. Werden NACH der Knoten-Erzeugung als
-/// `Op::SetAttr` auf das Ziel geschrieben. So ist das gebundene Attribut
-/// ein **Wert** (mutierbar, propagierbar), keine Identität — ein Rename
-/// des Quell-Elements aktualisiert den bestehenden Ziel-Knoten, statt ein
-/// Duplikat mit neuer Ghost-ID zu erzeugen.
+/// rc7 A8 — bound (propagated) attribute values for the target: from the
+/// `attribute_bindings` (L→R via transform) plus matching
+/// `propagation_plan` entries. They are written to the target as
+/// `Op::SetAttr` AFTER node creation. This way the bound attribute is
+/// a **value** (mutable, propagatable), not an identity — a rename
+/// of the source element updates the existing target node, instead of
+/// creating a duplicate with a new ghost ID.
 fn collect_propagated_attrs(
     cc: &CorrespondenceLinkSpec,
     m: &PatternMatch,
@@ -336,8 +335,8 @@ fn collect_propagated_attrs(
             .unwrap_or_default();
         attrs.insert(b.r_attr_name.clone(), transform.apply(&src_value));
     }
-    // Zusätzliche propagation_plan-Einträge (aktuell deckungsgleich mit
-    // attribute_bindings; Bindings haben Vorrang).
+    // Additional propagation_plan entries (currently overlapping with
+    // attribute_bindings; bindings take precedence).
     for p in propagation {
         if p.source_node_var == cc.l_node_id
             && p.target_node_var == cc.r_node_id
@@ -373,8 +372,8 @@ mod tests {
         compile(&r).unwrap()
     }
 
-    /// Baut einen Mini-Graph mit Model → Class(name='Person') und
-    /// gibt die IDs zurück.
+    /// Builds a mini graph with Model → Class(name='Person') and
+    /// returns the IDs.
     fn mini_model_with_person() -> (TypedGraph, GhostId, GhostId) {
         let mut g = TypedGraph::new();
         let model_attrs: BTreeMap<String, String> = [("name".to_string(), "Demo".to_string())]
@@ -393,7 +392,7 @@ mod tests {
             BTreeMap::new(),
             Status::Solid,
         )
-        .expect("Kante Model→Class muss einfügbar sein");
+        .expect("Model→Class edge must be insertable");
         (g, model_id, class_id)
     }
 
@@ -404,7 +403,7 @@ mod tests {
         let (g, _m, c) = mini_model_with_person();
 
         let matches = find_matches(rule.pattern(), &g);
-        assert_eq!(matches.len(), 1, "R_Class muss genau einen Match finden");
+        assert_eq!(matches.len(), 1, "R_Class must find exactly one match");
         let m = &matches[0];
         assert_eq!(*m.get("c").unwrap(), c);
     }
@@ -418,15 +417,15 @@ mod tests {
         let matches = find_matches(rule.pattern(), &g);
         let ops = rule.produce(&matches[0], &g);
 
-        // rc7 A8 — Identität vom propagierten Attribut entkoppelt: die
-        // CorrClass- und JavaClass-AddNodes tragen `name` NICHT mehr (ihre
-        // Ghost-ID ist strukturell), der Name wird als separate SetAttr
-        // propagiert. Folge: 4 Ops statt 3 (CorrClass, JavaClass, SetAttr
-        // name, javaClasses-Edge). Die javaClasses-Edge zwischen Model und
-        // neuem JavaClass wird explizit gezogen — bewusster Gewinn des
-        // Spec-basierten Compilers gegenüber der hart-kodierten Variante.
+        // rc7 A8 — identity decoupled from the propagated attribute: the
+        // CorrClass and JavaClass AddNodes no longer carry `name` (their
+        // ghost ID is structural), the name is propagated as a separate
+        // SetAttr. Consequence: 4 ops instead of 3 (CorrClass, JavaClass,
+        // SetAttr name, javaClasses edge). The javaClasses edge between
+        // Model and the new JavaClass is drawn explicitly — a deliberate
+        // gain of the spec-based compiler over the hard-coded variant.
         assert_eq!(ops.len(), 4,
-            "R_Class-Produktion soll 4 Ops emittieren (CorrClass, JavaClass, SetAttr name, javaClasses-Edge), war: {ops:?}");
+            "R_Class production should emit 4 ops (CorrClass, JavaClass, SetAttr name, javaClasses edge), was: {ops:?}");
 
         match &ops[0] {
             Op::AddNode {
@@ -440,10 +439,10 @@ mod tests {
                 assert_eq!(
                     attrs.get("name"),
                     None,
-                    "rc7 A8: CorrClass-Identität trägt kein gebundenes Attribut"
+                    "rc7 A8: CorrClass identity carries no bound attribute"
                 );
             }
-            _ => panic!("Op[0] muss CorrClass-AddNode sein, war: {:?}", ops[0]),
+            _ => panic!("Op[0] must be CorrClass AddNode, was: {:?}", ops[0]),
         }
         match &ops[1] {
             Op::AddNode {
@@ -457,56 +456,56 @@ mod tests {
                 assert_eq!(
                     attrs.get("name"),
                     None,
-                    "rc7 A8: JavaClass-Identität trägt kein gebundenes Attribut"
+                    "rc7 A8: JavaClass identity carries no bound attribute"
                 );
             }
-            _ => panic!("Op[1] muss JavaClass-AddNode sein, war: {:?}", ops[1]),
+            _ => panic!("Op[1] must be JavaClass AddNode, was: {:?}", ops[1]),
         }
         match &ops[2] {
             Op::SetAttr { key, value, .. } => {
                 assert_eq!(key, "name");
                 assert_eq!(
                     value, "Person",
-                    "rc7 A8: name wird als Wert auf das Ziel propagiert"
+                    "rc7 A8: name is propagated as a value onto the target"
                 );
             }
-            _ => panic!("Op[2] muss SetAttr(name) sein, war: {:?}", ops[2]),
+            _ => panic!("Op[2] must be SetAttr(name), was: {:?}", ops[2]),
         }
         match &ops[3] {
             Op::AddEdge { type_id, .. } => {
                 assert_eq!(
                     type_id, "javaClasses",
-                    "Op[3] muss javaClasses-Edge sein, war: {:?}",
+                    "Op[3] must be javaClasses edge, was: {:?}",
                     ops[3]
                 );
             }
-            _ => panic!("Op[3] muss AddEdge sein, war: {:?}", ops[3]),
+            _ => panic!("Op[3] must be AddEdge, was: {:?}", ops[3]),
         }
     }
 
     #[test]
     fn r_class_produziert_parent_chain_mit_root_unter_klasse() {
-        // Verifiziert die operationale Topology-Konvention: CorrClass
-        // hängt unter c (corrL), JavaClass hängt unter CorrClass (corrR).
+        // Verifies the operational topology convention: CorrClass
+        // hangs under c (corrL), JavaClass hangs under CorrClass (corrR).
         let compiled = demo_rule_compiled("R_Class");
         let rule = instantiate(&compiled);
         let (g, _m, c) = mini_model_with_person();
         let ops = rule.produce(&find_matches(rule.pattern(), &g)[0], &g);
 
-        // Op 0: CorrClass — parent muss c (Class) sein.
+        // Op 0: CorrClass — parent must be c (Class).
         let (corr_parent, corr_attrs) = match &ops[0] {
             Op::AddNode { parent, attrs, .. } => (*parent, attrs.clone()),
-            _ => panic!("Op[0] muss AddNode sein"),
+            _ => panic!("Op[0] must be AddNode"),
         };
         assert_eq!(corr_parent, c);
 
-        // Op 1: JavaClass — parent muss die deterministische GhostID
-        // der gerade emittierten CorrClass sein.
+        // Op 1: JavaClass — parent must be the deterministic GhostID
+        // of the just-emitted CorrClass.
         let expected_corr_id =
             GhostId::from_parent(&corr_parent, "corrL", "CorrClass", &corr_attrs);
         match &ops[1] {
             Op::AddNode { parent, .. } => assert_eq!(*parent, expected_corr_id),
-            _ => panic!("Op[1] muss AddNode sein"),
+            _ => panic!("Op[1] must be AddNode"),
         }
     }
 
@@ -520,29 +519,29 @@ mod tests {
 
     #[test]
     fn r_getter_hat_capitalize_attr_auf_neuem_getter() {
-        // Baut eine fiktive Match-Situation für R_Getter: wir können
-        // den vollen End-to-End-Test erst in P7b.5 integration-
-        // testen, sobald ein JavaField im Graph steht. Hier ein Basic-
-        // Sanity-Test, dass Capitalize im Attribute-Mapping wirkt.
+        // Builds a fictitious match situation for R_Getter: we can only
+        // run the full end-to-end test in P7b.5 as an integration
+        // test, once a JavaField is present in the graph. Here a basic
+        // sanity test that Capitalize works in the attribute mapping.
         let compiled = demo_rule_compiled("R_Getter");
         let rule = instantiate(&compiled);
-        // Nur struktureller Check — Pattern hat alle 5 Knoten
-        // (c, a, jc, jf, g) + die Context-Corrs synthetisch.
+        // Structural check only — the pattern has all 5 nodes
+        // (c, a, jc, jf, g) + the context corrs synthetically.
         let pattern_node_count = rule.pattern().nodes.len();
         assert!(
             pattern_node_count >= 5,
-            "R_Getter-Pattern sollte ≥ 5 Knoten haben (tatsächlich: {pattern_node_count})"
+            "R_Getter pattern should have ≥ 5 nodes (actually: {pattern_node_count})"
         );
     }
 
     #[test]
     fn r_attribut_auf_kontext_knoten_wird_via_setattr_emittiert() {
-        // rc4-Belegtest: Eine Rule mit L-Literal image="old" und
-        // R-Literal image="new" am selben (Kontext-)Knoten muss bei
-        // Produktion genau eine Op::SetAttr emittieren. Vor rc4 wäre
-        // dieser Match nie zustande gekommen — die Rule sucht sonst
-        // gleichzeitig nach image="old" und image="new". Pendant zum
-        // B4-Edge-Bug auf der Attribut-Seite.
+        // rc4 evidence test: a rule with L literal image="old" and
+        // R literal image="new" on the same (context) node must emit
+        // exactly one Op::SetAttr on production. Before rc4 this
+        // match would never have come about — the rule would otherwise
+        // search simultaneously for image="old" and image="new".
+        // Counterpart to the B4 edge bug on the attribute side.
         let json = r#"{"rules":[{
             "name":"SetImage","rank":1,
             "l_pattern":{"nodes":[
@@ -559,27 +558,27 @@ mod tests {
         let compiled = compile(&rs.rules[0]).unwrap();
         let rule = instantiate(&compiled);
 
-        // Graph mit einem Job-Knoten image="old"
+        // Graph with one Job node image="old"
         let mut g = TypedGraph::new();
         let job_attrs: BTreeMap<String, String> = [("image".to_string(), "old".to_string())]
             .into_iter()
             .collect();
         let job_id = g.add_baseline_node("Job", "job-1", job_attrs);
 
-        // Match-und-Produce
+        // Match and produce
         let matches = find_matches(rule.pattern(), &g);
         assert_eq!(
             matches.len(),
             1,
-            "Rule muss genau einen Match auf dem Job-Knoten finden"
+            "Rule must find exactly one match on the Job node"
         );
         let ops = rule.produce(&matches[0], &g);
 
-        // Genau eine SetAttr-Op auf job_id, key=image, value=new
+        // Exactly one SetAttr op on job_id, key=image, value=new
         assert_eq!(
             ops.len(),
             1,
-            "Produktion muss genau eine Op emittieren (SetAttr), war: {ops:?}"
+            "Production must emit exactly one op (SetAttr), was: {ops:?}"
         );
         match &ops[0] {
             Op::SetAttr { target, key, value } => {
@@ -587,7 +586,7 @@ mod tests {
                 assert_eq!(key, "image");
                 assert_eq!(value, "new");
             }
-            other => panic!("Op[0] muss SetAttr sein, war: {other:?}"),
+            other => panic!("Op[0] must be SetAttr, was: {other:?}"),
         }
     }
 }

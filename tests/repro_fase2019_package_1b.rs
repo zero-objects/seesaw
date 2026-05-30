@@ -1,11 +1,11 @@
-//! Case 1b — STTT2021 Package re-parenting mit 3-Rule + SC-Repair
-//! (bidirektionale Opt.1-Fassung, 2026-04-24).
+//! Case 1b — STTT2021 package re-parenting with 3-rule + SC-Repair
+//! (bidirectional Opt.1 version, 2026-04-24).
 //!
-//! Identischer Ablauf wie 1a, aber Rule-Set enthält zusätzlich
-//! `Sub-To-Root-SC-Repair` (rank 35 > Root 30). Erwartung: Rank-Selektion
-//! wählt SC-Repair vor Root-Rule. Der Graph-End-Zustand ist strukturell
-//! identisch zu 1a (gleiche Ghost-IDs), nur die Rule-Autorschaft der
-//! Corr-Strukturen unterscheidet sich.
+//! Same flow as 1a, but the rule set also contains
+//! `Sub-To-Root-SC-Repair` (rank 35 > Root 30). Expectation: rank
+//! selection picks SC-Repair over Root-Rule. The graph end state is
+//! structurally identical to 1a (same ghost ids); only the rule
+//! authorship of the corr structures differs.
 
 #[path = "fixtures/package_folder_mm.rs"]
 mod package_folder_mm;
@@ -20,7 +20,7 @@ use seesaw_tgg::rule::{compile, instantiate};
 const FIXTURE: &str = include_str!("fixtures/rules_fase2019_3rule_with_sc.json");
 
 fn load_rules() -> Vec<Box<dyn Rule>> {
-    let rs = parse_ruleset(FIXTURE).expect("fixture parst");
+    let rs = parse_ruleset(FIXTURE).expect("fixture parses");
     rs.rules
         .iter()
         .map(|r| instantiate(&compile(r).expect("compile")))
@@ -33,7 +33,7 @@ fn find_edge_id(graph: &TypedGraph, src: GhostId, tgt: GhostId, edge_type: &str)
         .into_iter()
         .find(|(s, t, data)| *s == src && *t == tgt && data.type_id == edge_type)
         .map(|(_, _, data)| data.id)
-        .expect("edge exists in Pre-Graph")
+        .expect("edge exists in pre-graph")
 }
 
 fn run_case_1b_full_scenario() -> (TypedGraph, Cascade, SubtreeSnapshot) {
@@ -44,7 +44,7 @@ fn run_case_1b_full_scenario() -> (TypedGraph, Cascade, SubtreeSnapshot) {
     let mut cascade = Cascade::new();
     let term = run_cascade(&mut cascade, &mut graph, &rule_refs, 100).expect("sync");
     eprintln!(
-        "Case 1b Initial-Sync: {term:?}, entries: {}",
+        "Case 1b initial sync: {term:?}, entries: {}",
         cascade.entries.len()
     );
 
@@ -57,7 +57,7 @@ fn run_case_1b_full_scenario() -> (TypedGraph, Cascade, SubtreeSnapshot) {
     cascade.append(user);
     let term =
         run_cascade_observable(&mut cascade, &mut graph, &rule_refs, 100).expect("post-delta");
-    eprintln!("Case 1b Post-Delta (observable): {term:?}");
+    eprintln!("Case 1b post-delta (observable): {term:?}");
     (graph, cascade, snap)
 }
 
@@ -76,9 +76,9 @@ fn case01b_alpha_structure_and_content_preserved() {
     let c_doc = docs
         .iter()
         .find(|d| d.attrs.get("content").map(|s| s.as_str()) == Some("c"));
-    assert!(c_doc.is_some(), "α: DocFile mit content='c' via Leaf-Rule");
+    assert!(c_doc.is_some(), "α: DocFile with content='c' via Leaf-Rule");
 
-    // α-Struktur-Hierarchie: 2 Folders + 1 subFolders-Edge (siehe 1a).
+    // α structural hierarchy: 2 Folders + 1 subFolders edge (see 1a).
     let folders: Vec<_> = graph
         .iter_nodes()
         .filter(|n| n.type_id == "Folder")
@@ -89,7 +89,7 @@ fn case01b_alpha_structure_and_content_preserved() {
         .into_iter()
         .filter(|(_, _, e)| e.type_id == "subFolders")
         .collect();
-    assert_eq!(sub_folders_edges.len(), 1, "α: genau 1 subFolders-Edge");
+    assert_eq!(sub_folders_edges.len(), 1, "α: exactly 1 subFolders edge");
 }
 
 #[test]
@@ -107,13 +107,13 @@ fn case01b_beta_sc_repair_gewaehlt_vor_root() {
             }
         })
         .collect();
-    eprintln!("Case 1b — Rule-Sequence: {rule_ids:?}");
+    eprintln!("Case 1b — rule sequence: {rule_ids:?}");
 
-    // β-Hauptaussage: SC-Repair erscheint in der Sequence, und zwar
-    // vor Root-Rule (falls Root überhaupt feuert).
+    // β main claim: SC-Repair appears in the sequence, and before
+    // Root-Rule (if Root fires at all).
     assert!(
         rule_ids.contains(&"Sub-To-Root-SC-Repair".to_string()),
-        "β: SC-Repair muss mindestens einmal feuern"
+        "β: SC-Repair must fire at least once"
     );
 
     let sc_first = rule_ids.iter().position(|r| r == "Sub-To-Root-SC-Repair");
@@ -122,16 +122,16 @@ fn case01b_beta_sc_repair_gewaehlt_vor_root() {
     if let (Some(sc), Some(root)) = (sc_first, root_first) {
         assert!(
             sc < root,
-            "β: SC-Repair (idx {sc}) vor Root-Rule (idx {root})"
+            "β: SC-Repair (idx {sc}) before Root-Rule (idx {root})"
         );
     }
-    // Root-Rule darf auch gar nicht feuern — das ist der stärkere
-    // Fall („SC-Repair ersetzt Root komplett").
+    // Root-Rule may not fire at all — that is the stronger case
+    // ("SC-Repair fully replaces Root").
 }
 
 #[test]
 fn case01b_gamma_merkle_id_stability() {
-    // Referenz-Lauf (ohne User-Delta) für R-Seiten-Ghost-IDs
+    // Reference run (without user delta) for R-side ghost ids
     let (mut ref_graph, _) = build_fig3a_graph();
     let rules = load_rules();
     let rule_refs: Vec<&dyn Rule> = rules.iter().map(|r| r.as_ref()).collect();
@@ -150,7 +150,7 @@ fn case01b_gamma_merkle_id_stability() {
     for name in ["rootP", "p", "c"] {
         assert!(
             full_graph.get_node(&snap.ids[name]).is_some(),
-            "γ-L: {name} stabil"
+            "γ-L: {name} stable"
         );
     }
 
@@ -160,14 +160,14 @@ fn case01b_gamma_merkle_id_stability() {
         .filter(|id| full_graph.get_node(id).is_some())
         .count();
     eprintln!(
-        "Case 1b γ-R: {}/{} R-Seiten-IDs stabil",
+        "Case 1b γ-R: {}/{} R-side ids stable",
         found,
         r_ids_before.len()
     );
     assert_eq!(
         found,
         r_ids_before.len(),
-        "γ-R: alle R-Seiten-IDs müssen stabil bleiben"
+        "γ-R: all R-side ids must stay stable"
     );
 }
 
@@ -199,11 +199,11 @@ fn case01b_regen_snapshots() {
     let opts = DotOpts::default();
     let mut trace = String::from("# Case 1b — Execution Trace\n\n");
     trace.push_str(
-        "Automatisch generiert aus `repro_fase2019_package_1b.rs::case01b_regen_snapshots`.\n\n",
+        "Automatically generated from `repro_fase2019_package_1b.rs::case01b_regen_snapshots`.\n\n",
     );
 
     write_snapshot_triple(&out_root.join("00_initial_l_side"), &graph, &opts).unwrap();
-    trace.push_str("## 00 Initial (L-Seite only)\n");
+    trace.push_str("## 00 Initial (L-side only)\n");
     trace.push_str(
         "[source](00_initial_l_side/source.svg) · [target](00_initial_l_side/target.svg) · \
          [corr](00_initial_l_side/corr.svg)\n\n",
@@ -211,7 +211,7 @@ fn case01b_regen_snapshots() {
 
     let mut cascade = Cascade::new();
     let sync_dir = out_root.join("phase_01_initial_sync");
-    trace.push_str("## Phase 1 — Initial-Sync\n\n");
+    trace.push_str("## Phase 1 — initial sync\n\n");
     let mut step_idx = 0;
     loop {
         let eb = cascade.entries.len();
@@ -233,7 +233,7 @@ fn case01b_regen_snapshots() {
                 }
             }
             other => {
-                trace.push_str(&format!("**Sync-Terminierung:** `{other:?}`\n\n"));
+                trace.push_str(&format!("**sync termination:** `{other:?}`\n\n"));
                 break;
             }
         }
@@ -248,10 +248,10 @@ fn case01b_regen_snapshots() {
     cascade.append(user);
     let delta_dir = out_root.join("phase_02_user_delta");
     write_snapshot_triple(&delta_dir.join("00_user_op"), &graph, &opts).unwrap();
-    trace.push_str("## Phase 2 — User-Delta\n\n");
+    trace.push_str("## Phase 2 — user delta\n\n");
     trace.push_str("### 00 user_op\n[source](phase_02_user_delta/00_user_op/source.svg)\n\n");
 
-    trace.push_str("## Phase 3 — Post-Delta-Kaskade\n\n");
+    trace.push_str("## Phase 3 — post-delta cascade\n\n");
     let post_dir = out_root.join("phase_03_post_delta");
     let mut post = 0;
     loop {
@@ -274,10 +274,10 @@ fn case01b_regen_snapshots() {
             other => {
                 if post == 0 {
                     trace.push_str(&format!(
-                        "**Keine Post-Delta-Steps.** `{other:?}`. Engine saturiert.\n\n"
+                        "**No post-delta steps.** `{other:?}`. Engine saturated.\n\n"
                     ));
                 } else {
-                    trace.push_str(&format!("**Post-Terminierung:** `{other:?}`\n\n"));
+                    trace.push_str(&format!("**post-termination:** `{other:?}`\n\n"));
                 }
                 break;
             }

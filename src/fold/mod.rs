@@ -1,11 +1,11 @@
-//! Fold-Modul — T₅, T₇.
+//! Fold module — T₅, T₇.
 //!
-//! Zuständigkeit:
-//! - Nullifikations-Detektion (Def. 5.5)
-//! - Konsolidierung via Fixpunkt-Iteration (Def. 5.8)
-//! - Materialisierung zur neuen Baseline (Def. 5.1, 5.11)
-//! - Netto-Delta-Berechnung (Def. 5.12)
-//! - Transitions-Marker und -Graph (Def. 5.9, 5.10)
+//! Responsibilities:
+//! - Nullification detection (Def. 5.5)
+//! - Consolidation via fixpoint iteration (Def. 5.8)
+//! - Materialization to a new baseline (Def. 5.1, 5.11)
+//! - Net-delta computation (Def. 5.12)
+//! - Transition markers and transition graph (Def. 5.9, 5.10)
 
 use crate::engine::Cascade;
 use crate::graph::{EdgeData, GhostId, NodeData, Status, TypedGraph};
@@ -13,14 +13,14 @@ use crate::ops::{Op, OpError, OpTarget};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashMap, HashSet};
 
-// ══ Nullifikation ════════════════════════════════════════════════════════
+// ══ Nullification ════════════════════════════════════════════════════════
 
-/// Position einer Op in der Kaskade.
+/// Position of an Op in the cascade.
 pub type OpPos = (usize, usize);
 
-/// Sammelt alle nullifizierten Op-Positionen via Fixpunkt-Iteration der
-/// drei Nullifikations-Klauseln aus Def. 5.5:
-/// (i) Rollup-Überlagerung, (ii) Add-Del-Paar, (iii) V₁₂-induziert.
+/// Collects all nullified Op positions via fixpoint iteration of the
+/// three nullification clauses from Def. 5.5:
+/// (i) rollup overlay, (ii) Add-Del pair, (iii) V₁₂-induced.
 pub fn compute_nullifications(cascade: &Cascade) -> HashSet<OpPos> {
     let mut nullified: HashSet<OpPos> = HashSet::new();
 
@@ -38,14 +38,13 @@ pub fn compute_nullifications(cascade: &Cascade) -> HashSet<OpPos> {
     nullified
 }
 
-/// Vereinheitlichter Rollup + Kanzellations-Pass.
+/// Unified rollup + cancellation pass.
 ///
-/// Gruppiert nicht-nullifizierte Ops nach ihrem `OpTarget`. Für jede
-/// Gruppe:
-/// - Enthält sie sowohl Add als auch Del (Def. 5.5 (ii)): beide
-///   nullifiziert.
-/// - Sonst (reine Rollup-Überlagerung, Def. 5.5 (i)): alle außer der
-///   Op mit größtem κ werden nullifiziert.
+/// Groups non-nullified Ops by their `OpTarget`. For each group:
+/// - If it contains both Add and Del (Def. 5.5 (ii)): both are
+///   nullified.
+/// - Otherwise (pure rollup overlay, Def. 5.5 (i)): all except the
+///   Op with the largest κ are nullified.
 fn pass_rollup_and_cancellation(cascade: &Cascade, nullified: &mut HashSet<OpPos>) {
     #[derive(Copy, Clone, PartialEq, Eq)]
     enum Kind {
@@ -78,15 +77,15 @@ fn pass_rollup_and_cancellation(cascade: &Cascade, nullified: &mut HashSet<OpPos
         let has_del = positions.iter().any(|(_, k)| *k == Kind::Del);
 
         if has_add && has_del {
-            // Kanzellationspaar: alle Add- und Del-Ops auf diesem Target
-            // werden nullifiziert (Def. 5.5 (ii)).
+            // Cancellation pair: all Add and Del ops on this target
+            // are nullified (Def. 5.5 (ii)).
             for (pos, kind) in &positions {
                 if matches!(kind, Kind::Add | Kind::Del) {
                     nullified.insert(*pos);
                 }
             }
         } else if positions.len() > 1 {
-            // Reine Rollup-Überlagerung: alle außer max-κ (Def. 5.5 (i)).
+            // Pure rollup overlay: all except max-κ (Def. 5.5 (i)).
             let max_pos = positions.iter().map(|(p, _)| *p).max().unwrap();
             for (pos, _) in &positions {
                 if *pos != max_pos {
@@ -97,9 +96,9 @@ fn pass_rollup_and_cancellation(cascade: &Cascade, nullified: &mut HashSet<OpPos
     }
 }
 
-/// V₁₂-induzierte Kanzellation (Def. 5.5 (iii)): wenn eine Op nullifiziert
-/// ist, werden auch alle in ihrem `induces`-Feld gelisteten Folge-Ops
-/// nullifiziert.
+/// V₁₂-induced cancellation (Def. 5.5 (iii)): when an Op is nullified,
+/// all follow-up Ops listed in its `induces` field are also
+/// nullified.
 fn pass_induces_propagation(cascade: &Cascade, nullified: &mut HashSet<OpPos>) {
     let to_propagate: Vec<OpPos> = nullified.iter().copied().collect();
     for (d_idx, o_idx) in to_propagate {
@@ -113,24 +112,24 @@ fn pass_induces_propagation(cascade: &Cascade, nullified: &mut HashSet<OpPos>) {
     }
 }
 
-// ══ Konsolidierung ═══════════════════════════════════════════════════════
+// ══ Consolidation ════════════════════════════════════════════════════════
 
-/// Ergebnis der Konsolidierung.
+/// Result of consolidation.
 #[derive(Debug)]
 pub struct Consolidated {
     pub nullified: HashSet<OpPos>,
     pub new_baseline: TypedGraph,
-    /// Statistik: wie viele Ops wurden eliminiert?
+    /// Statistic: how many Ops were eliminated?
     pub eliminated_count: usize,
-    /// Leere Delta-Einträge (alle Ops nullifiziert — Null-Kanten-Elimination).
+    /// Empty delta entries (all Ops nullified — null-edge elimination).
     pub empty_deltas: Vec<usize>,
 }
 
-/// Führt die vollständige Konsolidierung durch (Def. 5.8):
-/// 1. Berechne Nullifikationen via Fixpunkt.
-/// 2. Baue den neuen Baseline-Graph durch Anwenden aller nicht-nullifizierter
-///    Ops auf `base` + Materialisierung.
-/// 3. Identifiziere trägerlose Delta-Einträge (Def. 5.6).
+/// Runs the full consolidation (Def. 5.8):
+/// 1. Compute nullifications via fixpoint.
+/// 2. Build the new baseline graph by applying all non-nullified
+///    Ops to `base` + materialization.
+/// 3. Identify support-less delta entries (Def. 5.6).
 pub fn consolidate(base: &TypedGraph, cascade: &Cascade) -> Result<Consolidated, OpError> {
     let nullified = compute_nullifications(cascade);
 
@@ -163,16 +162,16 @@ pub fn consolidate(base: &TypedGraph, cascade: &Cascade) -> Result<Consolidated,
     })
 }
 
-// ══ Netto-Delta ══════════════════════════════════════════════════════════
+// ══ Net delta ════════════════════════════════════════════════════════════
 
-/// Netto-Delta zwischen zwei Baselines (Def. 5.12, Observer-Ausgabe).
+/// Net delta between two baselines (Def. 5.12, observer output).
 #[derive(Clone, Debug, Default)]
 pub struct NetDelta {
     pub added_nodes: Vec<NodeData>,
     pub removed_node_ids: Vec<GhostId>,
     pub added_edges: Vec<(GhostId, GhostId, EdgeData)>,
     pub removed_edge_ids: Vec<GhostId>,
-    /// Knoten mit geänderter Attributbelegung: (id, new attrs).
+    /// Nodes with changed attribute valuation: (id, new attrs).
     pub attr_changes: Vec<(GhostId, BTreeMap<String, String>)>,
 }
 
@@ -197,11 +196,11 @@ impl NetDelta {
     }
 }
 
-/// Berechnet das Netto-Delta zwischen `before` und `after`.
+/// Computes the net delta between `before` and `after`.
 ///
-/// Basiert auf ID-Vergleich: Knoten/Kanten in `after` aber nicht
-/// `before` → added; umgekehrt → removed; gleiche ID, verschiedene
-/// Attribute → attr_change.
+/// Based on ID comparison: nodes/edges in `after` but not in
+/// `before` → added; vice versa → removed; same ID, different
+/// attributes → attr_change.
 pub fn diff(before: &TypedGraph, after: &TypedGraph) -> NetDelta {
     let before_node_ids: HashMap<GhostId, &NodeData> = before
         .iter_nodes()
@@ -232,7 +231,7 @@ pub fn diff(before: &TypedGraph, after: &TypedGraph) -> NetDelta {
         }
     }
 
-    // Kanten
+    // Edges
     let before_edges: HashMap<GhostId, (GhostId, GhostId, &EdgeData)> = before
         .iter_edges()
         .into_iter()
@@ -260,13 +259,13 @@ pub fn diff(before: &TypedGraph, after: &TypedGraph) -> NetDelta {
     delta
 }
 
-// ══ Transitions-Marker und -Graph ════════════════════════════════════════
+// ══ Transition markers and transition graph ═════════════════════════════
 
-/// Eindeutige Baseline-Kennung im Transitions-Graphen.
+/// Unique baseline identifier in the transition graph.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct BaselineId(pub u64);
 
-/// Transitions-Marker zwischen zwei Baselines (Def. 5.9).
+/// Transition marker between two baselines (Def. 5.9).
 #[derive(Clone, Debug)]
 pub struct TransitionMarker {
     pub from: BaselineId,
@@ -276,7 +275,7 @@ pub struct TransitionMarker {
     pub net_delta_summary: String,
 }
 
-/// Transitions-Graph T (Def. 5.10), minimale In-Memory-Struktur.
+/// Transition graph T (Def. 5.10), minimal in-memory structure.
 #[derive(Debug, Default)]
 pub struct TransitionGraph {
     next_id: u64,
@@ -289,7 +288,7 @@ impl TransitionGraph {
         Self::default()
     }
 
-    /// Registriert eine neue Baseline und liefert ihre BaselineId.
+    /// Registers a new baseline and returns its BaselineId.
     pub fn register_baseline(&mut self, baseline: TypedGraph) -> BaselineId {
         let id = BaselineId(self.next_id);
         self.next_id += 1;
@@ -333,14 +332,14 @@ mod tests {
         (g, person, car)
     }
 
-    // ── Kanzellation via Add-Del-Paar ────────────────────────────────
+    // ── Cancellation via Add-Del pair ────────────────────────────────
 
     #[test]
     fn add_del_cancellation_nullifies_both() {
         let (g, person, _) = setup_uml_graph();
         let mut c = Cascade::new();
 
-        // Synthetische Kaskade: d_0 addet ein Attribut, d_1 tombstoned es.
+        // Synthetic cascade: d_0 adds an attribute, d_1 tombstones it.
         let add_op = Op::AddNode {
             parent: person,
             edge_type: "hasAttribute".into(),
@@ -375,13 +374,13 @@ mod tests {
         });
 
         let nullified = compute_nullifications(&c);
-        assert_eq!(nullified.len(), 2, "beide Ops nullifiziert");
+        assert_eq!(nullified.len(), 2, "both Ops nullified");
         assert!(nullified.contains(&(0, 0)));
         assert!(nullified.contains(&(1, 0)));
         let _ = g;
     }
 
-    // ── Rollup: letzter gewinnt bei SetAttr ──────────────────────────
+    // ── Rollup: last wins for SetAttr ────────────────────────────────
 
     #[test]
     fn rollup_setattr_keeps_only_last() {
@@ -407,7 +406,7 @@ mod tests {
             origin: Origin::Rule {
                 rule_id: "r2".into(),
             },
-            rank: 5, // niedrigerer Rang, aber spätere Emission.
+            rank: 5, // lower rank, but later emission.
             op_star: vec![Op::SetAttr {
                 target: person,
                 key: "pkg".into(),
@@ -419,19 +418,19 @@ mod tests {
         });
 
         let nullified = compute_nullifications(&c);
-        // Der frühere Set wird nullifiziert, der spätere überlebt.
+        // The earlier Set is nullified, the later one survives.
         assert!(nullified.contains(&(0, 0)));
         assert!(!nullified.contains(&(1, 0)));
     }
 
-    // ── V₁₂-Induzierte Kanzellation ──────────────────────────────────
+    // ── V₁₂-induced cancellation ─────────────────────────────────────
 
     #[test]
     fn induces_propagation() {
         let (_, person, _) = setup_uml_graph();
         let mut c = Cascade::new();
 
-        // d_0 hat zwei Ops; op[0] induziert op[1].
+        // d_0 has two Ops; op[0] induces op[1].
         let primary = Op::AddNode {
             parent: person,
             edge_type: "hasAttribute".into(),
@@ -460,8 +459,8 @@ mod tests {
             bindings: std::collections::HashMap::new(),
         });
 
-        // Zweiter Delta-Eintrag tombstoned den Primär-Ghost → Primär wird
-        // via Cancellation nullifiziert, sein induziertes Folge-Op per V₁₂.
+        // Second delta entry tombstones the primary ghost → primary is
+        // nullified via cancellation, its induced follow-up Op via V₁₂.
         c.append(DeltaEntry {
             origin: Origin::Rule {
                 rule_id: "del".into(),
@@ -474,22 +473,19 @@ mod tests {
         });
 
         let nullified = compute_nullifications(&c);
-        assert!(nullified.contains(&(0, 0)), "Primär-Op nullifiziert");
-        assert!(
-            nullified.contains(&(0, 1)),
-            "V₁₂-induzierte Op nullifiziert"
-        );
-        assert!(nullified.contains(&(1, 0)), "Del-Op ebenfalls nullifiziert");
+        assert!(nullified.contains(&(0, 0)), "primary Op nullified");
+        assert!(nullified.contains(&(0, 1)), "V₁₂-induced Op nullified");
+        assert!(nullified.contains(&(1, 0)), "Del-Op also nullified");
     }
 
-    // ── Konsolidierung + Materialisierung ────────────────────────────
+    // ── Consolidation + materialization ──────────────────────────────
 
     #[test]
     fn consolidate_produces_baseline() {
         let (mut g, _, _) = setup_uml_graph();
         let mut c = Cascade::new();
 
-        // Eine Regel, die pro Klasse ein Attribut "derived" erzeugt.
+        // A rule that produces a "derived" attribute per class.
         let rule = BasicRule::new(
             "AddDerived",
             1,
@@ -506,7 +502,7 @@ mod tests {
         );
         let rules: Vec<&dyn Rule> = vec![&rule];
 
-        // base-Snapshot vor Kaskade:
+        // base snapshot before cascade:
         let base = g.clone();
         let state = run_cascade(&mut c, &mut g, &rules, 100).unwrap();
         assert!(matches!(
@@ -515,12 +511,12 @@ mod tests {
         ));
 
         let result = consolidate(&base, &c).unwrap();
-        // Kein Add-Del-Paar → keine Nullifikationen erwartet.
+        // No Add-Del pair → no nullifications expected.
         assert_eq!(result.nullified.len(), 0);
-        // Die neue Baseline enthält mindestens die zwei ursprünglichen
-        // Klassen plus zwei "derived"-Attribute (4 Knoten).
+        // The new baseline contains at least the two original
+        // classes plus two "derived" attributes (4 nodes).
         assert!(result.new_baseline.node_count() >= 4);
-        // Alle Knoten in der Baseline sind SOLID.
+        // All nodes in the baseline are SOLID.
         assert!(result
             .new_baseline
             .iter_nodes()
@@ -557,7 +553,7 @@ mod tests {
             bindings: std::collections::HashMap::new(),
         });
 
-        // d_1: del (tombstoned im Graph via apply)
+        // d_1: del (tombstoned in the graph via apply)
         let del_op = Op::DelNode { target: ghost_id };
         del_op.apply(&mut g).unwrap();
 
@@ -573,15 +569,15 @@ mod tests {
         });
 
         let result = consolidate(&base, &c).unwrap();
-        assert_eq!(result.nullified.len(), 2, "beide Ops gehen weg");
+        assert_eq!(result.nullified.len(), 2, "both Ops are removed");
         assert_eq!(result.eliminated_count, 2);
-        assert_eq!(result.empty_deltas.len(), 2, "beide Deltas trägerlos");
+        assert_eq!(result.empty_deltas.len(), 2, "both deltas support-less");
 
-        // Baseline = base (zwei Klassen, keine extra Attribute).
+        // Baseline = base (two classes, no extra attributes).
         assert_eq!(result.new_baseline.node_count(), 2);
     }
 
-    // ── Netto-Delta ──────────────────────────────────────────────────
+    // ── Net delta ────────────────────────────────────────────────────
 
     #[test]
     fn diff_captures_added_nodes() {
@@ -612,7 +608,7 @@ mod tests {
         assert_eq!(nd.summary(), "+N:0 -N:0 +E:0 -E:0 Δattr:0");
     }
 
-    // ── Transitions-Graph ────────────────────────────────────────────
+    // ── Transition graph ─────────────────────────────────────────────
 
     #[test]
     fn transition_graph_tracks_baselines() {
@@ -634,7 +630,7 @@ mod tests {
         assert_eq!(t.marker_count(), 1);
     }
 
-    // ── End-zu-End ───────────────────────────────────────────────────
+    // ── End-to-end ───────────────────────────────────────────────────
 
     #[test]
     fn e2e_cascade_consolidate_baseline() {
@@ -663,16 +659,16 @@ mod tests {
             state,
             TerminationState::Duplication | TerminationState::Convergence
         ));
-        assert_eq!(c.len(), 2, "zwei Methoden erzeugt, eine pro Klasse");
+        assert_eq!(c.len(), 2, "two methods produced, one per class");
 
         let result = consolidate(&base, &c).unwrap();
         let net = diff(&base, &result.new_baseline);
 
-        assert_eq!(net.added_nodes.len(), 2, "2 Method-Knoten hinzugefügt");
-        assert_eq!(net.added_edges.len(), 2, "2 hasMethod-Kanten hinzugefügt");
+        assert_eq!(net.added_nodes.len(), 2, "2 Method nodes added");
+        assert_eq!(net.added_edges.len(), 2, "2 hasMethod edges added");
         assert_eq!(net.removed_node_ids.len(), 0);
 
-        // Transitions-Graph minimal.
+        // Minimal transition graph.
         let mut t = TransitionGraph::new();
         let b0 = t.register_baseline(base);
         let b1 = t.register_baseline(result.new_baseline);

@@ -1,8 +1,8 @@
-//! Rule-Spec-Layer: deserialisiert RuleSets aus JSON, wie sie
-//! `net.sandrakessler.seesaw.core.rules.RuleSetJsonExporter` auf der
-//! Java-Seite produziert. In diesem Modul liegt nur die reine
-//! Datenstruktur; die Kompilierung Spec → `BasicRule`-Closure ist
-//! Aufgabe eines Folge-Moduls (P7b).
+//! Rule-spec layer: deserializes RuleSets from JSON as produced by
+//! `net.sandrakessler.seesaw.core.rules.RuleSetJsonExporter` on the
+//! Java side. This module contains only the pure data structure;
+//! compiling a spec into a `BasicRule` closure is the job of a
+//! follow-up module (P7b).
 
 pub mod compile;
 pub mod demo;

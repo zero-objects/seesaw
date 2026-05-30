@@ -1,6 +1,6 @@
-//! Multi-rule reverse-cascade reproducer — das Profil, das der
-//! Downstream-Konsument (dry-cleaner) im rc4-Regressionsbericht
-//! als „mutmasslich zweiter Bug" markiert hat:
+//! Multi-rule reverse-cascade reproducer — the profile the
+//! downstream consumer (dry-cleaner) flagged in the rc4 regression
+//! report as a "likely second bug":
 //!
 //! > A multi-rule reverse-cascade reproducer where rule A produces
 //! > a node that rule B's R-pattern literal targets. That's the
@@ -11,29 +11,30 @@
 //! > this into a clean stand-alone test in this session; the dry-
 //! > cleaner ruleset does exhibit it.
 //!
-//! Aufbau hier — beides minimale Pendants zur dry-cleaner-Topologie
-//! nach reverse_ruleset (L↔R-Tausch der Vorwärts-Regeln):
+//! Setup here — both minimal counterparts to the dry-cleaner
+//! topology after reverse_ruleset (L↔R swap of the forward rules):
 //!
 //!   ConstructRule:
 //!     L: SrcJob[type=construct]
-//!     R: TgtMapping        (R-only, via Corr neu erzeugt)
+//!     R: TgtMapping        (R-only, created via corr)
 //!     Corr: SrcJob ↔ TgtMapping
 //!
 //!   FieldRule:
 //!     L: SrcField[name=after_script]
-//!     R: TgtEntry[key=after_script]   ←── R-Pattern-Literal
+//!     R: TgtEntry[key=after_script]   ←── R-pattern literal
 //!     Corr: SrcField ↔ TgtEntry
 //!
-//! Beide Rules emittieren in jedem produce() je eine SetAttr
-//! (FieldRule via attrs_to_set; ConstructRule nicht, aber wir
-//! geben SrcJob ein `tag` Constraint und Corr-Binding, damit Form-
-//! Parität mit dem dry-cleaner-Profil herrscht).
+//! Both rules emit one SetAttr in each produce() (FieldRule via
+//! attrs_to_set; ConstructRule does not, but we give SrcJob a
+//! `tag` constraint and corr binding for shape parity with the
+//! dry-cleaner profile).
 //!
-//! Vor dem rc5-Fix (`is_duplicate(SetAttr)`) loopt der Cascade nach
-//! Anwendung der FieldRule unbegrenzt: `produce()` emittiert
-//! weiterhin SetAttr key=after_script, die Op gilt als nicht-
-//! duplikat, jede Iteration ergibt `Running`. Mit Fix terminiert
-//! der Cascade nach wenigen Steps mit Convergence/Duplication.
+//! Before the rc5 fix (`is_duplicate(SetAttr)`), the cascade
+//! loops indefinitely after applying FieldRule: `produce()` keeps
+//! emitting SetAttr key=after_script, the op is not classified as
+//! duplicate, every iteration returns `Running`. With the fix the
+//! cascade terminates after a handful of steps with
+//! Convergence/Duplication.
 
 use std::collections::BTreeMap;
 
@@ -106,9 +107,9 @@ fn field_rule() -> RuleSpec {
             nodes: vec![NodePatternSpec {
                 id: "tgt".into(),
                 kind: "TgtEntry".into(),
-                // Genau das ist die Stelle, die rc4 als attrs_to_set
-                // lowert — und vor dem rc5-Fix in die Endlosschleife
-                // im Cascade-Step führte.
+                // This is exactly the spot rc4 lowers as attrs_to_set —
+                // and what drove the cascade step into an infinite
+                // loop before the rc5 fix.
                 constraints: vec![AttrConstraintSpec::literal("key", "after_script")],
             }],
             edges: vec![],
@@ -133,16 +134,16 @@ fn multi_rule_reverse_cascade_terminates() {
     let construct = compile(&construct_rule()).expect("ConstructRule compile");
     let field = compile(&field_rule()).expect("FieldRule compile");
 
-    // Sanity: ConstructRule hat kein R-Literal; FieldRule hat genau
-    // eines (`key=after_script` auf der R-only-Creation TgtEntry).
-    // rc6: das Literal landet in creation_attrs (Identitäts-Attribut
-    // des Creation-Knotens, fließt in den GhostId), nicht mehr in
-    // attrs_to_set (das gilt jetzt nur noch für Kontext-Knoten).
+    // Sanity: ConstructRule has no R-literal; FieldRule has exactly
+    // one (`key=after_script` on the R-only-creation TgtEntry).
+    // rc6: the literal lands in creation_attrs (identity attribute
+    // of the creation node, flowing into the GhostId), no longer in
+    // attrs_to_set (that now only applies to context nodes).
     assert_eq!(construct.creation_plan.attrs_to_set.len(), 0);
     assert_eq!(construct.creation_plan.creation_attrs.len(), 0);
     let field_lowered =
         field.creation_plan.attrs_to_set.len() + field.creation_plan.creation_attrs.len();
-    assert_eq!(field_lowered, 1, "FieldRule muss `key=after_script` lowern");
+    assert_eq!(field_lowered, 1, "FieldRule must lower `key=after_script`");
     eprintln!(
         "field.attrs_to_set = {:#?}\nfield.creation_attrs = {:#?}",
         field.creation_plan.attrs_to_set, field.creation_plan.creation_attrs,
@@ -181,7 +182,7 @@ fn multi_rule_reverse_cascade_terminates() {
     panic!(
         "REGRESSION (rc4 multi-rule profile): cascade did not converge after \
          {SAFETY_CAP} steps. Either is_duplicate(SetAttr) is still missing, \
-         or a second interaction (z.B. apply_attr_propagation, \
+         or a second interaction (e.g. apply_attr_propagation, \
          expand_with_retraction) emits a non-idempotent op every step."
     );
 }

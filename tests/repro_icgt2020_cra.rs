@@ -1,14 +1,14 @@
 //! Case 6 — ICGT2020 CRA empty-class fixpoint (Kosiol et al. 2020).
 //!
-//! Pathologie (Paper §2): Mutation-Regeln auf Class/Feature-Modell
-//! akkumulieren Violations gegen den c₂-Constraint („jede Class
-//! mindestens ein Feature"). Naive Count-Based-Repair läuft ins
-//! triviale Fixpunkt: alles tombstone → 0 Violations.
+//! Pathology (paper §2): mutation rules on a Class/Feature model
+//! accumulate violations of the c₂ constraint ("every Class has at
+//! least one Feature"). Naive count-based repair drifts into the
+//! trivial fixpoint: tombstone everything → 0 violations.
 //!
-//! Seesaw's Mechanismus: **Tombstone(Class) und Solid(Class) mit
-//! tombstoned-Features sind unterscheidbare Zustände**. Eine leere
-//! Class ist *strukturell anders* als eine gelöschte Class — der
-//! Engine-Status drückt das aus.
+//! Seesaw's mechanism: **Tombstone(Class) and Solid(Class) with
+//! tombstoned features are distinguishable states**. An empty
+//! Class is *structurally different* from a deleted Class — the
+//! engine status expresses that.
 
 #[path = "fixtures/cra_class_feature_mm.rs"]
 mod cra_class_feature_mm;
@@ -19,8 +19,8 @@ use seesaw_tgg::ops::{DeltaEntry, Op};
 
 fn delete_both_features() -> (TypedGraph, CraSnapshot) {
     let (mut graph, snap) = build_pre_graph();
-    // User-Delta: lösche beide Features (User-getriebene "moveFeature
-    // raus aus C, ohne neues Ziel" — vereinfacht als reines DelNode).
+    // User delta: delete both features (user-driven "moveFeature
+    // out of C without a new target" — simplified as plain DelNode).
     let user = DeltaEntry::new_user(
         vec![
             Op::DelNode {
@@ -42,17 +42,17 @@ fn case06_empty_class_is_solid_features_tombstone() {
     let c = graph.get_node(&snap.ids["C"]).unwrap();
     let f1 = graph.get_node(&snap.ids["F1"]).unwrap();
     let f2 = graph.get_node(&snap.ids["F2"]).unwrap();
-    assert_eq!(c.status, Status::Solid, "C bleibt Solid (nicht gelöscht)");
+    assert_eq!(c.status, Status::Solid, "C stays Solid (not deleted)");
     assert_eq!(f1.status, Status::Tombstone);
     assert_eq!(f2.status, Status::Tombstone);
 }
 
 #[test]
 fn case06_empty_state_is_distinguishable_from_deleted() {
-    // Variante A: leere Class (Features Tombstone, C Solid)
+    // Variant A: empty Class (features Tombstone, C Solid)
     let (graph_empty, snap_empty) = delete_both_features();
 
-    // Variante B: gelöschte Class (C Tombstone, Features Tombstone via Cascade)
+    // Variant B: deleted Class (C Tombstone, features Tombstone via cascade)
     let (mut graph_deleted, snap_deleted) = build_pre_graph();
     let user = DeltaEntry::new_user(
         vec![
@@ -70,11 +70,11 @@ fn case06_empty_state_is_distinguishable_from_deleted() {
     );
     user.apply(&mut graph_deleted).unwrap();
 
-    // Status-Inventar unterscheidet sich klar
+    // Status inventory differs clearly
     assert_eq!(
         graph_empty.get_node(&snap_empty.ids["C"]).unwrap().status,
         Status::Solid,
-        "leere Class: Solid"
+        "empty Class: Solid"
     );
     assert_eq!(
         graph_deleted
@@ -82,15 +82,15 @@ fn case06_empty_state_is_distinguishable_from_deleted() {
             .unwrap()
             .status,
         Status::Tombstone,
-        "gelöschte Class: Tombstone"
+        "deleted Class: Tombstone"
     );
 }
 
 #[test]
 fn case06_violation_count_signal_via_status_inventar() {
-    // Eine externe Repair-Logik kann via Status-Inventar c₂-Violations
-    // zählen, ohne ad-hoc Konflikt-Detection: für jede Solid Class,
-    // wie viele aktive Features hat sie?
+    // External repair logic can count c₂ violations via the status
+    // inventory, without ad-hoc conflict detection: for every Solid
+    // Class, how many active features does it have?
     let (graph, snap) = delete_both_features();
     let c = snap.ids["C"];
 
@@ -109,19 +109,19 @@ fn case06_violation_count_signal_via_status_inventar() {
     assert_eq!(
         active_features.len(),
         0,
-        "C hat 0 aktive Features → c₂-Violation"
+        "C has 0 active features → c₂ violation"
     );
 }
 
 #[test]
 fn case06_gamma_class_id_stable_under_feature_purge() {
-    // γ-Beleg: C's GhostId bleibt stabil, auch wenn alle Features
-    // tombstoned werden. Die strukturelle Identität der Class
-    // hängt nicht von ihrer Feature-Population ab.
+    // γ evidence: C's GhostId stays stable, even when all features
+    // are tombstoned. The structural identity of the Class does
+    // not depend on its feature population.
     let (graph_pre, snap) = build_pre_graph();
     let c_id_pre = graph_pre.get_node(&snap.ids["C"]).unwrap().id;
 
     let (graph_post, _) = delete_both_features();
     let c_id_post = graph_post.get_node(&snap.ids["C"]).unwrap().id;
-    assert_eq!(c_id_pre, c_id_post, "γ: C's GhostId stabil");
+    assert_eq!(c_id_pre, c_id_post, "γ: C's GhostId stable");
 }

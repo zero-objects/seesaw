@@ -1,22 +1,22 @@
-//! Rule-Compiler — Zwischen-Repräsentation zwischen `RuleSpec`
-//! (deklarativ, bidirektional) und der konkreten Engine-Rule-
-//! Instantiierung.
+//! Rule compiler — intermediate representation between `RuleSpec`
+//! (declarative, bidirectional) and the concrete engine rule
+//! instantiation.
 //!
-//! Der Compiler macht zwei Dinge, die man NICHT mit Closure-Magie
-//! vermischen sollte:
+//! The compiler does two things that should NOT be mixed together via
+//! closure magic:
 //!
-//! 1. **Statische Analyse**: welche Pattern-Knoten sind Shared-Anchor
-//!    (auf L und R mit selber ID und selbem Kind)? Welche
-//!    CorrespondenceLinks sind Kontext (alle beteiligten Knoten sind
-//!    schon gebunden) vs. zu erzeugen (mindestens eine Seite ist neu)?
-//! 2. **Produktions-Plan**: welche Knoten, Kanten, Corrs müssen beim
-//!    Match erzeugt werden; welche Attribut-Propagationen greifen.
+//! 1. **Static analysis**: which pattern nodes are shared anchors
+//!    (present on L and R with the same ID and the same kind)? Which
+//!    CorrespondenceLinks are context (all involved nodes are already
+//!    bound) vs. to be created (at least one side is new)?
+//! 2. **Production plan**: which nodes, edges, corrs must be created
+//!    on match; which attribute propagations apply.
 //!
-//! Der resultierende [`CompiledRuleSpec`] ist reine Datenstruktur, frei
-//! von Graph-Topology-Entscheidungen. Die finale Abbildung auf
-//! `Box<dyn Rule>` (mit konkreter Corr-Layout-Semantik) ist Aufgabe
-//! eines Folge-Schritts — siehe Paper-Kapitel „Von abstrakter Rule-
-//! Spec zur Engine-Operationalisierung".
+//! The resulting [`CompiledRuleSpec`] is a pure data structure, free
+//! of graph-topology decisions. The final mapping to `Box<dyn Rule>`
+//! (with concrete corr-layout semantics) is the job of a follow-up
+//! step — see the paper chapter "From abstract rule spec to engine
+//! operationalization".
 
 use std::collections::{HashMap, HashSet};
 use thiserror::Error;
@@ -27,10 +27,10 @@ use super::spec::{
 };
 
 // ══════════════════════════════════════════════════════════════════════
-// CompiledRuleSpec — das Ergebnis der Kompilierung
+// CompiledRuleSpec — the result of compilation
 // ══════════════════════════════════════════════════════════════════════
 
-/// Statisch analysiertes Abbild einer [`RuleSpec`].
+/// Statically analyzed image of a [`RuleSpec`].
 #[derive(Debug, Clone)]
 pub struct CompiledRuleSpec {
     pub name: String,
@@ -39,117 +39,116 @@ pub struct CompiledRuleSpec {
     pub match_plan: MatchPlan,
     pub creation_plan: CreationPlan,
     pub propagation_plan: Vec<AttrPropagation>,
-    /// Kompilierte NACs (M2). Werden vom Matcher nach dem
-    /// Haupt-Match geprüft.
+    /// Compiled NACs (M2). Checked by the matcher after the
+    /// main match.
     pub nacs: Vec<CompiledNac>,
-    /// rc7: „echte Input-kinds" dieser gerichteten Regel =
-    /// `l_pattern`-kinds **minus** `r_pattern`-kinds (Shared-Anchors
-    /// raus). Eine Regel ist für ein Δ aktiv, wenn diese Menge die
-    /// Δ-kinds schneidet — so wird die Cascade-Richtung aus dem Δ
-    /// abgeleitet (Anti-Ping-Pong, siehe Spec §5). Sortiert+dedupliziert
-    /// für deterministische Vergleiche.
+    /// rc7: "real input kinds" of this directed rule =
+    /// `l_pattern` kinds **minus** `r_pattern` kinds (shared anchors
+    /// removed). A rule is active for a Δ when this set intersects
+    /// the Δ kinds — this derives the cascade direction from the Δ
+    /// (anti-ping-pong, see spec §5). Sorted and deduplicated for
+    /// deterministic comparisons.
     pub input_domain_kinds: Vec<String>,
 }
 
-/// Kompilierte Negative Application Condition.
+/// Compiled Negative Application Condition.
 #[derive(Debug, Clone)]
 pub struct CompiledNac {
     pub name: String,
-    /// Alle NodePatterns im NAC — in kanonischer Reihenfolge.
+    /// All NodePatterns in the NAC — in canonical order.
     pub nodes: Vec<MatchNode>,
-    /// Edge-Constraints im NAC.
+    /// Edge constraints in the NAC.
     pub edges: Vec<MatchEdge>,
-    /// Attribut-Constraints (falls vorhanden).
+    /// Attribute constraints (if any).
     pub constraints: Vec<MatchConstraint>,
-    /// NodePattern-IDs, die an das L-Match gekoppelt sind.
-    /// Werden beim NAC-Check per Var-Name aus dem Haupt-Match
-    /// fixiert.
+    /// NodePattern IDs bound to the L match.
+    /// Fixed via var name from the main match during the NAC
+    /// check.
     pub shared_with_l: Vec<String>,
 }
 
-/// Match-Teil: was der Matcher finden muss, damit die Rule anwendbar ist.
+/// Match part: what the matcher must find for the rule to apply.
 #[derive(Debug, Clone, Default)]
 pub struct MatchPlan {
-    /// Knoten, die der Matcher findet — in kanonischer Reihenfolge
-    /// (lPattern zuerst, dann rPattern, Duplikate via Shared-Anchor
-    /// entfernt).
+    /// Nodes the matcher finds — in canonical order
+    /// (lPattern first, then rPattern, duplicates removed via
+    /// shared anchor).
     pub nodes: Vec<MatchNode>,
-    /// Kanten-Constraints zwischen gematchten Knoten.
+    /// Edge constraints between matched nodes.
     pub edges: Vec<MatchEdge>,
-    /// Literal-Attribut-Constraints.
+    /// Literal attribute constraints.
     pub constraints: Vec<MatchConstraint>,
-    /// Correspondence-Knoten, die als Kontext (via bestehende Corr-
-    /// Edges im Graph) vorausgesetzt werden.
+    /// Correspondence nodes required as context (via existing corr
+    /// edges in the graph).
     pub context_correspondences: Vec<CorrespondenceLinkSpec>,
 }
 
-/// Creation-Teil: was die Rule erzeugt.
+/// Creation part: what the rule produces.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct CreationPlan {
-    /// R-Pattern-Knoten, die nicht bereits im Match gebunden sind
-    /// (Shared-Anchors und Context-R-Knoten ausgenommen).
+    /// R-pattern nodes not already bound in the match
+    /// (shared anchors and context R nodes excluded).
     pub nodes_to_create: Vec<MatchNode>,
-    /// R-Pattern-Kanten, deren Endpunkte neu oder kontext-
-    /// gebunden sind.
+    /// R-pattern edges whose endpoints are new or context-
+    /// bound.
     pub edges_to_create: Vec<MatchEdge>,
-    /// Correspondence-Links, die diese Rule neu etabliert — nicht
-    /// identisch zu `context_correspondences` im MatchPlan.
+    /// Correspondence links this rule newly establishes — distinct
+    /// from `context_correspondences` in the MatchPlan.
     pub correspondences_to_create: Vec<CorrespondenceLinkSpec>,
-    /// R-Pattern-Literal-Constraints auf **Kontext-Knoten** (Shared-
-    /// Anchor oder R-only-mit-context-corr): das Attribut soll auf
-    /// einem bereits existierenden Knoten geändert werden. Wird bei
-    /// Rule-Anwendung als `Op::SetAttr` materialisiert.
+    /// R-pattern literal constraints on **context nodes** (shared
+    /// anchor or R-only-with-context-corr): the attribute is to be
+    /// changed on an already existing node. Materialized as
+    /// `Op::SetAttr` on rule application.
     ///
-    /// rc6 (B6): bis rc5 landeten R-Literale auf ALLEN R-Knoten in
-    /// dieser Liste — auch auf R-only-Creation-Knoten. Das führte zu
-    /// Oszillation, wenn zwei Rules strukturell-identische Creation-
-    /// Knoten (gleicher corr-parent, gleiche attribute_bindings →
-    /// gleicher GhostId-Hash) produzieren wollten, deren R-Literale
-    /// aber unterschiedliche Werte für dasselbe Attribut hatten — die
-    /// SetAttrs überschrieben sich gegenseitig in jeder Iteration.
-    /// Pendant zum Edge-Identitäts-Verhalten (B4).
+    /// rc6 (B6): up to rc5, R literals landed on ALL R nodes in
+    /// this list — including R-only creation nodes. That caused
+    /// oscillation when two rules tried to produce structurally
+    /// identical creation nodes (same corr parent, same
+    /// attribute_bindings → same GhostId hash) but with different
+    /// R-literal values for the same attribute — the SetAttrs
+    /// overwrote each other on every iteration. Counterpart to the
+    /// edge identity behavior (B4).
     pub attrs_to_set: Vec<AttrToSet>,
-    /// R-Pattern-Literal-Constraints auf **R-only-Creation-Knoten**:
-    /// das Attribut ist *Teil der Identität* des neu erzeugten
-    /// Knotens und fließt in den GhostId-Hash via `collect_r_attrs`
-    /// (siehe Modul [`mod@crate::rule::instantiate`]). Dadurch
-    /// produzieren zwei Rules mit verschiedenen Literal-Werten *zwei
-    /// verschiedene* Creation-Knoten statt sich auf demselben Knoten
-    /// zu überschreiben.
+    /// R-pattern literal constraints on **R-only creation nodes**:
+    /// the attribute is *part of the identity* of the newly created
+    /// node and flows into the GhostId hash via `collect_r_attrs`
+    /// (see module [`mod@crate::rule::instantiate`]). This way two
+    /// rules with different literal values produce *two distinct*
+    /// creation nodes instead of overwriting each other on the same
+    /// node.
     pub creation_attrs: Vec<CreationAttr>,
 }
 
-/// SetAttr-Intent aus einer Rule: setzt ein Attribut auf einem im
-/// Match gebundenen (Kontext-) Knoten auf einen Literal-Wert. Wird im
-/// Modul [`mod@crate::rule::instantiate`] zu `Op::SetAttr`
-/// materialisiert.
+/// SetAttr intent from a rule: sets an attribute on a (context) node
+/// bound in the match to a literal value. Materialized to `Op::SetAttr`
+/// in module [`mod@crate::rule::instantiate`].
 #[derive(Debug, Clone, PartialEq)]
 pub struct AttrToSet {
-    /// NodePattern-ID — muss im MatchPlan gebunden sein.
+    /// NodePattern ID — must be bound in the MatchPlan.
     pub node_var: String,
-    /// Attribut-Name.
+    /// Attribute name.
     pub attr_name: String,
-    /// Ziel-Wert.
+    /// Target value.
     pub value: String,
 }
 
-/// Identitäts-Attribut für einen R-only-Creation-Knoten: aus einem
-/// R-Pattern-Literal-Constraint abgeleitet, fließt in die Ghost-ID
-/// des neu erzeugten Knotens ein. Verhindert die rc5-Oszillation
-/// zwischen Rules, die strukturell-identische Creation-Knoten mit
-/// verschiedenen Literal-Werten erzeugen würden.
+/// Identity attribute for an R-only creation node: derived from an
+/// R-pattern literal constraint, flows into the ghost ID of the
+/// newly created node. Prevents the rc5 oscillation between rules
+/// that would produce structurally identical creation nodes with
+/// different literal values.
 #[derive(Debug, Clone, PartialEq)]
 pub struct CreationAttr {
-    /// NodePattern-ID des Creation-Knotens — muss in
-    /// `creation_plan.nodes_to_create` sein.
+    /// NodePattern ID of the creation node — must be in
+    /// `creation_plan.nodes_to_create`.
     pub node_var: String,
-    /// Attribut-Name.
+    /// Attribute name.
     pub attr_name: String,
-    /// Literal-Wert.
+    /// Literal value.
     pub value: String,
 }
 
-/// Propagations-Plan: welche Attribute wohin mit welcher Transformation.
+/// Propagation plan: which attributes go where with which transformation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AttrPropagation {
     pub source_node_var: String,
@@ -163,17 +162,17 @@ pub struct AttrPropagation {
 pub struct MatchNode {
     pub var: String,
     pub kind: String,
-    /// Welche Seite hat diesen Knoten ins Pattern gebracht.
+    /// Which side brought this node into the pattern.
     pub origin: NodeOrigin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NodeOrigin {
-    /// Nur im L-Pattern.
+    /// Only in the L pattern.
     LOnly,
-    /// Nur im R-Pattern.
+    /// Only in the R pattern.
     ROnly,
-    /// In beiden mit identischer ID+Kind — shared anchor.
+    /// In both with identical ID and kind — shared anchor.
     Shared,
 }
 
@@ -198,9 +197,9 @@ pub struct MatchConstraint {
     pub predicate: crate::engine::AttrPredicate,
 }
 
-/// Kompiliert einen `AttrMatcherSpec` zu einem engine-nativen
-/// `AttrPredicate`. Regex-Syntax-Fehler werden als
-/// `CompileError::InvalidRegex` hochgereicht.
+/// Compiles an `AttrMatcherSpec` to an engine-native
+/// `AttrPredicate`. Regex syntax errors are surfaced as
+/// `CompileError::InvalidRegex`.
 pub fn compile_matcher(
     spec: &super::spec::AttrMatcherSpec,
 ) -> Result<crate::engine::AttrPredicate, CompileError> {
@@ -224,7 +223,7 @@ pub fn compile_matcher(
 }
 
 // ══════════════════════════════════════════════════════════════════════
-// Fehler
+// Errors
 // ══════════════════════════════════════════════════════════════════════
 
 #[derive(Debug, Error)]
@@ -292,14 +291,14 @@ impl CompileError {
 // Compiler
 // ══════════════════════════════════════════════════════════════════════
 
-/// Entscheidet, ob ein Correspondence-Link eine **bestehende**
-/// Korrespondenz referenziert (context) oder eine **neue** etabliert
-/// (creation). rc7: role-aware mit rc6-Fallback.
+/// Decides whether a correspondence link references an **existing**
+/// correspondence (context) or establishes a **new** one (creation).
+/// rc7: role-aware with rc6 fallback.
 ///
-/// - `Some(References)` → context (beide Endpunkte gematcht, nichts
-///   erzeugt; span-Bindings dienen nur der GhostId-Identität).
-/// - `Some(Establishes)` → creation (output-seitiger Endpunkt erzeugt).
-/// - `None` → rc6-Verhalten: leere `attribute_bindings` ⟹ References.
+/// - `Some(References)` → context (both endpoints matched, nothing
+///   created; span bindings serve only the GhostId identity).
+/// - `Some(Establishes)` → creation (output-side endpoint created).
+/// - `None` → rc6 behavior: empty `attribute_bindings` ⟹ References.
 pub(crate) fn corr_is_reference(cl: &CorrespondenceLinkSpec) -> bool {
     match cl.role {
         Some(CorrRole::References) => true,
@@ -308,22 +307,22 @@ pub(crate) fn corr_is_reference(cl: &CorrespondenceLinkSpec) -> bool {
     }
 }
 
-/// Transformationsrichtung für das bidirektionale Lowering (rc7).
+/// Transformation direction for the bidirectional lowering (rc7).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Direction {
-    /// Lhs→Rhs (unverändert).
+    /// Lhs→Rhs (unchanged).
     Fwd,
-    /// Rhs→Lhs: l_pattern↔r_pattern getauscht, Corr-Endpunkte getauscht,
-    /// Bindings gespiegelt.
+    /// Rhs→Lhs: l_pattern↔r_pattern swapped, corr endpoints swapped,
+    /// bindings mirrored.
     Bwd,
 }
 
-/// Liefert die für `dir` gerichtete Sicht der Regel.
+/// Returns the rule view directed by `dir`.
 ///
-/// `Fwd` = unverändert. `Bwd` = l_pattern↔r_pattern + Corr-Endpunkte
-/// getauscht + Bindings gespiegelt (l_attr↔r_attr). `role` und
-/// `transformation` bleiben unverändert (richtungs-neutral; die
-/// Transform-Inverse wählt die Engine zur Propagations-Zeit).
+/// `Fwd` = unchanged. `Bwd` = l_pattern↔r_pattern + corr endpoints
+/// swapped + bindings mirrored (l_attr↔r_attr). `role` and
+/// `transformation` stay unchanged (direction-neutral; the engine
+/// picks the transform inverse at propagation time).
 pub(crate) fn directed_spec(spec: &RuleSpec, dir: Direction) -> RuleSpec {
     if dir == Direction::Fwd {
         return spec.clone();
@@ -354,12 +353,12 @@ pub(crate) fn directed_spec(spec: &RuleSpec, dir: Direction) -> RuleSpec {
     }
 }
 
-/// Lowert eine deklarative Regel in **beide** gerichteten
+/// Lowers a declarative rule into **both** directed
 /// [`CompiledRuleSpec`] (rc7). IDs: `"<name>→"` (Fwd), `"<name>←"`
-/// (Bwd) — eindeutig für den cascade-Origin-Lookup. Die
-/// context-vs-creation-Rolle + der span-Anker werden pro Richtung aus
-/// `role` + Bindings korrekt abgeleitet (siehe `directed_spec` +
-/// `corr_is_reference`, beides crate-intern).
+/// (Bwd) — unique for the cascade-origin lookup. The
+/// context-vs-creation role and the span anchor are derived per
+/// direction from `role` + bindings (see `directed_spec` +
+/// `corr_is_reference`, both crate-internal).
 pub fn compile_bidirectional(spec: &RuleSpec) -> Result<Vec<CompiledRuleSpec>, CompileError> {
     let mut out = Vec::with_capacity(2);
     for (dir, suffix) in [(Direction::Fwd, "\u{2192}"), (Direction::Bwd, "\u{2190}")] {
@@ -370,9 +369,9 @@ pub fn compile_bidirectional(spec: &RuleSpec) -> Result<Vec<CompiledRuleSpec>, C
     Ok(out)
 }
 
-/// Kompiliert eine einzelne [`RuleSpec`] in einen [`CompiledRuleSpec`].
+/// Compiles a single [`RuleSpec`] into a [`CompiledRuleSpec`].
 pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
-    // ── 1. Patterns holen (leere ok, aber nicht beide leer) ──────────
+    // ── 1. Fetch patterns (empty ok, but not both empty) ─────────────
     let empty = PatternSpec::default();
     let l_pat = spec.l_pattern.as_ref().unwrap_or(&empty);
     let r_pat = spec.r_pattern.as_ref().unwrap_or(&empty);
@@ -382,7 +381,7 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
         });
     }
 
-    // ── 2. NodePatterns indizieren, Shared-Anchors ermitteln ─────────
+    // ── 2. Index NodePatterns, determine shared anchors ──────────────
     let mut l_by_id: HashMap<&str, &str> = HashMap::new();
     for n in &l_pat.nodes {
         l_by_id.insert(&n.id, &n.kind);
@@ -395,7 +394,7 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
     let mut match_nodes: Vec<MatchNode> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
-    // L-Pattern-Knoten: LOnly oder Shared (wenn auch in R)
+    // L-pattern nodes: LOnly or Shared (if also in R)
     for n in &l_pat.nodes {
         let origin = match r_by_id.get(n.id.as_str()) {
             None => NodeOrigin::LOnly,
@@ -419,12 +418,11 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
             });
         }
     }
-    // R-Pattern-Knoten, die nicht schon in L waren → entweder
-    // Match-Teil (wenn via Context-Corr an einen bestehenden Graph-
-    // Knoten gebunden) oder Creation-Teil (wenn sie durch eine neue
-    // Corr mit dieser Rule erst entstehen).
+    // R-pattern nodes not already in L → either match part (if bound
+    // via a context corr to an existing graph node) or creation part
+    // (if they only come into being via a new corr with this rule).
     //
-    // Kontext-Corr = CorrespondenceLink ohne attribute_bindings.
+    // Context corr = CorrespondenceLink without attribute_bindings.
     let r_only_in_context: HashSet<&str> = spec
         .correspondence_links
         .iter()
@@ -435,7 +433,7 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
     let mut nodes_to_create: Vec<MatchNode> = Vec::new();
     for n in &r_pat.nodes {
         if l_by_id.contains_key(n.id.as_str()) {
-            continue; // bereits als Shared im Match
+            continue; // already in the match as Shared
         }
         let is_context_r = r_only_in_context.contains(n.id.as_str());
         let mn = MatchNode {
@@ -444,20 +442,20 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
             origin: NodeOrigin::ROnly,
         };
         if is_context_r {
-            // Context-R: muss im Graph existieren — ins Match.
+            // Context R: must exist in the graph — goes into the match.
             if seen.insert(n.id.clone()) {
                 match_nodes.push(mn);
             }
         } else {
-            // Creation-R: gehört nicht ins Match-Pattern, sonst würde
-            // die Rule nie greifen (Matcher findet den Knoten ja
-            // nicht vor der Rule-Anwendung).
+            // Creation R: does not belong in the match pattern, otherwise
+            // the rule would never fire (the matcher cannot find the
+            // node before rule application).
             nodes_to_create.push(mn);
         }
     }
 
-    // ── 3. Kanten: Referenz-Integrität checken ───────────────────────
-    // Alle bekannten Vars = Match-Vars + zu-erzeugende Vars.
+    // ── 3. Edges: check referential integrity ────────────────────────
+    // All known vars = match vars + to-be-created vars.
     let mut all_known: HashSet<String> = match_nodes.iter().map(|n| n.var.clone()).collect();
     for n in &nodes_to_create {
         all_known.insert(n.var.clone());
@@ -486,14 +484,15 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
             kind: e.kind.clone(),
             side: EdgeSide::R,
         };
-        // R-Edge-Klassifikation:
-        // Kommt die Kante identisch im L-Pattern vor, ist sie bereits
-        // als L-Match-Edge gezählt → überspringen. Jede andere R-Edge
-        // wird erzeugt (edges_to_create) — auch eine zwischen zwei
-        // Kontext-Knoten. Der op-granulare Duplicate-Check (is_duplicate
-        // mit .all()) macht eine zweite, rein wiederholende Anwendung
-        // sauber idempotent, statt die Regel zu blockieren — damit ist
-        // die frühere R-Context-Edge-Sonderbehandlung (cf1c6c4) hinfällig.
+        // R-edge classification:
+        // If the edge appears identically in the L pattern, it is
+        // already counted as an L-match edge → skip. Every other R
+        // edge is created (edges_to_create) — including one between
+        // two context nodes. The op-granular duplicate check
+        // (is_duplicate with .all()) makes a second, purely repeating
+        // application cleanly idempotent instead of blocking the rule
+        // — so the earlier R-context-edge special case (cf1c6c4) is
+        // obsolete.
         let also_in_l = l_pat.edges.iter().any(|le| {
             le.source_node_id == e.source_node_id
                 && le.target_node_id == e.target_node_id
@@ -505,7 +504,7 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
         edges_to_create.push(edge);
     }
 
-    // ── 4. Correspondence-Links: Kontext vs. Neu ─────────────────────
+    // ── 4. Correspondence links: context vs. new ─────────────────────
     let mut context_corrs: Vec<CorrespondenceLinkSpec> = Vec::new();
     let mut corrs_to_create: Vec<CorrespondenceLinkSpec> = Vec::new();
     for cl in &spec.correspondence_links {
@@ -518,12 +517,12 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
                 r: cl.r_node_id.clone(),
             });
         }
-        // rc7: Rolle entscheidet context-vs-creation (role-aware mit
-        // rc6-Fallback via corr_is_reference). References = referenziert
-        // bestehende Korrespondenz (context), Establishes = etabliert
-        // neue bijektive Synchronisation (materialisiert). span-Bindings
-        // dienen bei References nur der GhostId-Identität, nicht der
-        // Klassifikation.
+        // rc7: role decides context-vs-creation (role-aware with rc6
+        // fallback via corr_is_reference). References = references an
+        // existing correspondence (context), Establishes = establishes
+        // a new bijective synchronization (materialized). For References,
+        // span bindings serve only the GhostId identity, not the
+        // classification.
         if corr_is_reference(cl) {
             context_corrs.push(cl.clone());
         } else {
@@ -531,10 +530,10 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
         }
     }
 
-    // ── 5. Propagationen aus AttrBindings ableiten ───────────────────
-    // Für jeden neu etablierten Corr-Link wird pro AttrBinding eine
-    // Propagation L→R (und die Umkehrrichtung) geplant. Die konkrete
-    // Richtung (wann welche) entscheidet die Engine zur Match-Zeit.
+    // ── 5. Derive propagations from AttrBindings ─────────────────────
+    // For every newly established corr link, a propagation L→R (and
+    // the reverse direction) is planned per AttrBinding. The engine
+    // decides the concrete direction (which one when) at match time.
     let mut propagations: Vec<AttrPropagation> = Vec::new();
     for cl in &corrs_to_create {
         for b in &cl.attribute_bindings {
@@ -550,9 +549,9 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
         }
     }
 
-    // ── 6. Attribut-Constraints klassifizieren ──────────────────────
-    // L-Constraints sind immer Match-Constraints (wir matchen den
-    // Ausgangs-Zustand).
+    // ── 6. Classify attribute constraints ────────────────────────────
+    // L constraints are always match constraints (we match the
+    // initial state).
     let mut constraints: Vec<MatchConstraint> = Vec::new();
     for n in &l_pat.nodes {
         for c in &n.constraints {
@@ -564,22 +563,22 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
             });
         }
     }
-    // R-Constraints werden klassifiziert:
-    //   1. Identisch zu einem L-Constraint am selben Knoten/Attribut
-    //      → redundant, weglassen (L-Constraint deckt den Match ab).
-    //   2. Auf einem **R-only-Creation-Knoten** (steht in
-    //      `nodes_to_create`) → `creation_attrs`. Das Literal ist
-    //      Identitäts-Attribut und fließt in den Ghost-Hash, NICHT
-    //      als SetAttr-Op. Verhindert die rc5-Oszillation zwischen
-    //      Rules, die strukturell-identische Creation-Knoten mit
-    //      verschiedenen Literal-Werten erzeugen würden.
-    //   3. Auf einem **Kontext-Knoten** (Shared-Anchor oder R-only-
-    //      mit-context-corr) → `attrs_to_set` (B5/rc4-Semantik:
-    //      `Op::SetAttr` mutiert das Attribut auf dem bestehenden
-    //      Knoten).
-    //   4. Nicht-Literal-Matcher (Regex/Prefix/Suffix/NumericRange)
-    //      → CompileError, weil „Wert auf Regex setzen" semantisch
-    //      undefiniert ist.
+    // R constraints are classified:
+    //   1. Identical to an L constraint on the same node/attribute
+    //      → redundant, drop (the L constraint covers the match).
+    //   2. On an **R-only creation node** (listed in
+    //      `nodes_to_create`) → `creation_attrs`. The literal is an
+    //      identity attribute and flows into the ghost hash, NOT as
+    //      a SetAttr op. Prevents the rc5 oscillation between rules
+    //      that would produce structurally identical creation nodes
+    //      with different literal values.
+    //   3. On a **context node** (shared anchor or R-only-with-
+    //      context-corr) → `attrs_to_set` (B5/rc4 semantics:
+    //      `Op::SetAttr` mutates the attribute on the existing
+    //      node).
+    //   4. Non-literal matcher (Regex/Prefix/Suffix/NumericRange)
+    //      → CompileError, because "setting a value to a regex" is
+    //      semantically undefined.
     let creation_var_set: HashSet<&str> =
         nodes_to_create.iter().map(|mn| mn.var.as_str()).collect();
     let mut attrs_to_set: Vec<AttrToSet> = Vec::new();
@@ -592,7 +591,7 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
                 l_node.and_then(|ln| ln.constraints.iter().find(|lc| lc.name == c.name));
             if let Some(lc) = l_same_attr {
                 if lc.matcher == c.matcher {
-                    continue; // identisch → L deckt es ab
+                    continue; // identical → L covers it
                 }
             }
             match &c.matcher {
@@ -658,12 +657,12 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
     })
 }
 
-/// Kompiliert alle NACs einer Rule.
+/// Compiles all NACs of a rule.
 fn compile_nacs(spec: &RuleSpec, l_pat: &PatternSpec) -> Result<Vec<CompiledNac>, CompileError> {
     let l_vars: HashSet<&str> = l_pat.nodes.iter().map(|n| n.id.as_str()).collect();
     let mut compiled = Vec::with_capacity(spec.nacs.len());
     for nac in &spec.nacs {
-        // shared_with_l validieren
+        // validate shared_with_l
         for var in &nac.shared_with_l {
             if !l_vars.contains(var.as_str()) {
                 return Err(CompileError::NacSharedAnchorUnknown {
@@ -752,11 +751,11 @@ mod tests {
             },
             role,
         };
-        // explizit
+        // explicit
         assert!(corr_is_reference(&mk(Some(CorrRole::References), true)));
         assert!(!corr_is_reference(&mk(Some(CorrRole::Establishes), false)));
-        // rc6-Fallback (role = None)
-        assert!(corr_is_reference(&mk(None, false))); // leere bindings → context
+        // rc6 fallback (role = None)
+        assert!(corr_is_reference(&mk(None, false))); // empty bindings → context
         assert!(!corr_is_reference(&mk(None, true))); // bindings → creation
     }
 
@@ -782,8 +781,8 @@ mod tests {
         let rules = compile_bidirectional(&rs.rules[0]).unwrap();
         let fwd = rules.iter().find(|r| r.name.ends_with('\u{2192}')).unwrap();
         let bwd = rules.iter().find(|r| r.name.ends_with('\u{2190}')).unwrap();
-        // Shared-Anchor "Model" fällt raus; nur der diskriminierende
-        // Input-kind bleibt.
+        // Shared anchor "Model" is dropped; only the discriminating
+        // input kind remains.
         assert_eq!(fwd.input_domain_kinds, vec!["Class".to_string()]);
         assert_eq!(bwd.input_domain_kinds, vec!["JavaClass".to_string()]);
     }
@@ -812,7 +811,7 @@ mod tests {
         let fwd = rules.iter().find(|r| r.name.ends_with('\u{2192}')).unwrap();
         let bwd = rules.iter().find(|r| r.name.ends_with('\u{2190}')).unwrap();
 
-        // Fwd: jf (Establishes) erzeugt, jc (References) context
+        // Fwd: jf (Establishes) created, jc (References) context
         assert!(fwd
             .creation_plan
             .nodes_to_create
@@ -823,7 +822,7 @@ mod tests {
             .nodes_to_create
             .iter()
             .any(|n| n.var == "jc"));
-        // Bwd: a (Establishes-Endpunkt, jetzt Output) erzeugt, c (References) context
+        // Bwd: a (Establishes endpoint, now output) created, c (References) context
         assert!(bwd
             .creation_plan
             .nodes_to_create
@@ -835,8 +834,8 @@ mod tests {
             .iter()
             .any(|n| n.var == "c"));
 
-        // References-Corr ist in BEIDEN Richtungen context MIT span-binding
-        // (kein leeres corr_attrs → kein GhostId-Kollaps).
+        // References corr is context in BOTH directions WITH a span binding
+        // (no empty corr_attrs → no GhostId collapse).
         assert!(
             fwd.match_plan
                 .context_correspondences
@@ -874,12 +873,12 @@ mod tests {
         let cl = &bwd.correspondence_links[0];
         assert_eq!(cl.l_node_id, "jc");
         assert_eq!(cl.r_node_id, "c");
-        assert_eq!(cl.role, Some(CorrRole::Establishes)); // richtungs-neutral
-                                                          // Binding gespiegelt: l_attr↔r_attr
+        assert_eq!(cl.role, Some(CorrRole::Establishes)); // direction-neutral
+                                                          // Binding mirrored: l_attr↔r_attr
         assert_eq!(cl.attribute_bindings[0].l_attr_name, "jName");
         assert_eq!(cl.attribute_bindings[0].r_attr_name, "uName");
 
-        // Fwd = unverändert
+        // Fwd = unchanged
         let fwd = directed_spec(spec, Direction::Fwd);
         assert_eq!(fwd.l_pattern.as_ref().unwrap().nodes[0].kind, "Class");
         assert_eq!(fwd.correspondence_links[0].l_node_id, "c");
@@ -887,9 +886,9 @@ mod tests {
 
     #[test]
     fn reference_corr_with_bindings_is_context_not_creation() {
-        // R_Attr-artig: CorrClass=References (MIT span-binding),
-        // CorrAttr=Establishes. rc7-Akzeptanz: ein References-Corr mit
-        // bindings macht seinen R-Endpunkt context, nicht creation.
+        // R_Attr-like: CorrClass=References (WITH span binding),
+        // CorrAttr=Establishes. rc7 acceptance: a References corr with
+        // bindings makes its R endpoint context, not creation.
         let json = r#"{"rules":[{
             "name":"T","rank":30,
             "l_pattern":{"nodes":[{"id":"c","kind":"Class","constraints":[]},
@@ -923,7 +922,7 @@ mod tests {
         );
     }
 
-    // ── Fehlerfälle ──────────────────────────────────────────────────
+    // ── Error cases ──────────────────────────────────────────────────
 
     #[test]
     fn leere_rule_ist_fehler() {
@@ -996,7 +995,7 @@ mod tests {
         matches!(err, CompileError::DanglingCorrespondence { .. });
     }
 
-    // ── Erfolgsfälle auf Demo-Fixture ────────────────────────────────
+    // ── Success cases on the demo fixture ────────────────────────────
 
     #[test]
     fn rclass_wird_kompiliert() {
@@ -1008,18 +1007,18 @@ mod tests {
     #[test]
     fn rclass_erkennt_model_als_shared_anchor() {
         let cr = compile(&demo_rule("R_Class")).unwrap();
-        // Shared Anchor (Model): ist im Match-Pattern
+        // Shared anchor (Model): is in the match pattern
         let m = cr.match_plan.nodes.iter().find(|n| n.var == "m").unwrap();
         assert_eq!(m.kind, "Model");
         assert_eq!(m.origin, NodeOrigin::Shared);
 
-        // LOnly (Class): ist im Match-Pattern
+        // LOnly (Class): is in the match pattern
         let c = cr.match_plan.nodes.iter().find(|n| n.var == "c").unwrap();
         assert_eq!(c.origin, NodeOrigin::LOnly);
 
-        // R-Only ohne Context-Corr: NICHT im Match-Pattern, dafür in
-        // creation_plan.nodes_to_create. Sonst würde die Rule nie
-        // greifen — jc existiert erst, nachdem die Rule gefeuert hat.
+        // R-only without a context corr: NOT in the match pattern, but
+        // in creation_plan.nodes_to_create. Otherwise the rule would
+        // never fire — jc only exists after the rule has fired.
         assert!(
             cr.match_plan.nodes.iter().all(|n| n.var != "jc"),
             "jc darf nicht im Match-Pattern sein (R-only, keine Context-Corr)"
@@ -1037,7 +1036,7 @@ mod tests {
     #[test]
     fn rclass_plant_jc_als_zu_erzeugen_mit_namen_propagation() {
         let cr = compile(&demo_rule("R_Class")).unwrap();
-        // jc muss in nodes_to_create stehen
+        // jc must be in nodes_to_create
         let jc = cr
             .creation_plan
             .nodes_to_create
@@ -1071,13 +1070,13 @@ mod tests {
     #[test]
     fn rattr_trennt_kontext_von_neuer_corr() {
         let cr = compile(&demo_rule("R_Attr")).unwrap();
-        // Der erste Corr (CorrClass ohne Bindings) ist Kontext
+        // The first corr (CorrClass without bindings) is context
         assert_eq!(cr.match_plan.context_correspondences.len(), 1);
         assert_eq!(
             cr.match_plan.context_correspondences[0].kind.as_deref(),
             Some("CorrClass")
         );
-        // Der zweite (CorrAttr mit 2 Bindings) ist neu
+        // The second (CorrAttr with 2 bindings) is new
         assert_eq!(cr.creation_plan.correspondences_to_create.len(), 1);
         assert_eq!(
             cr.creation_plan.correspondences_to_create[0]
@@ -1103,9 +1102,9 @@ mod tests {
     #[test]
     fn edges_werden_korrekt_auf_l_oder_r_seite_zugeordnet() {
         let cr = compile(&demo_rule("R_Class")).unwrap();
-        // Die classes-Edge ist L-Seite, match-Pattern.
-        // Die javaClasses-Edge ist R-Seite; ihr Endpunkt jc ist ROnly,
-        // also muss sie in edges_to_create stehen.
+        // The classes edge is L-side, match pattern.
+        // The javaClasses edge is R-side; its endpoint jc is ROnly,
+        // so it must be in edges_to_create.
         assert!(cr
             .match_plan
             .edges
@@ -1153,10 +1152,9 @@ mod tests {
 
     #[test]
     fn r_kante_zwischen_kontext_knoten_wird_erzeugt() {
-        // L matcht zwei Knoten a, b ohne Kante; R fügt eine Kante a→b
-        // zwischen denselben (Kontext-)Knoten hinzu. Diese Kante muss
-        // erzeugt werden — nicht stillschweigend zur Match-Bedingung
-        // umklassifiziert.
+        // L matches two nodes a, b without an edge; R adds an edge a→b
+        // between the same (context) nodes. This edge must be created
+        // — not silently reclassified as a match condition.
         let json = r#"{"rules":[{
             "name":"CtxEdge","rank":1,
             "l_pattern":{"nodes":[
@@ -1183,12 +1181,12 @@ mod tests {
 
     #[test]
     fn r_literal_unterschiedlich_zu_l_klassifiziert_als_attrs_to_set() {
-        // Pendant zum Edge-Bug (B4) auf der Attribut-Seite: L matcht
-        // Job mit image="old"; R sagt image="new" am selben (Kontext-)
-        // Knoten. Das R-Literal darf NICHT als Match-Constraint landen
-        // — sonst sucht der Matcher gleichzeitig nach "old" und "new"
-        // und findet nie etwas. Es gehört in
-        // creation_plan.attrs_to_set als SetAttr-Intent.
+        // Counterpart to the edge bug (B4) on the attribute side: L
+        // matches Job with image="old"; R says image="new" on the same
+        // (context) node. The R literal must NOT land as a match
+        // constraint — otherwise the matcher searches for "old" and
+        // "new" simultaneously and never finds anything. It belongs in
+        // creation_plan.attrs_to_set as a SetAttr intent.
         let json = r#"{"rules":[{
             "name":"CtxAttr","rank":1,
             "l_pattern":{"nodes":[
@@ -1204,7 +1202,7 @@ mod tests {
         let rs = parse_ruleset(json).unwrap();
         let cr = compile(&rs.rules[0]).unwrap();
 
-        // (1) R-Literal "new" darf nicht als Match-Constraint auftauchen
+        // (1) R literal "new" must not appear as a match constraint
         let r_literal_in_match = cr.match_plan.constraints.iter().any(|c| {
             c.node_var == "j"
                 && c.attr_name == "image"
@@ -1220,7 +1218,7 @@ mod tests {
              gleichzeitig nach 'old' und 'new')"
         );
 
-        // (2) R-Literal muss als attrs_to_set im creation_plan stehen
+        // (2) R literal must be in attrs_to_set in the creation_plan
         assert_eq!(
             cr.creation_plan.attrs_to_set.len(),
             1,
@@ -1232,9 +1230,9 @@ mod tests {
         assert_eq!(ats.attr_name, "image");
         assert_eq!(ats.value, "new");
 
-        // (3) L-Literal "old" bleibt als Match-Constraint — die Regel
-        //     soll nur Knoten mit image="old" matchen und dann auf "new"
-        //     setzen.
+        // (3) L literal "old" remains as a match constraint — the rule
+        //     should only match nodes with image="old" and then set it
+        //     to "new".
         let l_literal_in_match = cr.match_plan.constraints.iter().any(|c| {
             c.node_var == "j"
                 && c.attr_name == "image"
@@ -1251,15 +1249,14 @@ mod tests {
 
     #[test]
     fn r_literal_auf_creation_knoten_landet_in_creation_attrs_nicht_attrs_to_set() {
-        // rc6/B6 Klassifikations-Regression: L hat nur Source, R hat
-        // Target (R-only-Creation) mit Literal `label=x`. Vor rc6
-        // landete `label=x` in `attrs_to_set` und führte beim
-        // Aufeinandertreffen zweier Rules mit demselben strukturellen
-        // R-Output aber verschiedenen Literal-Werten zu einer
-        // Oszillations-Schleife (siehe
-        // tests/repro_rc5_bug2_attrs_to_set_collision.rs). Jetzt
-        // landet es in `creation_attrs` und fließt in den GhostId
-        // des neu erzeugten Knotens.
+        // rc6/B6 classification regression: L has only Source, R has
+        // Target (R-only creation) with literal `label=x`. Before rc6,
+        // `label=x` landed in `attrs_to_set` and, when two rules with
+        // the same structural R output but different literal values
+        // collided, caused an oscillation loop (see
+        // tests/repro_rc5_bug2_attrs_to_set_collision.rs). Now it
+        // lands in `creation_attrs` and flows into the GhostId of the
+        // newly created node.
         let json = r#"{"rules":[{
             "name":"CreationLit","rank":1,
             "l_pattern":{"nodes":[
@@ -1277,14 +1274,13 @@ mod tests {
         let rs = parse_ruleset(json).unwrap();
         let cr = compile(&rs.rules[0]).unwrap();
 
-        // R-Knoten ist R-only-Creation (nicht in r_only_in_context,
-        // weil der Corr `attribute_bindings: []` hat — Context-Corr —
-        // wait: context-corrs befördern R-Vars in den Match. Wenn
-        // bindings leer sind, ist R kontext, nicht creation. Daher
-        // muss der Corr Bindings haben, damit R als Creation
-        // klassifiziert wird. Wir prüfen das durch einen separaten
-        // Spec mit non-empty bindings.
-        // → siehe nächster Test: hier ist R *kontext* (corr ohne
+        // R node is R-only creation (not in r_only_in_context,
+        // because the corr has `attribute_bindings: []` — a context
+        // corr — wait: context corrs promote R vars into the match.
+        // If bindings are empty, R is context, not creation. So the
+        // corr must have bindings for R to be classified as creation.
+        // We verify this via a separate spec with non-empty bindings.
+        // → see next test: here R is *context* (corr without
         // bindings).
         eprintln!(
             "(context-corr variant) attrs_to_set={:?} creation_attrs={:?}",
@@ -1302,8 +1298,8 @@ mod tests {
         );
         assert_eq!(cr.creation_plan.creation_attrs.len(), 0);
 
-        // Zweite Variante: corr MIT bindings → R ist R-only-Creation
-        // → Literal landet in creation_attrs.
+        // Second variant: corr WITH bindings → R is R-only creation
+        // → literal lands in creation_attrs.
         let json2 = r#"{"rules":[{
             "name":"CreationLit2","rank":1,
             "l_pattern":{"nodes":[

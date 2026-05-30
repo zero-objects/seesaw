@@ -1,7 +1,7 @@
-//! M2 Integration-Test: NACs.
+//! M2 integration test: NACs.
 //!
-//! Root-Rule-With-NAC hat eine NAC "no_incoming_subPackages". Sie
-//! darf nur auf Packages ohne eingehende subPackages-Kante matchen.
+//! Root-Rule-With-NAC has a NAC "no_incoming_subPackages". It may
+//! only match on packages without an incoming subPackages edge.
 
 use seesaw_tgg::engine::{cascade_step, Cascade, Rule, TerminationState};
 use seesaw_tgg::graph::{Status, TypedGraph};
@@ -32,9 +32,9 @@ fn nac_fixture_parses_and_compiles() {
 
 #[test]
 fn nac_forbids_rule_when_pattern_matches() {
-    // Graph mit rootP → p (subPackages-Kante vorhanden)
-    // Erwartung: Root-Rule-With-NAC matcht nur auf rootP, nicht auf p,
-    // weil p eine incoming subPackages-Kante hat.
+    // Graph with rootP → p (subPackages edge present).
+    // Expectation: Root-Rule-With-NAC matches only on rootP, not on p,
+    // because p has an incoming subPackages edge.
     let mut g = TypedGraph::new();
     let root_p = g.add_baseline_node(
         "Package",
@@ -65,7 +65,7 @@ fn nac_forbids_rule_when_pattern_matches() {
         }
     }
 
-    // Root-Rule-With-NAC sollte genau 1× feuern (nur für rootP).
+    // Root-Rule-With-NAC should fire exactly once (only for rootP).
     let rule_firings = cascade
         .entries
         .iter()
@@ -76,14 +76,14 @@ fn nac_forbids_rule_when_pattern_matches() {
         .count();
     assert_eq!(
         rule_firings, 1,
-        "NAC verhindert Rule-Feuern auf p (mit incoming subPackages); nur rootP matcht"
+        "NAC prevents rule firing on p (with incoming subPackages); only rootP matches"
     );
 }
 
 #[test]
 fn nac_allows_rule_when_pattern_absent() {
-    // Graph mit nur rootP (keine subPackages-Kante).
-    // Erwartung: Root-Rule-With-NAC feuert.
+    // Graph with only rootP (no subPackages edge).
+    // Expectation: Root-Rule-With-NAC fires.
     let mut g = TypedGraph::new();
     let _root_p = g.add_baseline_node(
         "Package",
@@ -105,7 +105,7 @@ fn nac_allows_rule_when_pattern_absent() {
     }
     assert!(
         !cascade.entries.is_empty(),
-        "NAC trifft nicht → Rule muss feuern"
+        "NAC does not apply → rule must fire"
     );
 }
 
@@ -131,10 +131,10 @@ fn nac_unknown_shared_anchor_gives_compile_error() {
         }]
     }"#;
     let rs = parse_ruleset(json).unwrap();
-    let err = compile(&rs.rules[0]).expect_err("shared-Anker 'ghost' existiert nicht");
+    let err = compile(&rs.rules[0]).expect_err("shared anchor 'ghost' does not exist");
     let msg = format!("{err:?}");
     assert!(
         msg.contains("NacSharedAnchorUnknown") || msg.contains("ghost-anchor"),
-        "Error zeigt ghost-anchor-Probleme: {msg}"
+        "error reports ghost-anchor problem: {msg}"
     );
 }

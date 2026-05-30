@@ -1,7 +1,7 @@
-//! Diagnostik-Test: welche Graph-Elemente produziert die Engine nach
-//! Root-Rule-Anwendung? Bestätigt die corrL/corrR-Topology-Konvention
-//! aus `instantiate.rs` und hilft Sub-Rule/Leaf-Rule-Pattern richtig
-//! zu formulieren.
+//! Diagnostic test: which graph elements does the engine produce
+//! after Root-Rule application? Confirms the corrL/corrR topology
+//! convention from `instantiate.rs` and helps formulate Sub-Rule
+//! and Leaf-Rule patterns correctly.
 
 use seesaw_tgg::engine::{run_cascade, Cascade, Rule};
 use seesaw_tgg::graph::{Status, TypedGraph};
@@ -63,26 +63,26 @@ fn probe_root_rule_output_topology() {
         );
     }
 
-    // Basis-Erwartung: Root-Rule feuert mindestens 1×.
+    // Baseline expectation: Root-Rule fires at least once.
     assert!(
         !cascade.entries.is_empty(),
-        "Root-Rule sollte auf rootP matchen"
+        "Root-Rule should match on rootP"
     );
-    // Nach Root-Rule: ein CorrPackage-Node und ein Folder-Node im Graph.
+    // After Root-Rule: a CorrPackage node and a Folder node in the graph.
     let has_corr = g.iter_nodes().any(|n| n.type_id == "CorrPackage");
     let has_folder = g.iter_nodes().any(|n| n.type_id == "Folder");
-    assert!(has_corr, "CorrPackage-Node existiert nach Root-Rule");
-    assert!(has_folder, "Folder-Node existiert nach Root-Rule");
-    // Kanten-Typen
+    assert!(has_corr, "CorrPackage node exists after Root-Rule");
+    assert!(has_folder, "Folder node exists after Root-Rule");
+    // Edge types
     let edge_types: std::collections::HashSet<String> = g
         .iter_edges()
         .iter()
         .map(|(_, _, e)| e.type_id.clone())
         .collect();
-    eprintln!("\nEdge-Typen: {edge_types:?}");
-    assert!(edge_types.contains("corrL"), "corrL existiert");
-    assert!(edge_types.contains("corrR"), "corrR existiert");
+    eprintln!("\nEdge types: {edge_types:?}");
+    assert!(edge_types.contains("corrL"), "corrL exists");
+    assert!(edge_types.contains("corrR"), "corrR exists");
 
-    // Kein Delta-Solid vs Ghost-Test hier, nur Existenz.
+    // No solid-vs-ghost delta check here, only existence.
     let _ = Status::Solid; // suppress unused warning
 }

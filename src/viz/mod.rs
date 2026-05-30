@@ -1,7 +1,7 @@
-//! Visualisierungs-Hilfen für Debugging und Paper-Figuren.
+//! Visualization helpers for debugging and paper figures.
 //!
-//! Das `dot`-Submodul rendert `TypedGraph` und `Cascade` in GraphViz-DOT.
-//! File-IO-Helfer sind hinter `cfg(feature = "regen_graphs")` gestellt,
-//! damit reguläre `cargo test`-Läufe nichts überschreiben.
+//! The `dot` submodule renders `TypedGraph` and `Cascade` as GraphViz DOT.
+//! File-IO helpers sit behind `cfg(feature = "regen_graphs")` so that
+//! regular `cargo test` runs do not overwrite anything.
 
 pub mod dot;

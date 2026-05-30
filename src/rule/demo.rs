@@ -1,12 +1,12 @@
-//! Demo-Rules-Zugriff: die Paper-Running-Example als
-//! `CompiledRuleSpec` und `Box<dyn Rule>`.
+//! Demo-rule access: the paper's running example as a
+//! `CompiledRuleSpec` and `Box<dyn Rule>`.
 //!
-//! Die JSON-Fixture unter `tests/fixtures/demo-ruleset.json` wird als
-//! `include_str!` eingebettet — damit ist der Demo-RuleSet-Text die
-//! **eine Quelle der Wahrheit**, gemeinsam zwischen Java-Exporter,
-//! Rust-Cross-Module-Tests und der in-binary Demo-Rule-Registrierung.
+//! The JSON fixture under `tests/fixtures/demo-ruleset.json` is
+//! embedded via `include_str!`, making the demo RuleSet text the
+//! **single source of truth** shared between the Java exporter, the
+//! Rust cross-module tests, and the in-binary demo-rule registration.
 //!
-//! Ersetzt die alte hart-kodierte `build_demo_rule`-Fabrik aus
+//! Replaces the old hard-coded `build_demo_rule` factory from
 //! `seesaw-jni`.
 
 use crate::engine::Rule;
@@ -15,30 +15,30 @@ use super::compile::{compile, CompiledRuleSpec};
 use super::instantiate::instantiate;
 use super::spec::{parse_ruleset, RuleSetSpec};
 
-/// Demo-RuleSet-JSON — eingebettet zum Compile-Zeit aus der shared
-/// Fixture.
+/// Demo RuleSet JSON — embedded at compile time from the shared
+/// fixture.
 pub const DEMO_RULESET_JSON: &str = include_str!("../../tests/fixtures/demo-ruleset.json");
 
-/// Parst die eingebettete Demo-RuleSet-Fixture. Panikt, wenn die
-/// Fixture selbst kaputt ist — das wäre ein Build-Time-Bug.
+/// Parses the embedded demo RuleSet fixture. Panics if the fixture
+/// itself is broken — that would be a build-time bug.
 pub fn demo_ruleset_spec() -> RuleSetSpec {
     parse_ruleset(DEMO_RULESET_JSON).expect("embedded demo fixture ist valide")
 }
 
-/// Liefert die kompilierte Spec einer Demo-Rule per Name.
+/// Returns the compiled spec of a demo rule by name.
 pub fn demo_rule_compiled(name: &str) -> Option<CompiledRuleSpec> {
     let rs = demo_ruleset_spec();
     let r = rs.rules.into_iter().find(|r| r.name == name)?;
     compile(&r).ok()
 }
 
-/// Liefert eine einsatzfertige Rule-Instanz per Name — Drop-in-Replace
-/// für die alte `build_demo_rule`-Fabrik.
+/// Returns a ready-to-use rule instance by name — drop-in replacement
+/// for the old `build_demo_rule` factory.
 pub fn demo_rule_instantiated(name: &str) -> Option<Box<dyn Rule>> {
     demo_rule_compiled(name).map(|c| instantiate(&c))
 }
 
-/// Namen aller vier Paper-Demo-Rules in Deklarations-Reihenfolge.
+/// Names of all four paper demo rules in declaration order.
 pub const DEMO_RULE_NAMES: &[&str] = &["R_Class", "R_Attr", "R_Getter", "R_Setter"];
 
 #[cfg(test)]

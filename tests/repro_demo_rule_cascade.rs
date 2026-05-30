@@ -1,10 +1,10 @@
-//! Reproduktion der emf_adapter `RuleEngineTest.cascadeStepByStepCountsDeltas`-
-//! Failure auf reiner Rust-Seite (ohne JNI-Bridge). Wenn dieser Test
-//! lokal failt → Bug ist in seesaw_tgg (Rule-Compile/Matching).
-//! Wenn er passes → Bug sitzt im JNI-Glue (apply_add_node, Session-
-//! Init etc.).
+//! Reproduces the emf_adapter `RuleEngineTest.cascadeStepByStepCountsDeltas`
+//! failure on the pure Rust side (without the JNI bridge). If this
+//! test fails locally → bug is in seesaw_tgg (rule compile/matching).
+//! If it passes → bug sits in the JNI glue (apply_add_node, session
+//! init, etc.).
 //!
-//! Java-Test-Sequenz die reproduziert wird:
+//! Reproduced Java test sequence:
 //!
 //! ```text
 //! submitDelta({
@@ -30,7 +30,7 @@ fn attrs(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
         .collect()
 }
 
-/// Konstruiert den Graph aus dem Java-Test als reine Solid-Baseline:
+/// Constructs the graph from the Java test as a pure Solid baseline:
 /// root (Unknown) ── contains ──▶ m1 (Model) ── classes ──▶ c1 (Class)
 ///                                                ── attributes ──▶ a1 (Attribute)
 fn build_baseline_graph() -> TypedGraph {
@@ -80,16 +80,16 @@ fn demo_r_class_should_match_baseline_graph() {
     assert_eq!(
         state,
         TerminationState::Running,
-        "R_Class sollte auf Model→Class matchen; state={:?}, cascadeLength={}",
+        "R_Class should match on Model→Class; state={:?}, cascadeLength={}",
         state,
         cascade.len()
     );
-    assert_eq!(cascade.len(), 1, "Genau 1 Schritt sollte angewandt sein");
+    assert_eq!(cascade.len(), 1, "exactly 1 step should have been applied");
 }
 
-/// Bug B (siehe open-points.md): R_Getter/R_Setter feuern nicht,
-/// weil `is_duplicate` Context-Ops fälschlich als Duplikat wertet.
-/// Test ist aktuell `#[ignore]` — wird mit Bug-B-Fix re-aktiviert.
+/// Bug B (see open-points.md): R_Getter/R_Setter do not fire
+/// because `is_duplicate` wrongly classifies context ops as duplicates.
+/// Test is currently `#[ignore]` — will be re-enabled with the Bug B fix.
 #[test]
 fn demo_all_four_rules_should_produce_getter_and_setter() {
     use seesaw_tgg::engine::run_cascade;
@@ -115,8 +115,8 @@ fn demo_all_four_rules_should_produce_getter_and_setter() {
         g.iter_nodes().map(|n| n.type_id.clone()).collect();
     println!("kinds={kinds:?}");
 
-    assert!(kinds.contains("Getter"), "Getter erwartet");
-    assert!(kinds.contains("Setter"), "Setter erwartet");
+    assert!(kinds.contains("Getter"), "Getter expected");
+    assert!(kinds.contains("Setter"), "Setter expected");
 }
 
 #[test]
@@ -128,12 +128,12 @@ fn demo_r_class_then_r_attr_should_chain() {
     let r_attr = demo_rule_instantiated("R_Attr").expect("R_Attr");
     let rules: Vec<&dyn Rule> = vec![r_class.as_ref(), r_attr.as_ref()];
 
-    // Schritt 1: R_Class (rank 40)
+    // Step 1: R_Class (rank 40)
     let s1 = cascade_step(&mut cascade, &mut g, &rules).expect("cascade_step 1");
     assert_eq!(s1, TerminationState::Running, "Step 1 state");
     assert_eq!(cascade.len(), 1, "Step 1 cascadeLength");
 
-    // Schritt 2: R_Attr (rank 30, nach R_Class)
+    // Step 2: R_Attr (rank 30, after R_Class)
     let s2 = cascade_step(&mut cascade, &mut g, &rules).expect("cascade_step 2");
     assert_eq!(s2, TerminationState::Running, "Step 2 state");
     assert_eq!(cascade.len(), 2, "Step 2 cascadeLength");

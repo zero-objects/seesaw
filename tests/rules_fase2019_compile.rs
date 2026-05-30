@@ -1,6 +1,6 @@
-//! Validiert dass die 3-Rule-Fixtures parsen und kompilieren.
-//! Wenn einer der Rules einen Compile-Error wirft, schlägt
-//! dieser Test sofort an — vor den eigentlichen Case-Tests.
+//! Validates that the 3-rule fixtures parse and compile.
+//! If any rule throws a compile error, this test trips
+//! immediately — ahead of the actual case tests.
 
 use seesaw_tgg::rule::spec::parse_ruleset;
 use seesaw_tgg::rule::{compile, instantiate};
@@ -10,12 +10,12 @@ const FIXTURE_WITH_SC: &str = include_str!("fixtures/rules_fase2019_3rule_with_s
 
 #[test]
 fn fase2019_3rule_parses_and_compiles() {
-    let rs = parse_ruleset(FIXTURE_3RULE).expect("parst");
+    let rs = parse_ruleset(FIXTURE_3RULE).expect("parses");
     assert_eq!(rs.name.as_deref(), Some("fase2019-3rule"));
     assert_eq!(rs.rules.len(), 3);
     for r in &rs.rules {
         let compiled =
-            compile(r).unwrap_or_else(|e| panic!("Rule {} kompiliert nicht: {:?}", r.name, e));
+            compile(r).unwrap_or_else(|e| panic!("rule {} does not compile: {:?}", r.name, e));
         let _instantiated = instantiate(&compiled);
     }
 }
@@ -32,11 +32,11 @@ fn fase2019_3rule_ranks() {
 
 #[test]
 fn fase2019_with_sc_parses_and_compiles() {
-    let rs = parse_ruleset(FIXTURE_WITH_SC).expect("parst");
+    let rs = parse_ruleset(FIXTURE_WITH_SC).expect("parses");
     assert_eq!(rs.rules.len(), 4);
     for r in &rs.rules {
         let compiled =
-            compile(r).unwrap_or_else(|e| panic!("Rule {} kompiliert nicht: {:?}", r.name, e));
+            compile(r).unwrap_or_else(|e| panic!("rule {} does not compile: {:?}", r.name, e));
         let _ = instantiate(&compiled);
     }
 }
@@ -58,6 +58,6 @@ fn sc_repair_rank_higher_than_root() {
         .rank;
     assert!(
         sc > root,
-        "SC-Repair ({sc}) muss rank > Root-Rule ({root}) haben"
+        "SC-Repair ({sc}) must have rank > Root-Rule ({root})"
     );
 }

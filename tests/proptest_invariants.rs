@@ -14,19 +14,19 @@ use seesaw_tgg::graph::{GhostId, NodeData, Status, TypedGraph};
 use seesaw_tgg::ops::{DeltaEntry, Op, Origin};
 use std::collections::BTreeMap;
 
-// ══ Strategien ═══════════════════════════════════════════════════════════
+// ══ Strategies ═══════════════════════════════════════════════════════════
 
-/// Generiert einen opaken String-Identifier aus einem beschränkten Alphabet.
+/// Generates an opaque string identifier from a restricted alphabet.
 fn arb_opaque_id() -> impl Strategy<Value = String> {
     "[a-z]{3,6}[0-9]{0,2}".prop_map(|s| s.to_string())
 }
 
-/// Kleiner Attribute-Bag (0-3 Einträge).
+/// Small attribute bag (0-3 entries).
 fn arb_attrs() -> impl Strategy<Value = BTreeMap<String, String>> {
     prop::collection::btree_map("[a-z]{2,4}", "[a-zA-Z]{1,8}", 0..3)
 }
 
-/// Baseline-Graph mit n zufälligen SOLID-Knoten.
+/// Baseline graph with n random SOLID nodes.
 fn arb_baseline_graph(size: usize) -> impl Strategy<Value = (TypedGraph, Vec<GhostId>)> {
     prop::collection::vec(arb_opaque_id(), size..=size).prop_map(move |opaques| {
         let mut graph = TypedGraph::new();
@@ -47,8 +47,8 @@ fn arb_baseline_graph(size: usize) -> impl Strategy<Value = (TypedGraph, Vec<Gho
     })
 }
 
-/// Strategie für eine Op, die einen beliebigen bekannten Knoten aus `ids`
-/// als Parent/Target wählt.
+/// Strategy for an Op that picks any known node from `ids`
+/// as parent/target.
 fn arb_op_over_ids(ids: Vec<GhostId>) -> impl Strategy<Value = Op> {
     if ids.is_empty() {
         return Just(Op::SetAttr {
@@ -64,7 +64,7 @@ fn arb_op_over_ids(ids: Vec<GhostId>) -> impl Strategy<Value = Op> {
     let ids_edge = ids.clone();
 
     prop_oneof![
-        // AddNode: neues Ghost-Kind von einem beliebigen existierenden Knoten
+        // AddNode: new ghost child of any existing node
         (
             0..ids_add.len(),
             "[a-z]{3,5}",
@@ -77,7 +77,7 @@ fn arb_op_over_ids(ids: Vec<GhostId>) -> impl Strategy<Value = Op> {
                 type_id,
                 attrs,
             }),
-        // AddEdge zwischen zwei bekannten Knoten
+        // AddEdge between two known nodes
         (0..ids_edge.len(), 0..ids_edge.len(), "[a-z]{2,5}").prop_map(move |(s, t, etype)| {
             Op::AddEdge {
                 source: ids_edge[s],
@@ -86,7 +86,7 @@ fn arb_op_over_ids(ids: Vec<GhostId>) -> impl Strategy<Value = Op> {
                 attrs: BTreeMap::new(),
             }
         }),
-        // SetAttr auf einem bekannten Knoten
+        // SetAttr on a known node
         (0..ids_set.len(), "[a-z]{2,4}", "[a-z0-9]{1,6}").prop_map(move |(i, k, v)| {
             Op::SetAttr {
                 target: ids_set[i],
@@ -94,14 +94,14 @@ fn arb_op_over_ids(ids: Vec<GhostId>) -> impl Strategy<Value = Op> {
                 value: v,
             }
         }),
-        // DelNode auf einem bekannten Knoten (niedriges Gewicht, TOMB rare)
+        // DelNode on a known node (low weight, TOMB rare)
         (0..ids_del.len()).prop_map(move |i| Op::DelNode { target: ids_del[i] }),
     ]
     .boxed()
 }
 
-/// Generiert eine Kaskade aus bis zu `max_entries` Delta-Einträgen mit je
-/// 1-3 Ops, wobei Ops auf die Baseline-Knoten referenzieren.
+/// Generates a cascade of up to `max_entries` delta entries, each with
+/// 1-3 ops, where ops reference baseline nodes.
 fn arb_cascade(max_entries: usize, ids: Vec<GhostId>) -> impl Strategy<Value = Cascade> {
     prop::collection::vec(
         prop::collection::vec(arb_op_over_ids(ids.clone()), 1..=3),
@@ -135,10 +135,10 @@ fn arb_cascade(max_entries: usize, ids: Vec<GhostId>) -> impl Strategy<Value = C
     })
 }
 
-// ══ V₆: Kaskaden-Längen-Monotonie ═══════════════════════════════════════
+// ══ V₆: cascade length monotonicity ═════════════════════════════════════
 
 proptest! {
-    /// V₆: append ist streng monoton und append-only; |D_x| = x+1.
+    /// V₆: append is strictly monotone and append-only; |D_x| = x+1.
     #[test]
     fn v6_cascade_length_monotone(
         n in 0..25usize,
@@ -159,10 +159,10 @@ proptest! {
     }
 }
 
-// ══ GhostId-Determinismus ════════════════════════════════════════════════
+// ══ GhostId determinism ══════════════════════════════════════════════════
 
 proptest! {
-    /// `GhostId::from_opaque` ist deterministisch.
+    /// `GhostId::from_opaque` is deterministic.
     #[test]
     fn ghost_id_from_opaque_deterministic(s in "[a-zA-Z0-9_-]{1,32}") {
         let a = GhostId::from_opaque(&s);
@@ -170,7 +170,7 @@ proptest! {
         prop_assert_eq!(a, b);
     }
 
-    /// `GhostId::from_baseline` ist deterministisch.
+    /// `GhostId::from_baseline` is deterministic.
     #[test]
     fn ghost_id_from_baseline_deterministic(s in "[a-zA-Z0-9]{1,16}") {
         let a = GhostId::from_baseline(&s);
@@ -178,8 +178,8 @@ proptest! {
         prop_assert_eq!(a, b);
     }
 
-    /// Verschiedene Opaque-Strings erzeugen verschiedene IDs (SHA-256
-    /// Kollisionsresistenz).
+    /// Distinct opaque strings produce distinct ids (SHA-256
+    /// collision resistance).
     #[test]
     fn ghost_id_opaque_distinguishes(
         s1 in "[a-zA-Z]{1,16}",
@@ -192,17 +192,17 @@ proptest! {
     }
 }
 
-// ══ V₄: Projektions-Determinismus ═══════════════════════════════════════
+// ══ V₄: projection determinism ══════════════════════════════════════════
 
 proptest! {
-    /// V₄: Wiederholte Anwendung einer Op-Sequenz auf den gleichen
-    /// Anfangsgraphen liefert strukturell gleichen Ergebnisgraphen.
+    /// V₄: Repeated application of an op sequence on the same
+    /// initial graph yields a structurally equal result graph.
     #[test]
     fn v4_projection_deterministic(
         (base, ids) in arb_baseline_graph(3),
         ops in prop::collection::vec(arb_op_over_ids(vec![GhostId::from_baseline("seed_0_0")]), 0..8),
     ) {
-        let _ = ids; // Nur zur Baseline-Generierung
+        let _ = ids; // baseline generation only
         let mut g1 = base.clone();
         let mut g2 = base.clone();
 
@@ -218,11 +218,11 @@ proptest! {
     }
 }
 
-// ══ V₁₆: Fold-Terminierung ══════════════════════════════════════════════
+// ══ V₁₆: fold termination ═══════════════════════════════════════════════
 
 proptest! {
-    /// V₁₆: `consolidate` terminiert auf jeder endlichen Kaskade ohne
-    /// Deadlock.
+    /// V₁₆: `consolidate` terminates on every finite cascade without
+    /// deadlock.
     #[test]
     fn v16_fold_terminates(
         (base, ids) in arb_baseline_graph(3),
@@ -233,20 +233,20 @@ proptest! {
         ]),
     ) {
         let _ = ids;
-        // consolidate() darf Err zurückgeben (z.\ B.\ bei
-        // Referenz auf nicht-existenten Knoten), muss aber _terminieren_.
+        // consolidate() may return Err (e.g. on a reference to a
+        // non-existent node), but it must _terminate_.
         let result = consolidate(&base, &cascade);
-        // Einziges Prädikat: es liefert ein Ergebnis und hängt nicht.
+        // Only predicate: it returns a result and does not hang.
         let _ = result;
     }
 }
 
-// ══ V₁₇: Fold erhält Materialisierung (vereinfacht) ══════════════════════
+// ══ V₁₇: fold preserves materialization (simplified) ═════════════════════
 
 proptest! {
-    /// V₁₇-Eingeschränkt: wenn `consolidate` erfolgreich ist, dann hat
-    /// das Ergebnis weniger oder gleich viele Knoten/Kanten wie direkte
-    /// Anwendung der ganzen Kaskade (Upper-Bound durch Nullifikation).
+    /// V₁₇ restricted: when `consolidate` succeeds, the result has
+    /// fewer or equal nodes/edges than direct application of the
+    /// full cascade (upper bound via nullification).
     #[test]
     fn v17_fold_is_reduction(
         (base, _ids) in arb_baseline_graph(2),
@@ -255,7 +255,7 @@ proptest! {
             GhostId::from_baseline("seed_1_1"),
         ]),
     ) {
-        // Voll-Anwendung
+        // Full application
         let mut direct = base.clone();
         let mut direct_ok = true;
         for entry in &cascade.entries {
@@ -268,19 +268,19 @@ proptest! {
             if !direct_ok { break; }
         }
 
-        // fold-Weg
+        // Fold path
         let fold_result = consolidate(&base, &cascade);
         if let Ok(result) = fold_result {
             let net = diff(&base, &result.new_baseline);
-            // Null-Delta ist möglich; Prüfung auf formale Summary-Funktionalität.
+            // Null delta is possible; check formal summary functionality.
             let _ = net.summary();
-            // Upper-Bound: fold-Baseline hat ≤ so viele Knoten wie
-            // Full-Apply (weil fold Nullifikationen + Tombstones entfernt).
+            // Upper bound: fold baseline has ≤ as many nodes as
+            // full-apply (because fold removes nullifications + tombstones).
             if direct_ok {
                 let direct_mat = direct.materialize();
                 prop_assert!(
                     result.new_baseline.node_count() <= direct_mat.node_count(),
-                    "fold reduziert oder erhält node_count: fold={}, direct={}",
+                    "fold reduces or preserves node_count: fold={}, direct={}",
                     result.new_baseline.node_count(),
                     direct_mat.node_count(),
                 );
@@ -289,10 +289,10 @@ proptest! {
     }
 }
 
-// ══ GhostId::from_parent Verwendung ═════════════════════════════════════
+// ══ GhostId::from_parent usage ══════════════════════════════════════════
 
 proptest! {
-    /// Parent-rooted Hash ist strukturell determiniert.
+    /// Parent-rooted hash is structurally determined.
     #[test]
     fn ghost_id_from_parent_deterministic(
         parent_name in "[a-z]{1,8}",

@@ -1,7 +1,7 @@
-//! M1 Integration-Test: Attribute-Matcher + Regex.
+//! M1 integration test: attribute matcher + regex.
 //!
-//! Validiert parsen, kompilieren und Matcher-Verhalten über alle
-//! AttrMatcherSpec-Varianten.
+//! Validates parsing, compilation, and matcher behavior across all
+//! AttrMatcherSpec variants.
 
 use seesaw_tgg::engine::{find_matches, AttrPredicate, NodePattern, Pattern, Rule};
 use seesaw_tgg::graph::TypedGraph;
@@ -13,10 +13,10 @@ const FIXTURE: &str = include_str!("fixtures/rules_attr_regex_demo.json");
 
 #[test]
 fn fixture_parses_and_compiles() {
-    let rs = parse_ruleset(FIXTURE).expect("parst");
+    let rs = parse_ruleset(FIXTURE).expect("parses");
     assert_eq!(rs.rules.len(), 4);
     for r in &rs.rules {
-        let cr = compile(r).unwrap_or_else(|e| panic!("Rule {} kompiliert nicht: {:?}", r.name, e));
+        let cr = compile(r).unwrap_or_else(|e| panic!("rule {} does not compile: {:?}", r.name, e));
         let _boxed: Box<dyn Rule> = instantiate(&cr);
     }
 }
@@ -51,7 +51,7 @@ fn matcher_types_deserialized_correctly() {
         }
     ));
 
-    // Rule 3 Literal-Flag: neues Matcher-Schema
+    // Rule 3 Literal-Flag: new matcher schema
     let literal_rule = &rs.rules[3];
     let c = &literal_rule.l_pattern.as_ref().unwrap().nodes[0].constraints[0];
     assert!(matches!(
@@ -78,7 +78,7 @@ fn regex_matcher_on_real_graph() {
             .collect::<BTreeMap<_, _>>(),
     );
 
-    // Pattern mit Regex direkt bauen
+    // Build a pattern with a regex directly
     let pat = Pattern::new().with_node({
         let mut np = NodePattern::new("c", "Class");
         np.attr_constraints.push((
@@ -89,8 +89,8 @@ fn regex_matcher_on_real_graph() {
     });
 
     let matches = find_matches(&pat, &g);
-    // Nur AbstractBase matcht
-    assert_eq!(matches.len(), 1, "nur 'AbstractBase' matcht ^Abstract");
+    // Only AbstractBase matches
+    assert_eq!(matches.len(), 1, "only 'AbstractBase' matches ^Abstract");
 }
 
 #[test]
@@ -126,7 +126,7 @@ fn prefix_matcher_on_real_graph() {
     });
 
     let matches = find_matches(&pat, &g);
-    assert_eq!(matches.len(), 1, "nur getAge matcht Prefix 'get'");
+    assert_eq!(matches.len(), 1, "only getAge matches prefix 'get'");
 }
 
 #[test]
@@ -167,12 +167,12 @@ fn numeric_range_matcher_accepts_in_range_rejects_out() {
     });
 
     let matches = find_matches(&pat, &g);
-    assert_eq!(matches.len(), 1, "nur r1 matcht Range [0..100]");
+    assert_eq!(matches.len(), 1, "only r1 matches range [0..100]");
 }
 
 #[test]
 fn literal_matcher_via_tagged_json() {
-    // Literal-Variante im neuen Matcher-Schema.
+    // Literal variant in the new matcher schema.
     let json = r#"{
         "name": "literal-test",
         "rules": [{
@@ -225,10 +225,10 @@ fn invalid_regex_reports_compile_error() {
         }]
     }"#;
     let rs = parse_ruleset(json).unwrap();
-    let err = compile(&rs.rules[0]).expect_err("invalid regex muss scheitern");
+    let err = compile(&rs.rules[0]).expect_err("invalid regex must fail");
     let msg = format!("{err:?}");
     assert!(
         msg.contains("InvalidRegex") || msg.contains("Regex"),
-        "Error-Message enthält InvalidRegex: {msg}"
+        "error message contains InvalidRegex: {msg}"
     );
 }
