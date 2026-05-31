@@ -56,7 +56,7 @@ rank as an interface, not a fixed policy.
 
 ```toml
 [dependencies]
-seesaw-tgg = "1.0.0-rc7"
+seesaw-tgg = "1.0.0-rc8"
 ```
 
 ```rust
@@ -132,7 +132,7 @@ The Rustdoc reference is at <https://docs.rs/seesaw-tgg>.
 
 ## Status
 
-`1.0.0-rc7` — release candidate. API may still see breaking changes before
+`1.0.0-rc8` — release candidate. API may still see breaking changes before
 `1.0.0`. The core algorithms (cascade, fold, ranked backtracking) are stable
 and test-covered across ~265 unit, integration, and property tests including
 benchmark suites against published research cases (FASE 2019, JOT 2022,

@@ -746,6 +746,31 @@ where
     best
 }
 
+/// Direction-bundled rule selection: returns the rules relevant to the
+/// last delta. A rule is active iff it is **undirected**
+/// (`input_domain_kinds` empty) **or** its input kinds intersect
+/// `delta_kinds`. This is what keeps a bidirectional rule set
+/// (`compile_bidirectional` → `R→` / `R←`) from ping-ponging: a delta on
+/// the L-domain activates only the forward rules, a delta on the R-domain
+/// only the backward rules — the direction lives in the delta, not in a
+/// manual pass switch.
+///
+/// The caller derives `delta_kinds` from the just-applied delta (the
+/// `type_id`s it touches) and passes the result to [`run_cascade`].
+pub fn directional_rule_refs<'a>(
+    rules: &'a [Box<dyn Rule>],
+    delta_kinds: &HashSet<String>,
+) -> Vec<&'a dyn Rule> {
+    rules
+        .iter()
+        .filter(|r| {
+            let idk = r.input_domain_kinds();
+            idk.is_empty() || idk.iter().any(|k| delta_kinds.contains(k))
+        })
+        .map(|r| r.as_ref())
+        .collect()
+}
+
 // ── Cascade ══════════════════════════════════════════════════════════════
 
 #[derive(Debug, Default, Clone)]
@@ -997,21 +1022,54 @@ pub fn is_contradictory_with_cascade(
 
 /// Computes the retraction cascade for an op.
 ///
-/// Currently implemented: on DelNode, all matchable incident edges
-/// are produced as induced DelEdge ops (structural dependency
-/// Def. 3.7 for edge endpoints).
-///
-/// Further dependency kinds (e.g. correspondence nodes, attributes
-/// with required type) can be added here in future iterations.
+/// On DelNode, all matchable incident edges are produced as induced
+/// DelEdge ops (structural dependency Def. 3.7 for edge endpoints), and
+/// — following `corrL`/`corrR` — the correspondence node and its partner
+/// on the opposite domain are tombstoned too, so a delete on one side of
+/// a translated pair propagates the whole triple.
 pub fn retraction_cascade_for(op: &Op, graph: &TypedGraph) -> Vec<Op> {
     match op {
-        Op::DelNode { target } => graph
-            .incident_edges(target)
-            .into_iter()
-            .map(|(edge, _)| Op::DelEdge { target: edge.id })
-            .collect(),
+        Op::DelNode { target } => {
+            let mut ops = Vec::new();
+
+            // 1. Tombstone every incident edge of the deleted node.
+            for (edge, _) in graph.incident_edges(target) {
+                ops.push(Op::DelEdge { target: edge.id });
+            }
+
+            // 2. Follow `corrL`/`corrR` edges to the correspondence node,
+            //    then across its other correspondence edge to the partner
+            //    on the opposite domain. Tombstone both.
+            for (edge, neighbor) in graph.incident_edges(target) {
+                if !is_correspondence_edge(&edge.type_id) {
+                    continue;
+                }
+                // `neighbor` is the correspondence node. Walk its other
+                // correspondence edge to find the partner; emit DelNode for
+                // the partner and for the correspondence node itself.
+                for (other_edge, other) in graph.incident_edges(&neighbor) {
+                    if other == *target {
+                        continue;
+                    }
+                    if !is_correspondence_edge(&other_edge.type_id) {
+                        continue;
+                    }
+                    ops.push(Op::DelNode { target: other });
+                }
+                ops.push(Op::DelNode { target: neighbor });
+            }
+
+            ops
+        }
         _ => Vec::new(),
     }
+}
+
+/// Returns `true` iff the edge kind names a TGG correspondence edge.
+/// The seesaw convention is `"corrL"` (anchor → corr) and `"corrR"`
+/// (corr → R-side). Generic across user rules — no demo-name hardcoding.
+fn is_correspondence_edge(kind: &str) -> bool {
+    kind == "corrL" || kind == "corrR"
 }
 
 /// Expands a primary op list with its retraction cascades while
@@ -1878,6 +1936,39 @@ mod tests {
             .iter()
             .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
+    }
+
+    /// `directional_rule_refs` keeps only the rules whose
+    /// `input_domain_kinds` intersect the delta; undirected rules always
+    /// stay active.
+    #[test]
+    fn directional_rule_refs_filters_by_input_domain_kinds() {
+        let fwd: Box<dyn Rule> = Box::new(
+            BasicRule::new("R\u{2192}", 10, Pattern::new(), |_, _| vec![])
+                .with_input_domain_kinds(vec!["Class".to_string()]),
+        );
+        let bwd: Box<dyn Rule> = Box::new(
+            BasicRule::new("R\u{2190}", 10, Pattern::new(), |_, _| vec![])
+                .with_input_domain_kinds(vec!["JavaClass".to_string()]),
+        );
+        let undirected: Box<dyn Rule> =
+            Box::new(BasicRule::new("R0", 10, Pattern::new(), |_, _| vec![]));
+        let rules = vec![fwd, bwd, undirected];
+
+        let delta: std::collections::HashSet<String> = ["Class".to_string()].into_iter().collect();
+        let active: Vec<&str> = directional_rule_refs(&rules, &delta)
+            .iter()
+            .map(|r| r.id())
+            .collect();
+        assert!(
+            active.contains(&"R\u{2192}"),
+            "forward active on a Class delta"
+        );
+        assert!(active.contains(&"R0"), "undirected rule always active");
+        assert!(
+            !active.contains(&"R\u{2190}"),
+            "backward must NOT be active on a Class delta, was: {active:?}"
+        );
     }
 
     fn setup_uml_graph() -> (TypedGraph, GhostId, GhostId, GhostId, GhostId) {

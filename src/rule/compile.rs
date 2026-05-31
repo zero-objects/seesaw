@@ -42,12 +42,15 @@ pub struct CompiledRuleSpec {
     /// Compiled NACs (M2). Checked by the matcher after the
     /// main match.
     pub nacs: Vec<CompiledNac>,
-    /// rc7: "real input kinds" of this directed rule =
-    /// `l_pattern` kinds **minus** `r_pattern` kinds (shared anchors
-    /// removed). A rule is active for a Δ when this set intersects
-    /// the Δ kinds — this derives the cascade direction from the Δ
-    /// (anti-ping-pong, see spec §5). Sorted and deduplicated for
-    /// deterministic comparisons.
+    /// "Trigger kinds" of this directed rule = the kinds of the L-side
+    /// anchors of the correspondences this rule **establishes**. A rule
+    /// is active for a delta when this set intersects the delta kinds —
+    /// this derives the cascade direction from the delta (anti-ping-pong,
+    /// see spec §5). Deriving it from the established-correspondence
+    /// anchors (rather than an `l_pattern`-minus-`r_pattern` set
+    /// difference) is what lets a `{JavaField}` delta activate only the
+    /// attribute rule's backward direction, not the getter/setter rules.
+    /// Sorted and deduplicated for deterministic comparisons.
     pub input_domain_kinds: Vec<String>,
 }
 
@@ -250,6 +253,21 @@ pub enum CompileError {
              NodePattern (l_node_id='{l}', r_node_id='{r}')"
     )]
     DanglingCorrespondence { rule: String, l: String, r: String },
+
+    #[error(
+        "Rule '{rule}': created node '{var}' (kind '{kind}') has NO \
+         correspondence. In seesaw every created node carries a \
+         correspondence (otherwise `instantiate` never materializes it and \
+         it is unreachable via corrL/corrR on deletion). Give the node an \
+         Establishes correspondence (several target nodes may correspond to \
+         the same source element) instead of a correspondence-less \
+         'virtual' node."
+    )]
+    CreatedNodeWithoutCorrespondence {
+        rule: String,
+        var: String,
+        kind: String,
+    },
 
     #[error("Rule '{rule}': unbekannte Transformation '{tag}'")]
     InvalidTransform { rule: String, tag: String },
@@ -530,6 +548,28 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
         }
     }
 
+    // ── 4b. Contract: every created node carries a correspondence ────
+    // `instantiate` only materializes a `nodes_to_create` entry when it is
+    // the `r_node_id` target of an Establishes correspondence (corr-rooted).
+    // A correspondence-less R-only node would be silently dropped
+    // (plan-vs-production mismatch) and would be unreachable by `corrL`/
+    // `corrR` on deletion. Rather than emit such a "virtual" node, reject
+    // here: the consumer must give every created node a correspondence (a
+    // fan-out correspondence onto the same source element is allowed).
+    let established_targets: HashSet<&str> = corrs_to_create
+        .iter()
+        .map(|cl| cl.r_node_id.as_str())
+        .collect();
+    for n in &nodes_to_create {
+        if !established_targets.contains(n.var.as_str()) {
+            return Err(CompileError::CreatedNodeWithoutCorrespondence {
+                rule: spec.name.clone(),
+                var: n.var.clone(),
+                kind: n.kind.clone(),
+            });
+        }
+    }
+
     // ── 5. Derive propagations from AttrBindings ─────────────────────
     // For every newly established corr link, a propagation L→R (and
     // the reverse direction) is planned per AttrBinding. The engine
@@ -621,6 +661,29 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
         }
     }
 
+    // Trigger kinds (computed before `corrs_to_create` is moved into the
+    // struct below): the kinds of the L-side anchors of the correspondences
+    // this rule establishes. A delta of one of these kinds is what
+    // activates this (directed) rule — see the `input_domain_kinds` field.
+    // Deriving it from the established-correspondence anchors (rather than
+    // an L-minus-R set difference) is what lets a `{JavaField}` delta
+    // activate only the attribute rule's backward direction, not the
+    // getter/setter rules.
+    let input_domain_kinds: Vec<String> = {
+        let l_kind_of: std::collections::HashMap<&str, &str> = l_pat
+            .nodes
+            .iter()
+            .map(|n| (n.id.as_str(), n.kind.as_str()))
+            .collect();
+        let mut v: Vec<String> = corrs_to_create
+            .iter()
+            .filter_map(|cc| l_kind_of.get(cc.l_node_id.as_str()).map(|k| k.to_string()))
+            .collect();
+        v.sort();
+        v.dedup();
+        v
+    };
+
     Ok(CompiledRuleSpec {
         name: spec.name.clone(),
         rank: spec.rank,
@@ -640,20 +703,7 @@ pub fn compile(spec: &RuleSpec) -> Result<CompiledRuleSpec, CompileError> {
         },
         propagation_plan: propagations,
         nacs: compile_nacs(spec, l_pat)?,
-        input_domain_kinds: {
-            let r_kinds: std::collections::HashSet<&str> =
-                r_pat.nodes.iter().map(|n| n.kind.as_str()).collect();
-            let mut v: Vec<String> = l_pat
-                .nodes
-                .iter()
-                .map(|n| n.kind.as_str())
-                .filter(|k| !r_kinds.contains(k))
-                .map(String::from)
-                .collect();
-            v.sort();
-            v.dedup();
-            v
-        },
+        input_domain_kinds,
     })
 }
 
@@ -762,6 +812,43 @@ mod tests {
     fn demo_rule(name: &str) -> RuleSpec {
         let rs = parse_ruleset(DEMO_FIXTURE).unwrap();
         rs.rules.into_iter().find(|r| r.name == name).unwrap()
+    }
+
+    /// A creation block whose R-side node (`skel`) has no correspondence is
+    /// never materialized by `instantiate` (plan-vs-production mismatch) →
+    /// `compile` rejects it.
+    #[test]
+    fn compile_rejects_created_node_without_correspondence() {
+        let json = r#"{"rules":[{
+            "name":"R_Skel","rank":10,
+            "l_pattern":{"nodes":[{"id":"c","kind":"Class","constraints":[]}],"edges":[]},
+            "r_pattern":{"nodes":[{"id":"jc","kind":"JavaClass","constraints":[]},
+                                  {"id":"skel","kind":"Sequence","constraints":[]}],
+                         "edges":[{"kind":"hasSeq","source_node_id":"jc","target_node_id":"skel"}]},
+            "correspondence_links":[
+                {"l_node_id":"c","r_node_id":"jc","role":"Establishes",
+                 "attribute_bindings":[{"l_attr_name":"name","r_attr_name":"name"}]}
+            ]
+        }]}"#;
+        let rs = parse_ruleset(json).unwrap();
+        let err = compile(&rs.rules[0]).unwrap_err();
+        assert!(
+            matches!(&err,
+                CompileError::CreatedNodeWithoutCorrespondence { var, .. } if var == "skel"),
+            "expected rejection of the correspondence-less node 'skel', was: {err:?}"
+        );
+    }
+
+    /// Counter-check: the demo rules are conformant (every created node
+    /// carries a correspondence, incl. getter/setter via a fan-out corr on
+    /// 'a') → bidirectional compilation still succeeds.
+    #[test]
+    fn compile_accepts_demo_rules_every_created_node_has_correspondence() {
+        for name in ["R_Class", "R_Attr", "R_Getter", "R_Setter"] {
+            let rule = demo_rule(name);
+            compile_bidirectional(&rule)
+                .unwrap_or_else(|e| panic!("demo rule {name} must compile: {e:?}"));
+        }
     }
 
     #[test]

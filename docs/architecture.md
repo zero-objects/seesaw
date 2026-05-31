@@ -172,6 +172,21 @@ A rule has two layers:
   context-vs-creation role of each correspondence from `role` + the
   bindings.
 
+> **Invariant — every created node carries a correspondence.** A node
+> that a rule *creates* (an R-only node in `nodes_to_create`) is
+> materialized by `instantiate` only as the target of an *Establishes*
+> correspondence — its `GhostId` is rooted at the correspondence node, and
+> deletion reaches it by following `corrL`/`corrR`. A created node with no
+> correspondence is therefore not a "lightweight" node — it is silently
+> unmaterializable and unreachable by retraction. `compile` rejects such a
+> rule (`CompileError::CreatedNodeWithoutCorrespondence`) instead of
+> dropping the node at production time. If several target nodes belong to
+> one source element (e.g. a `JavaField` *and* a `Getter` for one
+> `Attribute`), give each its own correspondence to that same source
+> element (fan-out) — see the demo `R_Getter`/`R_Setter` rules. Pure
+> target-side "skeleton" structure is modeled the same way: every node
+> corresponds to the source element whose projection it is part of.
+
 ### Bidirectional lowering
 
 ```
@@ -183,8 +198,25 @@ RuleSpec ──compile_bidirectional──► [CompiledRuleSpec ("R→"),
 ```
 
 `compile_bidirectional` always emits two directed rules per declarative
-rule, named `"<name>→"` and `"<name>←"` (U+2192 / U+2190). The engine
-registers both; rank decides which fires when.
+rule, named `"<name>→"` and `"<name>←"` (U+2192 / U+2190). You register
+**both**; the direction is chosen **per delta**, not by a manual pass
+switch. Each compiled rule carries `input_domain_kinds` (the L- resp.
+R-domain kinds it consumes). After applying a Δ, derive the set of kinds
+it touched and call `directional_rule_refs(&rules, &delta_kinds)` to get
+the rules whose input kinds intersect the Δ (undirected rules — empty
+`input_domain_kinds` — are always included); pass that slice to
+`run_cascade`. This is what keeps the bidirectional set from
+ping-ponging: a Δ on the L-domain activates only `R→`, a Δ on the
+R-domain only `R←`. Among the active rules, rank decides which fires when.
+
+```rust
+let spec: RuleSpec = …;                            // one direction-neutral rule
+let rules: Vec<Box<dyn Rule>> = compile_bidirectional(&spec)?
+    .iter().map(instantiate).collect();            // register both R→ / R←
+// per delta:
+let active = directional_rule_refs(&rules, &delta_kinds);
+run_cascade(&mut cascade, &mut graph, &active, max_steps)?;
+```
 
 The `Rule` trait — `pub trait Rule: Debug + Send + Sync` — is what the
 engine consumes. The default implementation is `BasicRule`, but any
@@ -218,11 +250,15 @@ the live graph.
 ## 7. Cascade and backtracking (`engine`)
 
 ```
-Cascade { applications: Vec<RuleApplication>, … }
+Cascade { entries: Vec<DeltaEntry> }
 ```
 
-A `Cascade` is the audit trail of an in-flight cascade: which rule
-fired, against which `PatternMatch`, producing which ops.
+A `Cascade` is the audit trail of an in-flight cascade. Each
+`DeltaEntry` records its `origin` (the seed `User` delta, or a `Rule`
+application), the `rank` at which it fired, the `op_star` it produced,
+the `anchor` nodes it referenced, and — for rule applications — the
+match `bindings` (pattern variable → `GhostId`). The first entry is
+always the user delta; the rest are the rule applications it induced.
 
 ### `cascade_step`
 
@@ -273,12 +309,47 @@ If the backtracking exhausts the rule space, the outer call returns
 `TerminationState::RolledBack`. The graph is restored to its pre-cascade
 state; the caller decides what to do.
 
+### Correspondence-following retraction
+
+`retraction_cascade_for(op, graph)` is the same primitive backtracking
+uses in step 2, but it is also the engine's **delete-propagation**
+mechanism in its own right. Given a `DelNode { target }`, it returns the
+follow-up ops that complete the deletion:
+
+1. Tombstone every edge incident to `target`.
+2. For each incident `corrL`/`corrR` edge, walk to the correspondence
+   node, then across its *other* correspondence edge to the partner on
+   the opposite domain. Tombstone both the partner and the corr node.
+
+So deleting one side of a translated pair tombstones the whole triple:
+delete a `JavaClass` and its `corr` leads the cascade to tombstone the
+corresponding UML `Class` (and vice versa). This is what makes a delete
+on **R** propagate to **L** without a dedicated "delete rule" — the
+correspondence graph carries deletion in both directions, exactly as it
+carries context (see
+[principles.md §8](./principles.md#8-symmetric-correspondence)).
+
+The edge-walk is orientation-agnostic: it does not care whether the
+deleted node sits on the `corrL` or `corrR` side, so the same code
+propagates forward deletes and backward deletes.
+
+> **Integration note.** When a host applies a delete as a *baseline*
+> mutation (outside an active cascade), the induced tombstones must reach
+> the baseline graph too, not just the ghost overlay — otherwise the next
+> `consolidate` resurrects the deleted node from the unchanged baseline.
+> The JNI session mirrors retraction tombstones into the baseline while
+> the cascade is empty, the same way it mirrors baseline `SetAttr`/
+> `AddNode`.
+
 ## 8. Fold (`fold`)
 
 A fold consolidates the current `Ghost` overlay into a new baseline.
 
-- `consolidate(&mut graph)` — every `Ghost` becomes `Solid`; every
-  `Tombstone` (and resolved `TentativeTombstone`) is removed.
+- `consolidate(base, cascade) -> Result<Consolidated, …>` — folds the
+  cascade's `Ghost` overlay onto the `base` baseline into a fresh
+  `new_baseline`: every `Ghost` becomes `Solid`; every `Tombstone` (and
+  resolved `TentativeTombstone`) is removed. It does not mutate `base` —
+  the caller swaps in `new_baseline` and bumps `baseline_counter`.
 - `diff(prev_baseline, current_baseline)` — produces the net ops
   between two baselines, suitable for replication, journaling, or
   patching another graph.

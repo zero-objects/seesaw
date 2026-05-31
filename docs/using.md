@@ -10,7 +10,7 @@ are easy to make in the first hour.
 
 ```toml
 [dependencies]
-seesaw-tgg = "1.0.0-rc7"
+seesaw-tgg = "1.0.0-rc8"
 ```
 
 The minimum session is `TypedGraph` + `Cascade` + some rules + a step
@@ -205,6 +205,39 @@ appear on the UML side, anchored to the same `Model` node.
 
 Run the full version end-to-end: `cargo run --example backward_cascade`.
 
+### Routing a full bidirectional rule set
+
+The example above hand-picks `directed[1]` to isolate one direction.
+A real round-trip loads *both* directions of *every* rule and lets the
+delta decide which fire. Lower each rule with `compile_bidirectional`,
+instantiate all the directed forms, then — per delta — call
+`directional_rule_refs(&rules, &delta_kinds)` to select only the rules
+whose input domain matches what changed:
+
+```rust
+use seesaw_tgg::engine::directional_rule_refs;
+
+// One-time: lower every rule to all its directions.
+let mut rules: Vec<Box<dyn Rule>> = Vec::new();
+for r in &spec.rules {
+    for directed in compile_bidirectional(r).expect("compile") {
+        rules.push(instantiate(&directed));
+    }
+}
+
+// Per delta: gather the kinds it touched (e.g. {"JavaClass"} for a
+// Java-side edit) and route only the matching direction.
+let refs = directional_rule_refs(&rules, &delta_kinds);
+run_cascade(&mut cascade, &mut g, &refs, max_steps).expect("cascade");
+```
+
+This is the routing that makes forward and backward coexist in one
+session without ping-pong: a UML-side change activates the forward
+rules, a Java-side change the backward rules, and a rule with no
+matching input kind simply does not fire this round. Registering the
+whole set but *not* routing it — running every direction on every
+delta — is the most common cause of a cascade that never converges.
+
 ## 5. Worked example C — rename + identity stability
 
 The point of **A8** (identity decoupling): an attribute that the rule
@@ -366,6 +399,19 @@ The list of things that look reasonable but bite.
 
 - **Skipping the `consolidate` call.** Ghosts accumulate. If you never
   fold, every cascade replays every prior derivation.
+
+- **A created node with no correspondence.** Every node a rule's
+  creation block produces must be tied to a correspondence — its
+  `GhostId` is rooted there, and deletion only reaches it by following
+  `corrL`/`corrR`. A "lightweight" created node with no corr is silently
+  unmaterializable and invisible to retraction. `compile` rejects such a
+  rule up front (`CreatedNodeWithoutCorrespondence`). If one rule must
+  spawn several R-side nodes (a scalar plus its sequence wrapper, say),
+  give *each* its own correspondence to the same source anchor rather
+  than hanging extras off one corr. *Symptom:* a compile error naming
+  the offending variable — or, if you bypass compile, a node that never
+  appears in the output and never gets deleted. See
+  [architecture.md §5](./architecture.md#5-rules-rule).
 
 ## 10. Diagnostics
 

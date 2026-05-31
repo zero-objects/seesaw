@@ -170,8 +170,27 @@ A correspondence established in one direction — say, forward L→R — is
 therefore recognised as context by rules running in the other
 direction (backward R→L) without any duplication or re-establishment.
 
+The recognition reaches further than context. A rule whose job is to
+*create* a correspondence, run in the opposite direction, must not
+re-derive a second corr for a pair that is already related. Before
+establishing a correspondence, the engine checks whether the anchor
+already participates in one of the same kind whose partner matches the
+target identity — and if so, reuses it, propagating only the bound
+attributes. Without this, a backward run over an already-translated
+node would mint a duplicate corr (a second "ghost twin") and trip the
+name-uniqueness gate. Recognition of the *creating* rule, not just of
+context, is what keeps a forward-then-backward round-trip a no-op.
+
+Deletion travels the same shared graph. Removing one endpoint of a
+translated pair follows its `corrL`/`corrR` edges to the correspondence
+node and on to the partner, tombstoning the whole triple — so a delete
+on **R** reaches **L** through the very correspondence that a create
+established, with no separate delete rule (see
+[architecture.md §7](./architecture.md#7-cascade-and-backtracking-engine)).
+
 This is what makes round-trips work without bookkeeping. Forward and
-backward share the same correspondence graph.
+backward share the same correspondence graph — for context, for
+creation, and for deletion.
 
 > **Theory.** See the paper section on Way 2 corr-symmetry.
 

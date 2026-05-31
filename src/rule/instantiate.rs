@@ -25,7 +25,7 @@ use std::collections::{BTreeMap, HashMap};
 use crate::engine::{
     BasicRule, EdgePattern, EnginePropagation, NacPattern, NodePattern, Pattern, PatternMatch, Rule,
 };
-use crate::graph::{GhostId, TypedGraph};
+use crate::graph::{GhostId, Status, TypedGraph};
 use crate::ops::Op;
 
 use super::compile::{CompiledRuleSpec, EdgeSide};
@@ -107,6 +107,73 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
                 .kind
                 .clone()
                 .unwrap_or_else(|| "Correspondence".to_string());
+
+            // Symmetric correspondence recognition for the CREATING rule.
+            // If the anchor `l_id` already participates in a correspondence
+            // of this kind — established in EITHER direction (`corrL` out OR
+            // `corrR` in) — the element is already translated.
+            //
+            // Without this, the backward operationalization re-derives an
+            // already-forward-translated element: the corr would be rooted
+            // at `l_id` (the JavaClass on the backward side) instead of at
+            // the partner (the Class on the forward side), so `from_parent`
+            // mints a DIFFERENT GhostId. `is_duplicate`'s structural lookup
+            // then misses the existing pair, a ghost duplicate materializes,
+            // and the pre-fold well-formedness gate trips on the duplicated
+            // name. This is a recognition gap, not a missing construct:
+            // rc7's symmetric context-corr matching only covers rules that
+            // carry a context correspondence in their match plan — the rule
+            // that CREATES the corr fell through it. We close it by reusing
+            // the existing corr + partner and only (idempotently)
+            // propagating the bound attributes onto the partner (so renames
+            // still flow). No new GhostId is minted.
+            //
+            // Identity attributes (rc6 B6) distinguish multiple targets of
+            // the same corr kind on the same anchor: two rules whose targets
+            // carry different identity attrs are NOT the same correspondence
+            // and each keep their own node. Empty for R_Class (name is a
+            // propagated value, not identity) → any partner matches.
+            let r_identity = collect_r_identity_attrs(cc, &creation.creation_attrs);
+            let is_corr_edge = |t: &str| t == "corrL" || t == "corrR";
+            let active = |st: Status| st.is_matchable() && st != Status::TentativeTombstone;
+            let reusable = g
+                .incident_edges(&l_id)
+                .into_iter()
+                .filter(|(e, _)| is_corr_edge(&e.type_id) && active(e.status))
+                .filter_map(|(_, corr_id)| {
+                    // Candidate corr node must be of this kind and active …
+                    g.get_node(&corr_id)
+                        .filter(|n| n.type_id == corr_kind && active(n.status))?;
+                    // … and its partner (the corr's other endpoint, ≠ l_id)
+                    // must carry the same identity attrs as the target we
+                    // would otherwise create.
+                    let partner = g
+                        .incident_edges(&corr_id)
+                        .into_iter()
+                        .filter(|(e, _)| is_corr_edge(&e.type_id) && active(e.status))
+                        .map(|(_, n)| n)
+                        .find(|n| *n != l_id)?;
+                    let pnode = g.get_node(&partner)?;
+                    let identity_matches = r_identity
+                        .iter()
+                        .all(|(k, v)| pnode.attrs.get(k) == Some(v));
+                    identity_matches.then_some(partner)
+                })
+                .next();
+            if let Some(tid) = reusable {
+                // Already translated in some direction → reuse the existing
+                // partner, only (idempotently) propagate bound attributes
+                // onto it so renames still flow. No new GhostId minted.
+                for (attr, value) in collect_propagated_attrs(cc, m, g, &propagation) {
+                    ops.push(Op::SetAttr {
+                        target: tid,
+                        key: attr,
+                        value,
+                    });
+                }
+                continue; // already translated — reuse, no re-derivation
+            }
+
             // Corr identity is purely structural (source element + kind);
             // no bound attributes in the hash.
             let corr_id = GhostId::from_parent(&l_id, "corrL", &corr_kind, &BTreeMap::new());
