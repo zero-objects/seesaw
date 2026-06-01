@@ -6,6 +6,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0 release candidates are tagged `1.0.0-rcN`.
 
+## [1.0.0-rc9] — 2026-06-01
+
+Bugfix: a reused correspondence partner is now registered for edge
+resolution, so edges created from it are no longer dropped.
+
+### Fixed
+
+- **Reuse-path edge resolvability.** When a creating rule re-fires on an
+  anchor that already participates in a correspondence, the recognition
+  branch reuses the existing partner instead of minting a new node. It
+  propagated the bound attributes but did not register the reused partner
+  in the instantiation's `created` map — so the separate `edges_to_create`
+  pass could not resolve an endpoint pointing at the reused node, and the
+  edge was silently dropped at the resolution guard. Concretely: when
+  several elements attach to one shared, reused container, only the first
+  (which *creates* the container) kept its membership edge; every
+  subsequent element reused the container and lost it. The reuse branch now
+  inserts the reused partner into `created`. No new `GhostId` is minted, so
+  rename identity stability is unaffected; re-emitted pre-existing edges are
+  idempotent (the structural, full-id-keyed `add_edge`/`is_duplicate`). The
+  reuse path now differs from the create path only in "no new node," not
+  additionally in "endpoint not resolvable." Covered by
+  `reuse_path_emits_membership_edge_to_shared_collection`.
+
 ## [1.0.0-rc8] — 2026-05-31
 
 Round-trip hardening: correspondence-driven deletion, recognition of the

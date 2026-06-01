@@ -171,6 +171,18 @@ pub fn instantiate(compiled: &CompiledRuleSpec) -> Box<dyn Rule> {
                         value,
                     });
                 }
+                // Reuse-path edge-resolvability: register the reused partner in
+                // `created` so that `edges_to_create` incident to this (reused)
+                // R-node can resolve its endpoint. Without this, the reuse branch
+                // propagated bound attributes but left the partner unresolvable →
+                // every edge emanating from a reused node (e.g. a NEW membership
+                // edge to a fresh target on a SHARED, reused collection) was
+                // silently dropped at the `resolve_var` guard below, while only
+                // the first item (which CREATES the collection) kept its edge. No
+                // new GhostId is minted — identity stability is untouched;
+                // re-emitted pre-existing edges are idempotent (full-id-keyed
+                // add_edge).
+                created.insert(cc.r_node_id.clone(), tid);
                 continue; // already translated — reuse, no re-derivation
             }
 
@@ -655,5 +667,107 @@ mod tests {
             }
             other => panic!("Op[0] must be SetAttr, was: {other:?}"),
         }
+    }
+
+    /// Reuse-path edge-resolvability regression: two items attach, via a
+    /// two-correspondence rule, to the same (shared, reused-on-second-firing)
+    /// collection. The membership edge `has_item(coll → step)` lives in
+    /// `edges_to_create`. Before the fix the reuse-recognition branch did not
+    /// register the reused `coll` in `created` → `resolve_var(coll)` = None →
+    /// the second item's membership edge was silently dropped (only the first
+    /// item, which CREATES the collection, kept its edge). After the fix the
+    /// second firing also emits `has_item(coll → step2)`.
+    #[test]
+    fn reuse_path_emits_membership_edge_to_shared_collection() {
+        const RULESET: &str = r#"{
+          "name": "reuse-edge-regression",
+          "rules": [{
+            "name": "R_SeqItem",
+            "rank": 10,
+            "l_pattern": {
+              "nodes": [
+                {"id": "seq",  "kind": "Seq"},
+                {"id": "item", "kind": "Item"}
+              ],
+              "edges": [
+                {"kind": "items", "source_node_id": "seq", "target_node_id": "item"}
+              ]
+            },
+            "r_pattern": {
+              "nodes": [
+                {"id": "coll", "kind": "Coll"},
+                {"id": "step", "kind": "Step"}
+              ],
+              "edges": [
+                {"kind": "has_item", "source_node_id": "coll", "target_node_id": "step"}
+              ]
+            },
+            "correspondence_links": [
+              {"l_node_id": "seq", "r_node_id": "coll", "kind": "CorrColl",
+               "role": "Establishes",
+               "attribute_bindings": [
+                 {"l_attr_name": "name", "r_attr_name": "name", "transformation": "identity"}
+               ]},
+              {"l_node_id": "item", "r_node_id": "step", "kind": "CorrStep",
+               "role": "Establishes",
+               "attribute_bindings": [
+                 {"l_attr_name": "name", "r_attr_name": "name", "transformation": "identity"}
+               ]}
+            ]
+          }]
+        }"#;
+
+        let rs = parse_ruleset(RULESET).expect("ruleset parses");
+        let compiled = compile(&rs.rules[0]).expect("R_SeqItem compiles");
+        let rule = instantiate(&compiled);
+
+        // Graph: a Seq with two Items (shared anchor seq, distinct items).
+        let mut g = TypedGraph::new();
+        let seq = g.add_baseline_node(
+            "Seq",
+            "seq-root",
+            [("name".to_string(), "s".to_string())]
+                .into_iter()
+                .collect(),
+        );
+        for nm in ["a", "b"] {
+            let item = g.add_solid_child_node(
+                seq,
+                "items",
+                "Item",
+                [("name".to_string(), nm.to_string())].into_iter().collect(),
+            );
+            g.add_edge(seq, item, "items", BTreeMap::new(), Status::Solid)
+                .expect("Seq→Item edge");
+        }
+
+        let matches = find_matches(rule.pattern(), &g);
+        assert_eq!(matches.len(), 2, "one match per item, both share seq");
+
+        // First firing: creates CorrColl + coll + CorrStep + step1 +
+        // has_item(coll→step1). Apply the ops so the reuse-recognition for coll
+        // triggers on the second firing.
+        for op in &rule.produce(&matches[0], &g) {
+            op.apply(&mut g).expect("first firing applies");
+        }
+        let coll_id = g
+            .iter_nodes()
+            .find(|n| n.type_id == "Coll")
+            .expect("coll was created by the first firing")
+            .id;
+
+        // Second firing: coll REUSED. Must still emit has_item(coll→step2)
+        // (dropped before the fix).
+        let second = rule.produce(&matches[1], &g);
+        let membership_emitted = second.iter().any(|op| {
+            matches!(op,
+                Op::AddEdge { source, type_id, .. }
+                    if type_id == "has_item" && *source == coll_id)
+        });
+        assert!(
+            membership_emitted,
+            "reuse path must emit has_item from the shared coll to the new step; \
+             second firing was: {second:?}"
+        );
     }
 }
