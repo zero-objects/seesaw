@@ -3,13 +3,12 @@
 //! Responsibilities:
 //! - Typed attributed graphs (L, R, D)
 //! - Status annotation (SOLID, GHOST, TOMB) — see Def. 2.4
-//! - Parent-rooted Ghost-ID via SHA-256 — see Def. 5.3
+//! - Parent-rooted Ghost-ID via blake3 — see Def. 5.3
 
 use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Graph;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 
@@ -51,10 +50,13 @@ impl Status {
     }
 }
 
-/// Parent-rooted Ghost-ID (SHA-256 hash).
+/// Parent-rooted Ghost-ID (blake3 hash).
 ///
-/// See Def. 5.3 in the paper. 32-byte SHA-256 hash over the cascade
-/// history of an element.
+/// See Def. 5.3 in the paper. 32-byte blake3 hash over the cascade
+/// history of an element. blake3 is cryptographically collision-resistant
+/// (so the structural identity contract of Def. 5.3 holds — distinct
+/// content never aliases) while being SIMD-accelerated, unlike the prior
+/// SHA-256 software fallback (rc10 perf).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub struct GhostId([u8; 32]);
 
@@ -64,10 +66,10 @@ impl GhostId {
     /// Used for root elements in L_0/R_0 — the recursion anchor
     /// for Def. 5.3.
     pub fn from_baseline(name: &str) -> Self {
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(b"SOLID\0");
         hasher.update(name.as_bytes());
-        Self(hasher.finalize().into())
+        Self(*hasher.finalize().as_bytes())
     }
 
     /// Builds a Ghost-ID for a GHOST element, per Def. 5.3:
@@ -81,9 +83,9 @@ impl GhostId {
         own_type: &str,
         attrs: &BTreeMap<String, String>,
     ) -> Self {
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(b"GHOST\0");
-        hasher.update(parent.0);
+        hasher.update(&parent.0);
         hasher.update(b"\0");
         hasher.update(edge_type.as_bytes());
         hasher.update(b"\0");
@@ -95,7 +97,7 @@ impl GhostId {
             hasher.update(v.as_bytes());
             hasher.update(b"\0");
         }
-        Self(hasher.finalize().into())
+        Self(*hasher.finalize().as_bytes())
     }
 
     /// Builds a Ghost-ID for an edge from endpoints and type information.
@@ -105,10 +107,10 @@ impl GhostId {
         edge_type: &str,
         attrs: &BTreeMap<String, String>,
     ) -> Self {
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(b"EDGE\0");
-        hasher.update(source.0);
-        hasher.update(target.0);
+        hasher.update(&source.0);
+        hasher.update(&target.0);
         hasher.update(b"\0");
         hasher.update(edge_type.as_bytes());
         hasher.update(b"\0");
@@ -118,7 +120,7 @@ impl GhostId {
             hasher.update(v.as_bytes());
             hasher.update(b"\0");
         }
-        Self(hasher.finalize().into())
+        Self(*hasher.finalize().as_bytes())
     }
 
     /// Short hexadecimal form (8 characters) for UI and logging.
@@ -165,10 +167,10 @@ impl GhostId {
     /// where the external world carries its own identities that we
     /// cannot structurally re-derive.
     pub fn from_opaque(opaque: &str) -> Self {
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(b"OPAQUE\0");
         hasher.update(opaque.as_bytes());
-        Self(hasher.finalize().into())
+        Self(*hasher.finalize().as_bytes())
     }
 }
 
@@ -215,11 +217,93 @@ pub struct TypedGraph {
     /// status. This keeps index updates insert-only — no update
     /// is needed on status changes.
     kind_index: BTreeMap<String, BTreeSet<GhostId>>,
+    /// Content→id memo (rc10 perf): GhostIds are content-addressed — the
+    /// same content always yields the same id. The cascade re-matches
+    /// everything every step and checks the same ops per candidate
+    /// (`is_duplicate`, `apply`), so without a memo the identical hash is
+    /// recomputed 2–4×/candidate and across all steps. The memo hashes
+    /// **once per content** and reads it afterwards. A pure function cache
+    /// — content→id is constant, so it never needs invalidation; GhostIds
+    /// stay byte-identical. Interior-mutable because the hot callers
+    /// (`is_duplicate`, `produce`) hold `&TypedGraph`.
+    id_memo: std::cell::RefCell<IdMemo>,
+}
+
+/// Memo for content-addressed GhostIds (see `TypedGraph::id_memo`).
+#[derive(Debug, Default, Clone)]
+struct IdMemo {
+    nodes: HashMap<(GhostId, String, String, BTreeMap<String, String>), GhostId>,
+    edges: HashMap<(GhostId, GhostId, String, BTreeMap<String, String>), GhostId>,
+    /// Instrumentation: avoided hash computations (hits) vs. misses.
+    hits: u64,
+    misses: u64,
 }
 
 impl TypedGraph {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Content-addressed node id, memoized (instead of re-hashing via
+    /// `GhostId::from_parent`). Byte-identical to the direct computation.
+    pub fn node_id(
+        &self,
+        parent: &GhostId,
+        edge_type: &str,
+        type_id: &str,
+        attrs: &BTreeMap<String, String>,
+    ) -> GhostId {
+        let mut memo = self.id_memo.borrow_mut();
+        if let Some(id) = memo
+            .nodes
+            .get(&(
+                *parent,
+                edge_type.to_string(),
+                type_id.to_string(),
+                attrs.clone(),
+            ))
+            .copied()
+        {
+            memo.hits += 1;
+            return id;
+        }
+        memo.misses += 1;
+        let id = GhostId::from_parent(parent, edge_type, type_id, attrs);
+        memo.nodes.insert(
+            (*parent, edge_type.into(), type_id.into(), attrs.clone()),
+            id,
+        );
+        id
+    }
+
+    /// Content-addressed edge id, memoized (instead of `GhostId::for_edge`).
+    pub fn edge_id(
+        &self,
+        source: &GhostId,
+        target: &GhostId,
+        edge_type: &str,
+        attrs: &BTreeMap<String, String>,
+    ) -> GhostId {
+        let mut memo = self.id_memo.borrow_mut();
+        if let Some(id) = memo
+            .edges
+            .get(&(*source, *target, edge_type.to_string(), attrs.clone()))
+            .copied()
+        {
+            memo.hits += 1;
+            return id;
+        }
+        memo.misses += 1;
+        let id = GhostId::for_edge(source, target, edge_type, attrs);
+        memo.edges
+            .insert((*source, *target, edge_type.into(), attrs.clone()), id);
+        id
+    }
+
+    /// Memo statistics (avoided hash computations, misses) — for profiling.
+    pub fn id_memo_stats(&self) -> (u64, u64) {
+        let memo = self.id_memo.borrow();
+        (memo.hits, memo.misses)
     }
 
     /// Adds a SOLID baseline node.
@@ -247,7 +331,7 @@ impl TypedGraph {
         type_id: &str,
         attrs: BTreeMap<String, String>,
     ) -> GhostId {
-        let id = GhostId::from_parent(&parent, edge_type, type_id, &attrs);
+        let id = self.node_id(&parent, edge_type, type_id, &attrs);
         self.insert_node(NodeData {
             id,
             type_id: type_id.into(),
@@ -267,7 +351,7 @@ impl TypedGraph {
         type_id: &str,
         attrs: BTreeMap<String, String>,
     ) -> GhostId {
-        let id = GhostId::from_parent(&parent, edge_type, type_id, &attrs);
+        let id = self.node_id(&parent, edge_type, type_id, &attrs);
         self.insert_node(NodeData {
             id,
             type_id: type_id.into(),
@@ -310,7 +394,7 @@ impl TypedGraph {
     ) -> Option<GhostId> {
         let source_idx = *self.node_index.get(&source)?;
         let target_idx = *self.node_index.get(&target)?;
-        let id = GhostId::for_edge(&source, &target, edge_type, &attrs);
+        let id = self.edge_id(&source, &target, edge_type, &attrs);
         if let Some(existing_idx) = self.edge_index.get(&id) {
             // M5: edge resurrection — if TentativeTombstone, reset
             // to the requested status.

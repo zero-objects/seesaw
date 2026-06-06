@@ -6,6 +6,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0 release candidates are tagged `1.0.0-rcN`.
 
+## [1.0.0-rc10] — 2026-06-06
+
+Cascade performance overhaul. The matcher is now incremental and the
+GhostId hash is faster — proven bit-identical to the previous behavior by a
+256-case differential property test (random fwd/bwd/delete/retraction
+sequences) plus the full scenario suite.
+
+### Changed
+
+- **GhostId hash: SHA-256 → blake3.** Still cryptographically
+  collision-resistant (the structural identity contract of Def. 5.3 holds),
+  but SIMD-accelerated and without the software-crypto fallback. A
+  content→id memo avoids recomputing the same id within a cascade.
+- **`run_cascade` is now the incremental, cache-backed matcher by default.**
+  Each step previously re-enumerated all rules over the whole graph
+  (O(graph)/step); it now keeps a per-rule match cache and, after an add,
+  only extends it with matches that involve the new element
+  (O(local)/step). `creator_of` is O(1) (HashMap index) instead of a linear
+  scan, removing an O(steps²) cost in contradiction detection.
+
+### Added
+
+- `run_cascade_full` — the full-re-enumeration runner, kept as the
+  differential reference.
+- `run_cascade_cached`, `collect_candidates_cached`, `MatchCache` — the
+  incremental matcher surface.
+
+### Breaking
+
+- **GhostId byte values change** (blake3 ≠ SHA-256). IDs are internally
+  consistent within a run, but `idFull`/`seesualId` values persisted from a
+  prior SHA-256 release will not match on reload — re-stamp on first open.
+
 ## [1.0.0-rc9] — 2026-06-01
 
 Bugfix: a reused correspondence partner is now registered for edge

@@ -776,6 +776,12 @@ pub fn directional_rule_refs<'a>(
 #[derive(Debug, Default, Clone)]
 pub struct Cascade {
     pub entries: Vec<DeltaEntry>,
+    /// rc10 perf: GhostId → first entry that created the element — O(1)
+    /// `creator_of` instead of a linear scan over all entries. This scan
+    /// (via `ancestors_of_anchor`) previously dominated ~47% of cascade
+    /// time (O(steps²)). Invariant: maintained in [`Self::append`], rebuilt
+    /// after the single shrink point (`rollback_highest_rank` truncate).
+    creator_index: HashMap<GhostId, usize>,
 }
 
 impl Cascade {
@@ -784,14 +790,25 @@ impl Cascade {
     }
 
     pub fn with_user_delta(user_delta: DeltaEntry) -> Self {
-        Self {
-            entries: vec![user_delta],
-        }
+        let mut cascade = Self::default();
+        cascade.append(user_delta);
+        cascade
     }
 
     /// Appends a delta entry — strict monotonicity V₆.
     pub fn append(&mut self, entry: DeltaEntry) -> usize {
         let idx = self.entries.len();
+        // Maintain the index incrementally: map each node/edge op target
+        // identity to its *first* (lowest) creating entry. `or_insert`
+        // preserves the first-creator semantics of the old linear scan.
+        for op in &entry.op_star {
+            match op.target() {
+                OpTarget::Node(id) | OpTarget::Edge(id) => {
+                    self.creator_index.entry(id).or_insert(idx);
+                }
+                OpTarget::Attr(..) => {}
+            }
+        }
         self.entries.push(entry);
         idx
     }
@@ -808,20 +825,32 @@ impl Cascade {
         self.entries.last()
     }
 
-    /// Finds the delta entry that first created the element with the
-    /// given ID. Returns `Some(idx)`, or `None` if the element was not
-    /// produced by the cascade (e.g. SOLID baseline).
-    pub fn creator_of(&self, id: &GhostId) -> Option<usize> {
+    /// Rebuilds `creator_index` from scratch. Called after the only
+    /// entry-shrinking operation (rollback truncate); incremental upkeep
+    /// in [`Self::append`] cannot un-insert ids a removed entry created.
+    pub fn rebuild_creator_index(&mut self) {
+        self.creator_index.clear();
         for (idx, entry) in self.entries.iter().enumerate() {
             for op in &entry.op_star {
                 match op.target() {
-                    OpTarget::Node(t) if &t == id => return Some(idx),
-                    OpTarget::Edge(t) if &t == id => return Some(idx),
-                    _ => {}
+                    OpTarget::Node(id) | OpTarget::Edge(id) => {
+                        self.creator_index.entry(id).or_insert(idx);
+                    }
+                    OpTarget::Attr(..) => {}
                 }
             }
         }
-        None
+    }
+
+    /// Finds the delta entry that first created the element with the
+    /// given ID. Returns `Some(idx)`, or `None` if the element was not
+    /// produced by the cascade (e.g. SOLID baseline).
+    ///
+    /// O(1) via `creator_index` (rc10) — previously a linear scan over
+    /// all entries, which dominated cascade time through
+    /// `ancestors_of_anchor`.
+    pub fn creator_of(&self, id: &GhostId) -> Option<usize> {
+        self.creator_index.get(id).copied()
     }
 
     /// Transitive ancestor set with respect to `≺_D` (Def. 2.6): all
@@ -1163,7 +1192,74 @@ pub fn cascade_step(
     rules: &[&dyn Rule],
 ) -> Result<TerminationState, EngineError> {
     let candidates = collect_candidates(rules.iter().copied(), graph);
+    // Full path: inactive DeadSet ⇒ no skipping, exact original behavior.
+    select_and_apply(cascade, graph, candidates, &mut DeadSet::default())
+}
 
+/// Tracks candidates that contribute nothing this step and onward —
+/// already-applied rules and detected duplicates. In a monotonically
+/// growing cascade such a candidate stays a duplicate, so re-running
+/// `produce` + `is_duplicate` on it every step (an O(steps²) trap that
+/// dominated the cached matcher) is pure waste.
+///
+/// Skipping is equivalence-preserving: a dead candidate would saturate to
+/// `Duplication` anyway, so it is still counted as a duplicate for the
+/// saturation verdict. `active` is false on the full ([`cascade_step`])
+/// path → every method is a no-op and that path keeps exact original
+/// behavior. The set is cleared whenever an op *removes/mutates* an
+/// element (only that can revive a duplicate; pure adds cannot).
+#[derive(Debug, Default)]
+struct DeadSet {
+    keys: HashSet<(String, Vec<(String, GhostId)>)>,
+    active: bool,
+}
+
+impl DeadSet {
+    fn active() -> Self {
+        Self {
+            keys: HashSet::new(),
+            active: true,
+        }
+    }
+    fn key(c: &MatchCandidate) -> (String, Vec<(String, GhostId)>) {
+        let mut b: Vec<(String, GhostId)> = c
+            .pattern_match
+            .bindings
+            .iter()
+            .map(|(k, v)| (k.clone(), *v))
+            .collect();
+        b.sort();
+        (c.rule.id().to_string(), b)
+    }
+    fn contains(&self, c: &MatchCandidate) -> bool {
+        self.active && self.keys.contains(&Self::key(c))
+    }
+    fn mark(&mut self, c: &MatchCandidate) {
+        if self.active {
+            self.keys.insert(Self::key(c));
+        }
+    }
+    fn clear(&mut self) {
+        self.keys.clear();
+    }
+}
+
+/// Shared selection + application core of a cascade step.
+///
+/// Both the full ([`cascade_step`]) and the cached
+/// (`cascade_step_cached`) step funnel their candidate list through
+/// here, so the correctness-critical rank-descending selection, the
+/// NAC / duplication / contradiction gates and the `DeltaEntry`
+/// construction live in exactly ONE place. The two step variants differ
+/// only in how the candidate list is *sourced* (and whether `dead` is
+/// active) — never in how a candidate is selected or applied. That is
+/// what makes the cached variant provably equivalent.
+fn select_and_apply(
+    cascade: &mut Cascade,
+    graph: &mut TypedGraph,
+    candidates: Vec<MatchCandidate<'_>>,
+    dead: &mut DeadSet,
+) -> Result<TerminationState, EngineError> {
     if candidates.is_empty() {
         return Ok(TerminationState::Convergence);
     }
@@ -1172,6 +1268,13 @@ pub fn cascade_step(
     let mut last_contradiction: Option<String> = None;
 
     for candidate in candidates {
+        // Known-dead (applied or previously duplicate) ⇒ still a duplicate
+        // for saturation, but skip the expensive produce/is_duplicate.
+        if dead.contains(&candidate) {
+            any_duplicate = true;
+            continue;
+        }
+
         // NAC check (M2) first — before production. If any NAC
         // matches, the candidate is forbidden.
         if nacs_forbid(&candidate.pattern_match, candidate.rule, graph) {
@@ -1196,6 +1299,9 @@ pub fn cascade_step(
 
         if is_duplicate(&full_ops, graph) {
             any_duplicate = true;
+            // Monotonic add-cascade: a duplicate stays a duplicate → future
+            // steps skip it without recompute.
+            dead.mark(&candidate);
             continue;
         }
 
@@ -1221,6 +1327,8 @@ pub fn cascade_step(
             op.apply(graph)?;
         }
 
+        // Applied ⇒ its ops now exist ⇒ a duplicate from here on.
+        dead.mark(&candidate);
         cascade.append(delta);
         return Ok(TerminationState::Running);
     }
@@ -1233,6 +1341,227 @@ pub fn cascade_step(
     } else {
         Ok(TerminationState::Convergence)
     }
+}
+
+// ── Incremental matching: per-rule match cache (rc10 perf) ═══════════════
+//
+// `collect_candidates` re-enumerates every rule's matches over the whole
+// graph every step (~69% of cascade time, measured). But a rule's match
+// set can only change when an op touches a node/edge KIND that the rule's
+// pattern references. The cache keeps each rule's last full (canonically
+// sorted) enumeration and invalidates it only when a touched kind hits.
+//
+// Equivalence (proven by the differential test): a *clean* rule's match
+// set is unchanged since it was cached ⇒ its cached list equals a fresh
+// `find_matches` on the current graph ⇒ identical matches in identical
+// canonical order ⇒ identical `match_idx` ⇒ identical `rank`. A *dirty*
+// rule is re-enumerated outright. So the cached candidate list is
+// bit-identical to the full one every step.
+
+/// Per-rule match cache for `cascade_step_cached`.
+#[derive(Debug, Default, Clone)]
+pub struct MatchCache {
+    per_rule: HashMap<String, Vec<PatternMatch>>,
+}
+
+impl MatchCache {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Incrementally brings the cache up to date after `delta` was applied
+    /// (rc10 Lever 5: anchored matching).
+    ///
+    /// Instead of re-enumerating a dirty rule over the *whole* graph, a
+    /// pure-add delta only *extends* each affected rule's match list with
+    /// the matches that involve a newly added element — found by anchoring
+    /// a pattern node of the matching kind to that element
+    /// (`find_matches_with_fixed`). Edge endpoints are anchored too, so a
+    /// new edge between existing nodes is picked up. That turns the per-step
+    /// cost from O(graph) into O(neighborhood of the new elements).
+    ///
+    /// A removal/mutation op (Del/SetAttr) can both *disable* an existing
+    /// match and *enable* a new one, which an additive update cannot
+    /// express, so any cached rule whose pattern references a
+    /// removed/mutated kind is conservatively re-enumerated in full.
+    ///
+    /// Either way the cache stays the *complete*, canonically sorted,
+    /// duplicate-free match set, so [`collect_candidates_cached`] keeps
+    /// producing a candidate list bit-identical to the full matcher
+    /// (proven by the differential test).
+    fn update(&mut self, delta: &DeltaEntry, graph: &TypedGraph, rules: &[&dyn Rule]) {
+        if self.per_rule.is_empty() {
+            return;
+        }
+        // Removal/mutation kinds force a full re-enumeration; newly added
+        // nodes (and the endpoints of added edges) are the anchor points for
+        // incremental matches.
+        let mut removal_kinds: HashSet<String> = HashSet::new();
+        let mut anchors: Vec<GhostId> = Vec::new();
+        for op in &delta.op_star {
+            match op {
+                Op::AddNode { .. } => {
+                    if let OpTarget::Node(id) = op.target() {
+                        anchors.push(id);
+                    }
+                }
+                Op::AddEdge { source, target, .. } => {
+                    anchors.push(*source);
+                    anchors.push(*target);
+                }
+                Op::DelNode { target } | Op::SetAttr { target, .. } => {
+                    if let Some(n) = graph.get_node(target) {
+                        removal_kinds.insert(n.type_id.clone());
+                    }
+                }
+                Op::DelEdge { target } => {
+                    if let Some(e) = graph.get_edge(target) {
+                        removal_kinds.insert(e.type_id.clone());
+                    }
+                }
+            }
+        }
+        let anchors_with_kind: Vec<(GhostId, String)> = anchors
+            .iter()
+            .filter_map(|&id| graph.get_node(&id).map(|n| (id, n.type_id.clone())))
+            .collect();
+
+        for rule in rules {
+            let pat = rule.pattern();
+            // Only maintain rules that are actually cached; an uncached rule
+            // is (re)enumerated fully and lazily on next access.
+            let Some(list) = self.per_rule.get_mut(rule.id()) else {
+                continue;
+            };
+            // Removal/mutation hit → conservative full re-enumeration.
+            if !removal_kinds.is_empty() && pattern_references_any_kind(pat, &removal_kinds) {
+                let mut m = find_matches(pat, graph);
+                m.sort_by_key(|pm| canonical_key(pm, pat));
+                *list = m;
+                continue;
+            }
+            // Additive: extend with matches that involve a new element,
+            // anchoring each matching-kind pattern node on it.
+            let mut grew = false;
+            for (anchor, akind) in &anchors_with_kind {
+                for np in &pat.nodes {
+                    if &np.type_id == akind {
+                        let mut fixed = HashMap::new();
+                        fixed.insert(np.var.clone(), *anchor);
+                        for m in find_matches_with_fixed(pat, graph, &fixed) {
+                            list.push(m);
+                            grew = true;
+                        }
+                    }
+                }
+            }
+            if grew {
+                // Re-establish the canonical-sorted, duplicate-free invariant
+                // (compute each canonical key once).
+                let mut keyed: Vec<(Vec<[u8; 32]>, PatternMatch)> = list
+                    .drain(..)
+                    .map(|m| (canonical_key(&m, pat), m))
+                    .collect();
+                keyed.sort_by(|a, b| a.0.cmp(&b.0));
+                keyed.dedup_by(|a, b| a.0 == b.0);
+                *list = keyed.into_iter().map(|(_, m)| m).collect();
+            }
+        }
+    }
+}
+
+/// Whether a pattern mentions any of `kinds` as a node or edge type.
+fn pattern_references_any_kind(pattern: &Pattern, kinds: &HashSet<String>) -> bool {
+    pattern.nodes.iter().any(|n| kinds.contains(&n.type_id))
+        || pattern.edges.iter().any(|e| kinds.contains(&e.type_id))
+}
+
+/// Cached counterpart of [`collect_candidates`]: identical output, but a
+/// rule's matches are re-enumerated only on a cache miss (first use or
+/// after invalidation). Mirrors [`collect_candidates`] exactly otherwise
+/// — same per-rule canonical sort, same `match_idx` assignment, same
+/// final rank-descending order.
+pub fn collect_candidates_cached<'a>(
+    rules: &[&'a dyn Rule],
+    graph: &TypedGraph,
+    cache: &mut MatchCache,
+) -> Vec<MatchCandidate<'a>> {
+    let mut all = Vec::new();
+    for rule in rules {
+        let pattern = rule.pattern();
+        let matches = cache
+            .per_rule
+            .entry(rule.id().to_string())
+            .or_insert_with(|| {
+                let mut m = find_matches(pattern, graph);
+                m.sort_by_key(|pm| canonical_key(pm, pattern));
+                m
+            });
+        for (idx, pattern_match) in matches.iter().enumerate() {
+            all.push(MatchCandidate {
+                rule: *rule,
+                pattern_match: pattern_match.clone(),
+                match_idx: idx,
+            });
+        }
+    }
+    all.sort_by_key(|c| std::cmp::Reverse(c.rank_key()));
+    all
+}
+
+/// Cached counterpart of [`cascade_step`]: same selection/application via
+/// [`select_and_apply`], candidates sourced from `cache`. After a rule
+/// fires, the cache is brought up to date for every rule whose pattern
+/// overlaps the applied delta's kinds.
+fn cascade_step_cached(
+    cascade: &mut Cascade,
+    graph: &mut TypedGraph,
+    rules: &[&dyn Rule],
+    cache: &mut MatchCache,
+    dead: &mut DeadSet,
+) -> Result<TerminationState, EngineError> {
+    let candidates = collect_candidates_cached(rules, graph, cache);
+
+    let before = cascade.len();
+    let state = select_and_apply(cascade, graph, candidates, dead)?;
+    // A new entry ⇒ a rule fired this step ⇒ bring caches up to date.
+    if cascade.len() > before {
+        if let Some(delta) = cascade.last().cloned() {
+            cache.update(&delta, graph, rules);
+            // A removal/mutation op can revive a duplicate → drop the
+            // dead-set (pure adds can only ever keep a duplicate dead).
+            let mutates = delta.op_star.iter().any(|op| {
+                matches!(
+                    op,
+                    Op::DelNode { .. } | Op::DelEdge { .. } | Op::SetAttr { .. }
+                )
+            });
+            if mutates {
+                dead.clear();
+            }
+        }
+    }
+    Ok(state)
+}
+
+/// Cached counterpart of [`run_cascade`]: drives `cascade_step_cached`
+/// to a terminal state, maintaining one [`MatchCache`] and one
+/// `DeadSet` across all steps.
+pub fn run_cascade_cached(
+    cascade: &mut Cascade,
+    graph: &mut TypedGraph,
+    rules: &[&dyn Rule],
+    max_steps: usize,
+) -> Result<TerminationState, EngineError> {
+    let mut cache = MatchCache::new();
+    let mut dead = DeadSet::active();
+    for _ in 0..max_steps {
+        match cascade_step_cached(cascade, graph, rules, &mut cache, &mut dead)? {
+            TerminationState::Running => continue,
+            terminal => return Ok(terminal),
+        }
+    }
+    Err(EngineError::StepLimitExceeded { limit: max_steps })
 }
 
 // ── Re-validation logic (M5.3) ═══════════════════════════════════════════
@@ -1660,7 +1989,28 @@ pub fn apply_with_watch(
 }
 
 /// Runs the cascade until termination or until `max_steps` is reached.
+///
+/// rc10: this is the default entry point and delegates to the
+/// incremental, cache-backed matcher ([`run_cascade_cached`]) — proven
+/// bit-identical to the full re-enumeration ([`run_cascade_full`]) by the
+/// differential property test (256 random fwd/bwd/delete/retraction
+/// sequences) and the whole scenario suite. The full matcher remains
+/// available as [`run_cascade_full`] and serves as the differential
+/// reference.
 pub fn run_cascade(
+    cascade: &mut Cascade,
+    graph: &mut TypedGraph,
+    rules: &[&dyn Rule],
+    max_steps: usize,
+) -> Result<TerminationState, EngineError> {
+    run_cascade_cached(cascade, graph, rules, max_steps)
+}
+
+/// Full-re-enumeration cascade runner: every step re-matches all rules
+/// over the whole graph. Superseded as the default by [`run_cascade`]
+/// (cached) for performance, but kept as the canonical reference
+/// semantics for the differential tests.
+pub fn run_cascade_full(
     cascade: &mut Cascade,
     graph: &mut TypedGraph,
     rules: &[&dyn Rule],
@@ -1789,6 +2139,9 @@ pub fn rollback_highest_rank(
 
     // Truncate the cascade: drop entries from highest_pos (inclusive).
     cascade.entries.truncate(highest_pos);
+    // rc10: the creator index can only grow in `append`; after a shrink it
+    // must be rebuilt so it no longer points at removed entries.
+    cascade.rebuild_creator_index();
 
     // Replay the graph: clone `base`, then apply all ops of the
     // remaining entries. Reapply errors point to inconsistency in the

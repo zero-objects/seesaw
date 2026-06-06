@@ -8,7 +8,7 @@
 //! See `chapters/09_verifikation.tex` for the formal statements.
 
 use proptest::prelude::*;
-use seesaw_tgg::engine::Cascade;
+use seesaw_tgg::engine::{run_cascade_cached, run_cascade_full, Cascade, Rule};
 use seesaw_tgg::fold::{consolidate, diff};
 use seesaw_tgg::graph::{GhostId, NodeData, Status, TypedGraph};
 use seesaw_tgg::ops::{DeltaEntry, Op, Origin};
@@ -285,6 +285,170 @@ proptest! {
                     direct_mat.node_count(),
                 );
             }
+        }
+    }
+}
+
+// ══ rc10 Differential: cached matcher ≡ full matcher ═════════════════════
+
+/// Stable IDs of the seeded model (Model + 2 Classes) — the random ops
+/// reference these as parent/target.
+fn rc8_seed_ids() -> Vec<GhostId> {
+    vec![
+        GhostId::from_opaque("m"),
+        GhostId::from_opaque("cA"),
+        GhostId::from_opaque("cB"),
+    ]
+}
+
+/// Seeded UML graph: a `Model` with two `classes`-contained `Class` nodes —
+/// the structure `R_Class` matches in its L-pattern, so the (bidirectional)
+/// demo rules fire under the random deltas.
+fn rc8_seeded_graph() -> TypedGraph {
+    let mut g = TypedGraph::new();
+    let m = GhostId::from_opaque("m");
+    g.insert_node_data(NodeData {
+        id: m,
+        type_id: "Model".to_string(),
+        attrs: BTreeMap::from([("name".to_string(), "M".to_string())]),
+        status: Status::Solid,
+    });
+    for (opq, name) in [("cA", "A"), ("cB", "B")] {
+        let c = GhostId::from_opaque(opq);
+        g.insert_node_data(NodeData {
+            id: c,
+            type_id: "Class".to_string(),
+            attrs: BTreeMap::from([("name".to_string(), name.to_string())]),
+            status: Status::Solid,
+        });
+        g.add_edge(m, c, "classes", BTreeMap::new(), Status::Solid);
+    }
+    g
+}
+
+/// All demo rules in BOTH directions (as the host does via
+/// `registerRuleSetFromJson` → `compile_bidirectional`).
+fn rc8_bidirectional_rules() -> Vec<Box<dyn Rule>> {
+    let spec = seesaw_tgg::rule::demo::demo_ruleset_spec();
+    let mut rules: Vec<Box<dyn Rule>> = Vec::new();
+    for r in &spec.rules {
+        for compiled in
+            seesaw_tgg::rule::compile::compile_bidirectional(r).expect("compile_bidirectional")
+        {
+            rules.push(seesaw_tgg::rule::instantiate::instantiate(&compiled));
+        }
+    }
+    rules
+}
+
+/// Delta kinds of an applied op — replica of the host's `collect_delta_kinds`:
+/// AddNode carries the `type_id` directly, reference ops look the target's
+/// kind up in the graph.
+fn rc8_collect_kinds(op: &Op, g: &TypedGraph, out: &mut std::collections::HashSet<String>) {
+    match op {
+        Op::AddNode { type_id, .. } => {
+            out.insert(type_id.clone());
+        }
+        Op::SetAttr { target, .. } | Op::DelNode { target } => {
+            if let Some(n) = g.get_node(target) {
+                out.insert(n.type_id.clone());
+            }
+        }
+        Op::AddEdge { source, target, .. } => {
+            for id in [source, target] {
+                if let Some(n) = g.get_node(id) {
+                    out.insert(n.type_id.clone());
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Direction bundling — replica of `directional_rule_refs`: only rules whose
+/// `input_domain_kinds` intersect the last delta (or that are undirected).
+/// Without this gating the fwd/bwd rule set ping-pongs (by design — exactly
+/// this gating prevents it on the host runtime path).
+fn rc8_directional<'a>(
+    rules: &'a [Box<dyn Rule>],
+    kinds: &std::collections::HashSet<String>,
+) -> Vec<&'a dyn Rule> {
+    rules
+        .iter()
+        .filter(|r| {
+            let idk = r.input_domain_kinds();
+            idk.is_empty() || idk.iter().any(|k| kinds.contains(k))
+        })
+        .map(|r| r.as_ref())
+        .collect()
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(256))]
+
+    /// rc10 — differential proof for wiring the cached matcher as the
+    /// default: over ANY random delta sequence (Add/Del/SetAttr/AddEdge,
+    /// **bidirectional** rule set, directional gating, incl. retraction
+    /// after a Del), [`run_cascade_cached`] yields a **bit-identical**
+    /// cascade sequence (origin, rank, op_star, anchor, bindings) AND an
+    /// identical final graph as [`run_cascade_full`]. Closes the
+    /// forward/backward/delete/edit gaps statistically (256 cases).
+    #[test]
+    fn cached_equals_full_under_random_deltas(
+        delta_seq in prop::collection::vec(
+            prop::collection::vec(arb_op_over_ids(rc8_seed_ids()), 1..=4),
+            1..=8),
+    ) {
+        let rules_full = rc8_bidirectional_rules();
+        let rules_inc = rc8_bidirectional_rules();
+
+        let mut g_full = rc8_seeded_graph();
+        let mut c_full = Cascade::new();
+        let mut g_inc = rc8_seeded_graph();
+        let mut c_inc = Cascade::new();
+
+        let fingerprint = |g: &TypedGraph| {
+            let mut v: Vec<(GhostId, String, u8)> = g
+                .iter_nodes()
+                .map(|n| (n.id, n.type_id.clone(), n.status as u8))
+                .collect();
+            v.sort();
+            v
+        };
+
+        for ops in &delta_seq {
+            // Identical delta application to both (synchronized) graphs.
+            let mut kinds = std::collections::HashSet::new();
+            for op in ops {
+                let ok_full = op.apply(&mut g_full).is_ok();
+                let ok_inc = op.apply(&mut g_inc).is_ok();
+                prop_assert_eq!(ok_full, ok_inc, "delta apply diverges");
+                if ok_full {
+                    rc8_collect_kinds(op, &g_full, &mut kinds);
+                }
+            }
+
+            let active_full = rc8_directional(&rules_full, &kinds);
+            let active_inc = rc8_directional(&rules_inc, &kinds);
+
+            let r_full = run_cascade_full(&mut c_full, &mut g_full, &active_full, 400);
+            let r_inc = run_cascade_cached(&mut c_inc, &mut g_inc, &active_inc, 400);
+
+            // (1) Identical termination.
+            prop_assert_eq!(format!("{r_full:?}"), format!("{r_inc:?}"), "termination diverges");
+
+            // (2) Bit-identical cascade sequence.
+            prop_assert_eq!(c_full.entries.len(), c_inc.entries.len(), "step count diverges");
+            for (ef, ei) in c_full.entries.iter().zip(c_inc.entries.iter()) {
+                prop_assert_eq!(&ef.origin, &ei.origin, "origin diverges");
+                prop_assert_eq!(ef.rank, ei.rank, "rank diverges");
+                prop_assert_eq!(&ef.op_star, &ei.op_star, "op_star diverges");
+                prop_assert_eq!(&ef.anchor, &ei.anchor, "anchor diverges");
+                prop_assert_eq!(&ef.bindings, &ei.bindings, "bindings diverge");
+            }
+
+            // (3) Identical final graph.
+            prop_assert_eq!(fingerprint(&g_full), fingerprint(&g_inc), "final graph diverges");
         }
     }
 }
