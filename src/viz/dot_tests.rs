@@ -106,7 +106,7 @@ fn cascade_trace_dot_has_user_and_rule_steps() {
         op_star: vec![],
         anchor: vec![],
         induces: vec![],
-        bindings: std::collections::HashMap::new(),
+        bindings: std::collections::BTreeMap::new(),
     });
     let out = cascade_trace_to_dot(&pre, &cas);
     assert!(out.contains("step_0"), "step 0 node");

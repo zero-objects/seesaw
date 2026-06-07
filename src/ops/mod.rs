@@ -233,7 +233,7 @@ pub struct DeltaEntry {
     /// pattern-variable → GhostId bindings produced during the match.
     /// Used by the watch hook (M5.2) to find affected rule applications.
     #[serde(default)]
-    pub bindings: std::collections::HashMap<String, GhostId>,
+    pub bindings: std::collections::BTreeMap<String, GhostId>,
 }
 
 impl DeltaEntry {
@@ -245,7 +245,7 @@ impl DeltaEntry {
             op_star,
             anchor,
             induces: vec![Vec::new(); len],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         }
     }
 

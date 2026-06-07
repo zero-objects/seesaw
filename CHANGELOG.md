@@ -6,6 +6,59 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0 release candidates are tagged `1.0.0-rcN`.
 
+## [1.0.0] — 2026-06-08
+
+First stable release. The public API and the GhostId structural-identity
+contract (Def. 5.3) are now under semantic versioning. The engine has been
+validated end-to-end against a real quality-assurance project (a CI/CD
+pipeline transformation corpus across 17 platforms) in addition to the
+paper's worked examples.
+
+This release also lands the cascade performance work: the incremental matcher
+is now **linear in both directions** (forward translation and reverse/CST
+reconstruction), where it was previously super-linear (≈ quadratic) per
+cascade. Proven **bit-identical to rc10** — same GhostIds, same delta
+sequence, same final graph — by the 256-case differential property test, a
+full/cached differential over five real paper rule sets (with NACs and
+attribute conditions), and a verbatim replay of a large real-world workload
+(a 1384-line GitHub Actions config: 2712 → 6769 nodes forward, plus its
+reverse cascade). No output changes versus rc10; a pure speed release.
+
+### Changed
+
+- **The cached matcher no longer rebuilds its candidate list every step.**
+  It keeps an ordered live-candidate set (a `BTreeSet` in the full
+  collector's order) and walks it lazily to the first applicable candidate;
+  applied/duplicate/NAC-forbidden entries are removed in O(log n) on marking
+  instead of being re-scanned. Dead/NAC tracking is a per-cache generation
+  counter (O(1) revival) rather than a per-step `DeadSet` rehash. Structural
+  NACs that are monotone under add-only are marked once and skipped
+  thereafter. NAC checks short-circuit on the first witness instead of
+  collecting the whole forbidden set. Together these break the per-step
+  O(graph) and O(steps²) terms — the forward cascade goes from ≈ O(nodes²) to
+  ≈ O(nodes).
+- **`SetAttr` now triggers a full re-enumeration only for kinds a rule
+  pattern attribute-constrains.** A `SetAttr` on any other kind cannot change
+  the match set, so it is skipped. This removes a reverse-direction
+  re-enumeration storm (a backward cascade sets an attribute per step on
+  freshly created kinds that no rule constrains), bringing the reverse
+  cascade from flat-no-speedup to ≈ 4× and linear.
+- **Internal lookup indices (`node_index`, `edge_index`, the id memo) use a
+  fast, deterministic, dependency-free FxHash** instead of SipHash. These
+  indices take non-adversarial keys; the fixed-seed hasher keeps iteration
+  deterministic (≥ the previous bit-identity guarantees). Per-match `bindings`
+  use a `BTreeMap` (a handful of small string keys, faster and deterministic
+  for that size).
+
+### Added
+
+- `cascade_step_cached` is now public — the single cached step, so callers
+  can drive the incremental matcher step by step (e.g. live monitoring),
+  mirroring the already-public `cascade_step`.
+- `perf_trace` feature (off by default): deterministic structural counters
+  for the cascade, to diagnose which phase scales with graph size. No effect
+  on the default build's hot path.
+
 ## [1.0.0-rc10] — 2026-06-06
 
 Cascade performance overhaul. The matcher is now incremental and the

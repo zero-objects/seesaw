@@ -359,7 +359,7 @@ mod tests {
             op_star: vec![add_op],
             anchor: vec![person],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         c.append(DeltaEntry {
@@ -370,7 +370,7 @@ mod tests {
             op_star: vec![Op::DelNode { target: ghost_id }],
             anchor: vec![ghost_id],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         let nullified = compute_nullifications(&c);
@@ -399,7 +399,7 @@ mod tests {
             }],
             anchor: vec![person],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         c.append(DeltaEntry {
@@ -414,7 +414,7 @@ mod tests {
             }],
             anchor: vec![person],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         let nullified = compute_nullifications(&c);
@@ -456,7 +456,7 @@ mod tests {
             op_star: vec![primary, induced],
             anchor: vec![person],
             induces: vec![vec![1], Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         // Second delta entry tombstones the primary ghost → primary is
@@ -469,7 +469,7 @@ mod tests {
             op_star: vec![Op::DelNode { target: primary_id }],
             anchor: vec![primary_id],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         let nullified = compute_nullifications(&c);
@@ -550,7 +550,7 @@ mod tests {
             op_star: vec![add_op],
             anchor: vec![person],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         // d_1: del (tombstoned in the graph via apply)
@@ -565,7 +565,7 @@ mod tests {
             op_star: vec![del_op],
             anchor: vec![ghost_id],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         let result = consolidate(&base, &c).unwrap();

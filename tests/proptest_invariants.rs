@@ -128,7 +128,7 @@ fn arb_cascade(max_entries: usize, ids: Vec<GhostId>) -> impl Strategy<Value = C
                 op_star: ops,
                 anchor,
                 induces: vec![Vec::new(); op_count],
-                bindings: std::collections::HashMap::new(),
+                bindings: std::collections::BTreeMap::new(),
             });
         }
         cascade
@@ -152,7 +152,7 @@ proptest! {
                 op_star: Vec::new(),
                 anchor: Vec::new(),
                 induces: Vec::new(),
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
             });
             prop_assert_eq!(cascade.len(), i + 1);
         }

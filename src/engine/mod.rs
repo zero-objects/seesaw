@@ -11,7 +11,7 @@
 
 use crate::graph::{GhostId, NodeData, Status, TypedGraph};
 use crate::ops::{DeltaEntry, Op, OpError, OpTarget, Origin};
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use thiserror::Error;
 
@@ -154,7 +154,11 @@ impl Pattern {
 
 #[derive(Clone, Debug, Default)]
 pub struct PatternMatch {
-    pub bindings: HashMap<String, GhostId>,
+    // BTreeMap instead of HashMap (perf B): ~2-6 entries per match,
+    // allocated+cloned per candidate per step, String keys (expensive
+    // SipHash per character). For such small N the BTree beats the HashMap,
+    // and iteration becomes deterministic (bit-identity).
+    pub bindings: BTreeMap<String, GhostId>,
 }
 
 impl PatternMatch {
@@ -197,7 +201,7 @@ fn id_bytes(id: GhostId) -> [u8; 32] {
 ///
 /// Naive backtracking enumeration.
 pub fn find_matches(pattern: &Pattern, graph: &TypedGraph) -> Vec<PatternMatch> {
-    find_matches_with_fixed(pattern, graph, &HashMap::new())
+    find_matches_with_fixed(pattern, graph, &BTreeMap::new())
 }
 
 /// Variant of [`find_matches`] with pre-bindings: certain pattern
@@ -209,7 +213,7 @@ pub fn find_matches(pattern: &Pattern, graph: &TypedGraph) -> Vec<PatternMatch> 
 pub fn find_matches_with_fixed(
     pattern: &Pattern,
     graph: &TypedGraph,
-    fixed: &HashMap<String, GhostId>,
+    fixed: &BTreeMap<String, GhostId>,
 ) -> Vec<PatternMatch> {
     if pattern.nodes.is_empty() {
         return if pattern.edges.is_empty() {
@@ -280,7 +284,7 @@ struct MatchStep {
 /// pure function over (pattern, placed set). The final
 /// `canonical_key` sort in [`find_matches_with_fixed`] makes the
 /// plan ordering invisible at the API boundary anyway.
-fn build_match_plan(pattern: &Pattern, fixed: &HashMap<String, GhostId>) -> Vec<MatchStep> {
+fn build_match_plan(pattern: &Pattern, fixed: &BTreeMap<String, GhostId>) -> Vec<MatchStep> {
     let n = pattern.nodes.len();
     let mut placed = vec![false; n];
     let mut steps: Vec<MatchStep> = Vec::with_capacity(n);
@@ -426,6 +430,79 @@ fn enumerate_matches(
         enumerate_matches(pattern, graph, plan, depth + 1, current, out);
         current.bindings.remove(&np.var);
     }
+}
+
+/// Existence-only mirror of [`enumerate_matches`] (Perf-Lever 5): returns
+/// `true` at the FIRST complete match and stops — no cloning, no collecting,
+/// no sorting. Used by NAC checks, which only need to know whether a
+/// forbidden match exists, not enumerate them all.
+fn enumerate_exists(
+    pattern: &Pattern,
+    graph: &TypedGraph,
+    plan: &[MatchStep],
+    depth: usize,
+    current: &mut PatternMatch,
+) -> bool {
+    if depth == plan.len() {
+        return satisfies_edge_patterns(pattern, graph, current);
+    }
+    let step = &plan[depth];
+    let np = &pattern.nodes[step.node_idx];
+
+    if step.pre_bound {
+        if let Some(id) = current.bindings.get(&np.var).copied() {
+            if let Some(node) = graph.get_node(&id) {
+                if node.status.is_matchable() && np.matches_node(node) {
+                    return enumerate_exists(pattern, graph, plan, depth + 1, current);
+                }
+            }
+        }
+        return false;
+    }
+
+    for cand in step_candidates(graph, np, step, current) {
+        if current.bindings.values().any(|id| *id == cand) {
+            continue;
+        }
+        let node = match graph.get_node(&cand) {
+            Some(node) if node.status.is_matchable() => node,
+            _ => continue,
+        };
+        if !np.matches_node(node) {
+            continue;
+        }
+        if !satisfies_links(graph, current, &step.links, cand) {
+            continue;
+        }
+        current.bindings.insert(np.var.clone(), cand);
+        let found = enumerate_exists(pattern, graph, plan, depth + 1, current);
+        current.bindings.remove(&np.var);
+        if found {
+            return true;
+        }
+    }
+    false
+}
+
+/// Existence-only counterpart of [`find_matches_with_fixed`]: whether ANY
+/// match exists with the given pinned bindings. Bit-identical decision to
+/// `!find_matches_with_fixed(..).is_empty()` but without building/cloning/
+/// sorting the full match set (Perf-Lever 5).
+fn any_match_with_fixed(
+    pattern: &Pattern,
+    graph: &TypedGraph,
+    fixed: &BTreeMap<String, GhostId>,
+) -> bool {
+    if pattern.nodes.is_empty() {
+        // Vacuous match exists iff there are no edge constraints to satisfy.
+        return pattern.edges.is_empty();
+    }
+    let plan = build_match_plan(pattern, fixed);
+    let mut current = PatternMatch::default();
+    for (k, v) in fixed {
+        current.bindings.insert(k.clone(), *v);
+    }
+    enumerate_exists(pattern, graph, &plan, 0, &mut current)
 }
 
 /// Candidate nodes for a plan step.
@@ -664,15 +741,30 @@ impl Rule for BasicRule {
 /// the `shared_with_l` bindings carried over from the main match).
 ///
 /// Returns: `true` = rule application forbidden.
+/// Whether ALL of a rule's NACs are purely structural (no attribute
+/// constraints on any NAC node). Such NACs are monotone under an add-only
+/// cascade — once forbidden, a candidate stays forbidden until a structural
+/// removal — so a forbidden candidate may be permanently skipped (Lever 3).
+/// A NAC with an attribute constraint could be un-forbidden by a `SetAttr`,
+/// so rules with such NACs are excluded.
+fn rule_nacs_structural(rule: &dyn Rule) -> bool {
+    rule.nacs().iter().all(|nac| {
+        nac.pattern
+            .nodes
+            .iter()
+            .all(|np| np.attr_constraints.is_empty())
+    })
+}
+
 pub fn nacs_forbid(m: &PatternMatch, rule: &dyn Rule, graph: &TypedGraph) -> bool {
     for nac in rule.nacs() {
-        let mut fixed = HashMap::new();
+        let mut fixed = BTreeMap::new();
         for var in &nac.shared_with_l {
             if let Some(id) = m.bindings.get(var) {
                 fixed.insert(var.clone(), *id);
             }
         }
-        if !find_matches_with_fixed(&nac.pattern, graph, &fixed).is_empty() {
+        if any_match_with_fixed(&nac.pattern, graph, &fixed) {
             return true;
         }
     }
@@ -715,6 +807,31 @@ impl<'a> fmt::Debug for MatchCandidate<'a> {
 /// `ρ(r_i) = i` (definition order) therefore means that later-
 /// defined rules have higher priority. Users that want the opposite
 /// priority set `ρ(r_i) = N - i`.
+/// Direction-bundled rule selection: returns the rules relevant to the last
+/// delta. A rule is active iff it is **undirected** (`input_domain_kinds`
+/// empty) **or** its input kinds intersect `delta_kinds`. This is what keeps
+/// a bidirectional rule set (`compile_bidirectional` → `R→`/`R←`) from
+/// ping-ponging: a Δ on the L-domain activates only the forward rules, a Δ on
+/// the R-domain only the backward rules — the direction lives in the Δ, not in
+/// a manual pass switch.
+///
+/// The caller derives `delta_kinds` from the just-applied Δ (the `type_id`s it
+/// touches) and passes the result to [`run_cascade`]. (Promoted from the pilot
+/// glue layer in rc8 — every consumer needs this routing.)
+pub fn directional_rule_refs<'a>(
+    rules: &'a [Box<dyn Rule>],
+    delta_kinds: &HashSet<String>,
+) -> Vec<&'a dyn Rule> {
+    rules
+        .iter()
+        .filter(|r| {
+            let idk = r.input_domain_kinds();
+            idk.is_empty() || idk.iter().any(|k| delta_kinds.contains(k))
+        })
+        .map(|r| r.as_ref())
+        .collect()
+}
+
 pub fn select_highest_rank<'a, I>(rules: I, graph: &TypedGraph) -> Option<MatchCandidate<'a>>
 where
     I: IntoIterator<Item = &'a dyn Rule>,
@@ -746,41 +863,16 @@ where
     best
 }
 
-/// Direction-bundled rule selection: returns the rules relevant to the
-/// last delta. A rule is active iff it is **undirected**
-/// (`input_domain_kinds` empty) **or** its input kinds intersect
-/// `delta_kinds`. This is what keeps a bidirectional rule set
-/// (`compile_bidirectional` → `R→` / `R←`) from ping-ponging: a delta on
-/// the L-domain activates only the forward rules, a delta on the R-domain
-/// only the backward rules — the direction lives in the delta, not in a
-/// manual pass switch.
-///
-/// The caller derives `delta_kinds` from the just-applied delta (the
-/// `type_id`s it touches) and passes the result to [`run_cascade`].
-pub fn directional_rule_refs<'a>(
-    rules: &'a [Box<dyn Rule>],
-    delta_kinds: &HashSet<String>,
-) -> Vec<&'a dyn Rule> {
-    rules
-        .iter()
-        .filter(|r| {
-            let idk = r.input_domain_kinds();
-            idk.is_empty() || idk.iter().any(|k| delta_kinds.contains(k))
-        })
-        .map(|r| r.as_ref())
-        .collect()
-}
-
 // ── Cascade ══════════════════════════════════════════════════════════════
 
 #[derive(Debug, Default, Clone)]
 pub struct Cascade {
     pub entries: Vec<DeltaEntry>,
-    /// rc10 perf: GhostId → first entry that created the element — O(1)
-    /// `creator_of` instead of a linear scan over all entries. This scan
-    /// (via `ancestors_of_anchor`) previously dominated ~47% of cascade
-    /// time (O(steps²)). Invariant: maintained in [`Self::append`], rebuilt
-    /// after the single shrink point (`rollback_highest_rank` truncate).
+    /// rc10 perf: GhostId → the first entry that creates the element — O(1)
+    /// `creator_of` instead of a linear scan over all entries. Previously
+    /// this scan (via `ancestors_of_anchor`) dominated ~47% of the cascade
+    /// time (O(steps²)). Invariant: maintained in [`append`], rebuilt after
+    /// the only shrink point (`rollback_highest_rank` truncate).
     creator_index: HashMap<GhostId, usize>,
 }
 
@@ -799,7 +891,7 @@ impl Cascade {
     pub fn append(&mut self, entry: DeltaEntry) -> usize {
         let idx = self.entries.len();
         // Maintain the index incrementally: map each node/edge op target
-        // identity to its *first* (lowest) creating entry. `or_insert`
+        // identity to its *first* (lowest) creator entry. `or_insert`
         // preserves the first-creator semantics of the old linear scan.
         for op in &entry.op_star {
             match op.target() {
@@ -827,7 +919,7 @@ impl Cascade {
 
     /// Rebuilds `creator_index` from scratch. Called after the only
     /// entry-shrinking operation (rollback truncate); incremental upkeep
-    /// in [`Self::append`] cannot un-insert ids a removed entry created.
+    /// in `append` cannot un-insert ids that a removed entry created.
     pub fn rebuild_creator_index(&mut self) {
         self.creator_index.clear();
         for (idx, entry) in self.entries.iter().enumerate() {
@@ -918,7 +1010,7 @@ pub fn is_duplicate(ops: &[Op], graph: &TypedGraph) -> bool {
             type_id,
             attrs,
         } => {
-            let would_be_id = GhostId::from_parent(parent, edge_type, type_id, attrs);
+            let would_be_id = graph.node_id(parent, edge_type, type_id, attrs);
             graph
                 .get_node(&would_be_id)
                 .map(|n| active_non_tentative(n.status))
@@ -930,7 +1022,7 @@ pub fn is_duplicate(ops: &[Op], graph: &TypedGraph) -> bool {
             type_id,
             attrs,
         } => {
-            let would_be_id = GhostId::for_edge(source, target, type_id, attrs);
+            let would_be_id = graph.edge_id(source, target, type_id, attrs);
             graph
                 .get_edge(&would_be_id)
                 .map(|e| active_non_tentative(e.status))
@@ -1051,11 +1143,24 @@ pub fn is_contradictory_with_cascade(
 
 /// Computes the retraction cascade for an op.
 ///
-/// On DelNode, all matchable incident edges are produced as induced
-/// DelEdge ops (structural dependency Def. 3.7 for edge endpoints), and
-/// — following `corrL`/`corrR` — the correspondence node and its partner
-/// on the opposite domain are tombstoned too, so a delete on one side of
-/// a translated pair propagates the whole triple.
+/// Currently implemented on `DelNode`:
+///
+/// 1. Every matchable incident edge is produced as an induced `DelEdge`
+///    op (structural dependency Def. 3.7 for edge endpoints).
+/// 2. **rc8**: every `corrL`/`corrR` incident edge is followed to the
+///    correspondence node, and from there to the correspondence
+///    partner. Both the corr node and the partner are produced as
+///    induced `DelNode` ops. This propagates a tombstone across a TGG
+///    correspondence — the standard semantics for "the element on one
+///    side is gone, its counterpart on the other side must follow".
+///    The walk is one hop deep; transitivity emerges naturally because
+///    [`expand_with_retraction`] re-runs `retraction_cascade_for` for
+///    each induced op.
+///
+/// The correspondence-follow is purely structural and edge-kind-driven
+/// (`corrL`/`corrR`). It does not consult rule application history or
+/// node kinds, so it works after a fold has erased the cascade and
+/// across arbitrary user-defined TGG rules that follow the convention.
 pub fn retraction_cascade_for(op: &Op, graph: &TypedGraph) -> Vec<Op> {
     match op {
         Op::DelNode { target } => {
@@ -1066,16 +1171,15 @@ pub fn retraction_cascade_for(op: &Op, graph: &TypedGraph) -> Vec<Op> {
                 ops.push(Op::DelEdge { target: edge.id });
             }
 
-            // 2. Follow `corrL`/`corrR` edges to the correspondence node,
-            //    then across its other correspondence edge to the partner
-            //    on the opposite domain. Tombstone both.
+            // 2. rc8: follow `corrL`/`corrR` edges to the corr node, then
+            //    to the partner on the other side. Tombstone both.
             for (edge, neighbor) in graph.incident_edges(target) {
                 if !is_correspondence_edge(&edge.type_id) {
                     continue;
                 }
-                // `neighbor` is the correspondence node. Walk its other
-                // correspondence edge to find the partner; emit DelNode for
-                // the partner and for the correspondence node itself.
+                // `neighbor` is the corr node. Walk its OTHER corr edge
+                // to find the partner; emit DelNode for the partner and
+                // for the corr node itself.
                 for (other_edge, other) in graph.incident_edges(&neighbor) {
                     if other == *target {
                         continue;
@@ -1196,18 +1300,14 @@ pub fn cascade_step(
     select_and_apply(cascade, graph, candidates, &mut DeadSet::default())
 }
 
-/// Tracks candidates that contribute nothing this step and onward —
-/// already-applied rules and detected duplicates. In a monotonically
-/// growing cascade such a candidate stays a duplicate, so re-running
-/// `produce` + `is_duplicate` on it every step (an O(steps²) trap that
-/// dominated the cached matcher) is pure waste.
+/// Vestigial dead-candidate tracker for the FULL ([`cascade_step`]) path
+/// only, where it is always inactive (`active == false`) → every method a
+/// no-op, so the full reference path keeps exact original behavior.
 ///
-/// Skipping is equivalence-preserving: a dead candidate would saturate to
-/// `Duplication` anyway, so it is still counted as a duplicate for the
-/// saturation verdict. `active` is false on the full ([`cascade_step`])
-/// path → every method is a no-op and that path keeps exact original
-/// behavior. The set is cleared whenever an op *removes/mutates* an
-/// element (only that can revive a duplicate; pure adds cannot).
+/// The cached path no longer uses this: dead-tracking moved into
+/// [`MatchCache`] as a per-match generation flag (Perf-C), which replaced
+/// this set's per-step `key` recomputation (clone+sort+hash of bindings
+/// per dead candidate per step — the former O(steps²) hotspot).
 #[derive(Debug, Default)]
 struct DeadSet {
     keys: HashSet<(String, Vec<(String, GhostId)>)>,
@@ -1215,12 +1315,6 @@ struct DeadSet {
 }
 
 impl DeadSet {
-    fn active() -> Self {
-        Self {
-            keys: HashSet::new(),
-            active: true,
-        }
-    }
     fn key(c: &MatchCandidate) -> (String, Vec<(String, GhostId)>) {
         let mut b: Vec<(String, GhostId)> = c
             .pattern_match
@@ -1239,21 +1333,17 @@ impl DeadSet {
             self.keys.insert(Self::key(c));
         }
     }
-    fn clear(&mut self) {
-        self.keys.clear();
-    }
 }
 
-/// Shared selection + application core of a cascade step.
+/// Selection + application core of the FULL ([`cascade_step`]) cascade
+/// step (the reference path). Rank-descending selection, the NAC /
+/// duplication / contradiction gates and the `DeltaEntry` construction.
 ///
-/// Both the full ([`cascade_step`]) and the cached
-/// (`cascade_step_cached`) step funnel their candidate list through
-/// here, so the correctness-critical rank-descending selection, the
-/// NAC / duplication / contradiction gates and the `DeltaEntry`
-/// construction live in exactly ONE place. The two step variants differ
-/// only in how the candidate list is *sourced* (and whether `dead` is
-/// active) — never in how a candidate is selected or applied. That is
-/// what makes the cached variant provably equivalent.
+/// The cached path uses [`select_and_apply_cached`], which makes the exact
+/// same selection decisions but skips already-dead candidates via the
+/// [`MatchCache`] generation flag instead of scanning them here. Both
+/// produce a bit-identical delta sequence — proven by the differential
+/// test (`incremental_equivalence`). `dead` is always inactive here.
 fn select_and_apply(
     cascade: &mut Cascade,
     graph: &mut TypedGraph,
@@ -1299,8 +1389,8 @@ fn select_and_apply(
 
         if is_duplicate(&full_ops, graph) {
             any_duplicate = true;
-            // Monotonic add-cascade: a duplicate stays a duplicate → future
-            // steps skip it without recompute.
+            // Monotone add-cascade: a duplicate stays a duplicate →
+            // future steps skip it without recompute.
             dead.mark(&candidate);
             continue;
         }
@@ -1358,15 +1448,129 @@ fn select_and_apply(
 // rule is re-enumerated outright. So the cached candidate list is
 // bit-identical to the full one every step.
 
-/// Per-rule match cache for `cascade_step_cached`.
-#[derive(Debug, Default, Clone)]
+/// A cached match with a dead mark (perf C).
+///
+/// `gen` is the generation in which this match was marked dead (applied or
+/// recognized as a duplicate). It is dead ⟺ `gen == MatchCache.live_gen`.
+/// `gen == 0` = never marked. The trick: a `clear_dead` only increments
+/// `live_gen` (O(1)) → all old marks become "stale" and thus live again
+/// (= resurrection after a mutation). This replaces the former `DeadSet`,
+/// whose `key` (clone + sort + hash the bindings) per dead candidate per
+/// step was the O(n²) hotspot.
+#[derive(Debug, Clone)]
+struct CachedMatch {
+    pm: PatternMatch,
+    gen: u32,
+    /// Generation in which this match was recognized as NAC-forbidden
+    /// (perf lever 3). Forbidden ⟺ `nac_gen == MatchCache.live_gen`.
+    /// Separate from `gen` because a NAC ban is NOT a duplicate and so must
+    /// NOT count toward the `has_dead`/Duplication verdict. In an add-only
+    /// cascade a structural NAC is monotone (once forbidden → stays
+    /// forbidden; only a structural Del can un-forbid → `clear_dead` revives
+    /// this too via `live_gen++`).
+    nac_gen: u32,
+}
+
+impl CachedMatch {
+    fn live(pm: PatternMatch) -> Self {
+        Self {
+            pm,
+            gen: 0,
+            nac_gen: 0,
+        }
+    }
+}
+
+/// Selection order key of a candidate (perf lever 4): exactly the order of
+/// the full collector — `Reverse(rule.rank())`, then `Reverse(match_idx)`,
+/// then `rule_idx` ascending (stable tie-break). Unique per candidate
+/// (rule_idx+match_idx), so usable as a `BTreeSet` element. Ascending
+/// iteration = descending selection priority.
+type OrderKey = (std::cmp::Reverse<u64>, std::cmp::Reverse<usize>, usize);
+
+#[inline]
+fn order_key(rank: u64, ri: usize, midx: usize) -> OrderKey {
+    (std::cmp::Reverse(rank), std::cmp::Reverse(midx), ri)
+}
+
+/// Per-rule match cache for [`cascade_step_cached`].
+#[derive(Debug, Clone)]
 pub struct MatchCache {
-    per_rule: HashMap<String, Vec<PatternMatch>>,
+    per_rule: HashMap<String, Vec<CachedMatch>>,
+    /// Current live generation; a [`CachedMatch`] is dead ⟺
+    /// `gen == live_gen`. Starts at 1 so that `gen == 0` (fresh matches) is
+    /// always live.
+    live_gen: u32,
+    /// Ordered set of the LIVE candidates in selection order (perf lever 4).
+    /// Unlike the former `Vec`+compaction, the `BTreeSet` at any moment
+    /// holds ONLY live entries: applied/duplicate/NAC-forbidden ones are
+    /// REMOVED on marking in O(log n) instead of being skipped in the walk.
+    /// The walk therefore iterates only live entries (no ∝n skip prefix any
+    /// more). `None` = to be rebuilt (first step, or after
+    /// `clear_dead`/`update`, which revive/change entries).
+    sorted: Option<std::collections::BTreeSet<OrderKey>>,
+}
+
+impl Default for MatchCache {
+    fn default() -> Self {
+        Self {
+            per_rule: HashMap::new(),
+            live_gen: 1,
+            sorted: None,
+        }
+    }
 }
 
 impl MatchCache {
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Marks the match as dead (applied or duplicate) and REMOVES it from
+    /// the ordered live set (perf lever 4, O(log n)). `gen` stays set for
+    /// `has_dead`/revival. Idempotent.
+    fn mark_dead(&mut self, rule_id: &str, idx: usize, key: OrderKey) {
+        if let Some(list) = self.per_rule.get_mut(rule_id) {
+            if let Some(cm) = list.get_mut(idx) {
+                cm.gen = self.live_gen;
+            }
+        }
+        if let Some(set) = self.sorted.as_mut() {
+            set.remove(&key);
+        }
+    }
+
+    /// Marks the match as NAC-forbidden (perf lever 3) and removes it from
+    /// the live set. Via `nac_gen` (does NOT count as a duplicate for the
+    /// saturation verdict). Only for structural NACs (monotone under add).
+    fn mark_nac(&mut self, rule_id: &str, idx: usize, key: OrderKey) {
+        if let Some(list) = self.per_rule.get_mut(rule_id) {
+            if let Some(cm) = list.get_mut(idx) {
+                cm.nac_gen = self.live_gen;
+            }
+        }
+        if let Some(set) = self.sorted.as_mut() {
+            set.remove(&key);
+        }
+    }
+
+    /// Clears all dead/NAC marks (O(1) via a generation increment). After a
+    /// structural removal delta (Del/DelEdge) — only that can revive a
+    /// duplicate/NAC ban. Invalidates the live set: the revived matches must
+    /// come back via a rebuild.
+    fn clear_dead(&mut self) {
+        self.live_gen = self.live_gen.wrapping_add(1);
+        self.sorted = None;
+    }
+
+    /// Is there any dead-marked match? Determines the `Duplication` verdict
+    /// at the saturation point. Linear scan, but called only ONCE per
+    /// cascade run (the terminal step), so uncritical.
+    fn has_dead(&self) -> bool {
+        let live_gen = self.live_gen;
+        self.per_rule
+            .values()
+            .any(|list| list.iter().any(|cm| cm.gen == live_gen))
     }
 
     /// Incrementally brings the cache up to date after `delta` was applied
@@ -1393,11 +1597,29 @@ impl MatchCache {
         if self.per_rule.is_empty() {
             return;
         }
+        let live_gen = self.live_gen;
+        // Whether a per-rule list was structurally changed ⇒ the cached
+        // selection order (`sorted`) must be rebuilt.
+        let mut order_dirty = false;
         // Removal/mutation kinds force a full re-enumeration; newly added
         // nodes (and the endpoints of added edges) are the anchor points for
         // incremental matches.
         let mut removal_kinds: HashSet<String> = HashSet::new();
         let mut anchors: Vec<GhostId> = Vec::new();
+        // Kinds whose attributes some rule's PATTERN constrains. A `SetAttr`
+        // on such a kind can enable/disable a match (find_matches filters on
+        // `attr_constraints`), so it forces re-enumeration. A `SetAttr` on any
+        // OTHER kind cannot change the match set and is skipped — that removes
+        // the reverse-direction full-re-enumeration storm (a backward cascade
+        // emits a SetAttr per step on freshly-created `cst:` kinds that no rule
+        // attr-constrains). Attribute NACs are re-checked by the per-step
+        // `nacs_forbid` walk, not by re-enumeration, so they need no entry.
+        let attr_kinds: HashSet<&str> = rules
+            .iter()
+            .flat_map(|r| r.pattern().nodes.iter())
+            .filter(|np| !np.attr_constraints.is_empty())
+            .map(|np| np.type_id.as_str())
+            .collect();
         for op in &delta.op_star {
             match op {
                 Op::AddNode { .. } => {
@@ -1409,9 +1631,19 @@ impl MatchCache {
                     anchors.push(*source);
                     anchors.push(*target);
                 }
-                Op::DelNode { target } | Op::SetAttr { target, .. } => {
+                Op::DelNode { target } => {
                     if let Some(n) = graph.get_node(target) {
                         removal_kinds.insert(n.type_id.clone());
+                    }
+                }
+                // SetAttr forces re-enumeration ONLY for kinds a rule pattern
+                // attr-constrains (see `attr_kinds`); otherwise it cannot change
+                // the match set and is skipped.
+                Op::SetAttr { target, .. } => {
+                    if let Some(n) = graph.get_node(target) {
+                        if attr_kinds.contains(n.type_id.as_str()) {
+                            removal_kinds.insert(n.type_id.clone());
+                        }
                     }
                 }
                 Op::DelEdge { target } => {
@@ -1437,7 +1669,12 @@ impl MatchCache {
             if !removal_kinds.is_empty() && pattern_references_any_kind(pat, &removal_kinds) {
                 let mut m = find_matches(pat, graph);
                 m.sort_by_key(|pm| canonical_key(pm, pat));
-                *list = m;
+                #[cfg(feature = "perf_trace")]
+                crate::perf_trace::update_full(m.len());
+                // Fresh enumeration ⇒ all live. A mutation triggers
+                // `clear_dead` anyway (see cascade_step_cached).
+                *list = m.into_iter().map(CachedMatch::live).collect();
+                order_dirty = true;
                 continue;
             }
             // Additive: extend with matches that involve a new element,
@@ -1446,10 +1683,13 @@ impl MatchCache {
             for (anchor, akind) in &anchors_with_kind {
                 for np in &pat.nodes {
                     if &np.type_id == akind {
-                        let mut fixed = HashMap::new();
+                        let mut fixed = BTreeMap::new();
                         fixed.insert(np.var.clone(), *anchor);
-                        for m in find_matches_with_fixed(pat, graph, &fixed) {
-                            list.push(m);
+                        let found = find_matches_with_fixed(pat, graph, &fixed);
+                        #[cfg(feature = "perf_trace")]
+                        crate::perf_trace::update_anchored(1, found.len());
+                        for m in found {
+                            list.push(CachedMatch::live(m));
                             grew = true;
                         }
                     }
@@ -1458,14 +1698,28 @@ impl MatchCache {
             if grew {
                 // Re-establish the canonical-sorted, duplicate-free invariant
                 // (compute each canonical key once).
-                let mut keyed: Vec<(Vec<[u8; 32]>, PatternMatch)> = list
+                let mut keyed: Vec<(Vec<[u8; 32]>, CachedMatch)> = list
                     .drain(..)
-                    .map(|m| (canonical_key(&m, pat), m))
+                    .map(|cm| (canonical_key(&cm.pm, pat), cm))
                     .collect();
                 keyed.sort_by(|a, b| a.0.cmp(&b.0));
-                keyed.dedup_by(|a, b| a.0 == b.0);
-                *list = keyed.into_iter().map(|(_, m)| m).collect();
+                // dedup_by removes `a`, keeps `b`. Carry the removed one's
+                // dead mark over to the survivor so `has_dead` stays correct
+                // (the additive phase produces no duplicates of dead matches
+                // anyway).
+                keyed.dedup_by(|a, b| {
+                    let eq = a.0 == b.0;
+                    if eq && a.1.gen == live_gen {
+                        b.1.gen = live_gen;
+                    }
+                    eq
+                });
+                *list = keyed.into_iter().map(|(_, cm)| cm).collect();
+                order_dirty = true;
             }
+        }
+        if order_dirty {
+            self.sorted = None;
         }
     }
 }
@@ -1487,6 +1741,7 @@ pub fn collect_candidates_cached<'a>(
     cache: &mut MatchCache,
 ) -> Vec<MatchCandidate<'a>> {
     let mut all = Vec::new();
+    let live_gen = cache.live_gen;
     for rule in rules {
         let pattern = rule.pattern();
         let matches = cache
@@ -1495,58 +1750,259 @@ pub fn collect_candidates_cached<'a>(
             .or_insert_with(|| {
                 let mut m = find_matches(pattern, graph);
                 m.sort_by_key(|pm| canonical_key(pm, pattern));
-                m
+                m.into_iter().map(CachedMatch::live).collect()
             });
-        for (idx, pattern_match) in matches.iter().enumerate() {
+        // `match_idx` stays the position in the FULL (incl. dead) per-rule
+        // list — identical to the former enumeration so `rank` stays
+        // bit-identical. Dead matches are merely not EMITTED (a cheap gen
+        // comparison instead of a DeadSet::key scan).
+        for (idx, cm) in matches.iter().enumerate() {
+            if cm.gen == live_gen {
+                continue;
+            }
             all.push(MatchCandidate {
                 rule: *rule,
-                pattern_match: pattern_match.clone(),
+                pattern_match: cm.pm.clone(),
                 match_idx: idx,
             });
         }
+    }
+    #[cfg(feature = "perf_trace")]
+    {
+        let scanned: usize = rules
+            .iter()
+            .filter_map(|r| cache.per_rule.get(r.id()))
+            .map(|v| v.len())
+            .sum();
+        crate::perf_trace::collect(all.len(), scanned);
     }
     all.sort_by_key(|c| std::cmp::Reverse(c.rank_key()));
     all
 }
 
-/// Cached counterpart of [`cascade_step`]: same selection/application via
-/// [`select_and_apply`], candidates sourced from `cache`. After a rule
-/// fires, the cache is brought up to date for every rule whose pattern
-/// overlaps the applied delta's kinds.
-fn cascade_step_cached(
+/// Cached cascade step as a LAZY WALK over a cached selection order
+/// (Perf-D). Instead of rebuilding + re-sorting the full candidate list
+/// every step ([`collect_candidates_cached`], the O(steps²) trap measured
+/// on real rule sets), this walks `MatchCache::sorted` — built once and
+/// reused until a per-rule list actually changes — stopping at the FIRST
+/// applicable candidate. Dead (applied/duplicate) entries are skipped in
+/// O(1) via the generation flag; only the examined prefix is materialised,
+/// and nothing downstream of the applied candidate is touched.
+///
+/// Selection is bit-identical to the full reference: same order
+/// (Reverse((rule.rank(), match_idx)), stable), same NAC / duplication /
+/// contradiction gates, same first-applicable choice, same saturation
+/// verdict (Contradiction > Duplication > Convergence; `Duplication` ⟺ a
+/// fresh duplicate this step OR any dead match exists). `match_idx` stays
+/// the position in the current per-rule list because `sorted` is rebuilt
+/// whenever `MatchCache::update` changes a list — proven by the
+/// differential tests (Demo + real paper rule sets + pil2spell).
+pub fn cascade_step_cached(
     cascade: &mut Cascade,
     graph: &mut TypedGraph,
     rules: &[&dyn Rule],
     cache: &mut MatchCache,
-    dead: &mut DeadSet,
 ) -> Result<TerminationState, EngineError> {
-    let candidates = collect_candidates_cached(rules, graph, cache);
+    #[cfg(feature = "perf_trace")]
+    crate::perf_trace::step();
 
-    let before = cascade.len();
-    let state = select_and_apply(cascade, graph, candidates, dead)?;
-    // A new entry ⇒ a rule fired this step ⇒ bring caches up to date.
-    if cascade.len() > before {
-        if let Some(delta) = cascade.last().cloned() {
-            cache.update(&delta, graph, rules);
-            // A removal/mutation op can revive a duplicate → drop the
-            // dead-set (pure adds can only ever keep a duplicate dead).
-            let mutates = delta.op_star.iter().any(|op| {
-                matches!(
-                    op,
-                    Op::DelNode { .. } | Op::DelEdge { .. } | Op::SetAttr { .. }
-                )
-            });
-            if mutates {
-                dead.clear();
+    // 1. Populate any rule's match list on first use (lazy, like the old
+    //    `or_insert_with`); a fresh list invalidates the cached order. The
+    //    O(rules) scan is skipped once every rule is cached (the common
+    //    steady state) — `rules` is fixed across a run.
+    if cache.per_rule.len() < rules.len() {
+        for rule in rules {
+            if !cache.per_rule.contains_key(rule.id()) {
+                let pattern = rule.pattern();
+                let mut m = find_matches(pattern, graph);
+                m.sort_by_key(|pm| canonical_key(pm, pattern));
+                cache.per_rule.insert(
+                    rule.id().to_string(),
+                    m.into_iter().map(CachedMatch::live).collect(),
+                );
+                cache.sorted = None;
             }
         }
     }
-    Ok(state)
+    // 2. (Re)build the ordered LIVE-candidate set iff invalidated (first
+    //    step, or after clear_dead/update). Inserts only live entries; once
+    //    built, entries are REMOVED on mark (no compaction, no skip-prefix).
+    //    The BTreeSet order is exactly the full collector's order (OrderKey).
+    if cache.sorted.is_none() {
+        let live_gen = cache.live_gen;
+        let mut set: std::collections::BTreeSet<OrderKey> = std::collections::BTreeSet::new();
+        for (ri, rule) in rules.iter().enumerate() {
+            if let Some(list) = cache.per_rule.get(rule.id()) {
+                let rank = rule.rank();
+                for (midx, cm) in list.iter().enumerate() {
+                    if cm.gen != live_gen && cm.nac_gen != live_gen {
+                        set.insert(order_key(rank, ri, midx));
+                    }
+                }
+            }
+        }
+        cache.sorted = Some(set);
+    }
+
+    // 3. Walk the order, stop at the first applicable candidate. Dead marks
+    //    (duplicates) are deferred so the cache stays immutably borrowed.
+    let mut any_duplicate = false;
+    let mut last_contradiction: Option<String> = None;
+    let mut dup_marks: Vec<(usize, usize)> = Vec::new();
+    // Lever 3: candidates forbidden by structural NACs (monotone under add)
+    // → skip permanently instead of re-checking every step.
+    let mut nac_marks: Vec<(usize, usize)> = Vec::new();
+    type Selected = (
+        usize,
+        usize,
+        Vec<Op>,
+        Vec<Vec<usize>>,
+        Vec<GhostId>,
+        BTreeMap<String, GhostId>,
+    );
+    let mut to_apply: Option<Selected> = None;
+
+    {
+        let order = cache.sorted.as_ref().expect("order built above");
+        // The set holds ONLY live candidates (dead/dup/NAC removed on mark),
+        // so the walk iterates live entries directly — no skip-prefix.
+        for &key in order.iter() {
+            let (ri, midx) = (key.2, (key.1).0);
+            #[cfg(feature = "perf_trace")]
+            crate::perf_trace::walk_visited(1);
+            let rule = rules[ri];
+            let cm = match cache.per_rule.get(rule.id()).and_then(|l| l.get(midx)) {
+                Some(cm) => cm,
+                None => continue,
+            };
+            #[cfg(feature = "perf_trace")]
+            crate::perf_trace::select_examined(1);
+            let pm = &cm.pm;
+            // NAC check (M2) first — before production.
+            if nacs_forbid(pm, rule, graph) {
+                // Lever 3: a structural NAC (no attribute constraints) is
+                // monotone under add-only — once forbidden, it stays
+                // forbidden until a structural removal. Mark it so it is not
+                // re-checked every step (the measured O(n²) NAC re-scan).
+                // A NAC with attribute constraints could be un-forbidden by
+                // a SetAttr, so it is left live (re-checked) as before.
+                if rule_nacs_structural(rule) {
+                    nac_marks.push((ri, midx));
+                }
+                continue;
+            }
+            #[cfg(feature = "perf_trace")]
+            crate::perf_trace::produce();
+            let primary_ops = rule.produce(pm, graph);
+            if primary_ops.is_empty() {
+                continue;
+            }
+            let (full_ops, induces) = expand_with_retraction(primary_ops, graph);
+            let anchor: Vec<GhostId> = rule
+                .pattern()
+                .nodes
+                .iter()
+                .filter_map(|np| pm.bindings.get(&np.var).copied())
+                .collect();
+            #[cfg(feature = "perf_trace")]
+            crate::perf_trace::is_duplicate();
+            if is_duplicate(&full_ops, graph) {
+                any_duplicate = true;
+                dup_marks.push((ri, midx));
+                continue;
+            }
+            if let Some(reason) = is_contradictory_with_cascade(&full_ops, &anchor, graph, cascade)
+            {
+                last_contradiction = Some(reason);
+                continue;
+            }
+            to_apply = Some((ri, midx, full_ops, induces, anchor, pm.bindings.clone()));
+            break;
+        }
+    }
+
+    // 4. Apply deferred duplicate + NAC marks: set gen/nac_gen AND remove
+    //    the entry from the live-set (cache no longer borrowed).
+    for &(ri, midx) in &dup_marks {
+        cache.mark_dead(rules[ri].id(), midx, order_key(rules[ri].rank(), ri, midx));
+    }
+    for &(ri, midx) in &nac_marks {
+        cache.mark_nac(rules[ri].id(), midx, order_key(rules[ri].rank(), ri, midx));
+    }
+
+    // 5. Apply the selected candidate, or saturate.
+    if let Some((ri, midx, full_ops, induces, anchor, bindings)) = to_apply {
+        let rule = rules[ri];
+        let rank = encode_delta_rank(rule.rank(), midx);
+        let delta = DeltaEntry {
+            origin: Origin::Rule {
+                rule_id: rule.id().into(),
+            },
+            rank,
+            op_star: full_ops,
+            anchor,
+            induces,
+            bindings,
+        };
+        for op in &delta.op_star {
+            op.apply(graph)?;
+        }
+        #[cfg(feature = "perf_trace")]
+        {
+            let (mut an, mut ae, mut d, mut sa) = (0, 0, 0, 0);
+            for op in &delta.op_star {
+                match op {
+                    Op::AddNode { .. } => an += 1,
+                    Op::AddEdge { .. } => ae += 1,
+                    Op::DelNode { .. } | Op::DelEdge { .. } => d += 1,
+                    Op::SetAttr { .. } => sa += 1,
+                }
+            }
+            crate::perf_trace::applied(an, ae, d, sa);
+        }
+        cache.mark_dead(rule.id(), midx, order_key(rule.rank(), ri, midx));
+        cascade.append(delta);
+        // Bring caches up to date (perf D2 / lever 1).
+        //
+        // `update` re-enumerates any rule whose pattern references a kind
+        // touched by a Del/SetAttr op — that is the correctness mechanism
+        // for attribute-conditioned matches (a SetAttr can enable/disable a
+        // match, and `enumerate_matches` checks `attr_constraints`). It is
+        // already targeted (only affected rules) and costs nothing when no
+        // rule references the kind.
+        //
+        // `clear_dead` (revive ALL dead) is therefore only needed for
+        // STRUCTURAL removal: a Del can resurrect a duplicate whose ops no
+        // longer exist. A SetAttr never un-applies a structural duplicate;
+        // any attribute effect it has is already handled by the targeted
+        // re-enumeration above. Reviving on SetAttr was the measured
+        // O(produce)-per-step waste (≈100×) — dropped here.
+        if let Some(applied) = cascade.last().cloned() {
+            cache.update(&applied, graph, rules);
+            let structural_removal = applied
+                .op_star
+                .iter()
+                .any(|op| matches!(op, Op::DelNode { .. } | Op::DelEdge { .. }));
+            if structural_removal {
+                cache.clear_dead();
+            }
+        }
+        return Ok(TerminationState::Running);
+    }
+
+    // Saturation priority: Contradiction > Duplication > Convergence.
+    if let Some(reason) = last_contradiction {
+        Ok(TerminationState::Contradiction { reason })
+    } else if any_duplicate || cache.has_dead() {
+        Ok(TerminationState::Duplication)
+    } else {
+        Ok(TerminationState::Convergence)
+    }
 }
 
-/// Cached counterpart of [`run_cascade`]: drives `cascade_step_cached`
-/// to a terminal state, maintaining one [`MatchCache`] and one
-/// `DeadSet` across all steps.
+/// Cached counterpart of [`run_cascade`]: drives [`cascade_step_cached`]
+/// to a terminal state, maintaining one [`MatchCache`] across all steps.
+/// Dead tracking now lives in the cache (generation), no separate `DeadSet`.
 pub fn run_cascade_cached(
     cascade: &mut Cascade,
     graph: &mut TypedGraph,
@@ -1554,9 +2010,8 @@ pub fn run_cascade_cached(
     max_steps: usize,
 ) -> Result<TerminationState, EngineError> {
     let mut cache = MatchCache::new();
-    let mut dead = DeadSet::active();
     for _ in 0..max_steps {
-        match cascade_step_cached(cascade, graph, rules, &mut cache, &mut dead)? {
+        match cascade_step_cached(cascade, graph, rules, &mut cache)? {
             TerminationState::Running => continue,
             terminal => return Ok(terminal),
         }
@@ -1815,7 +2270,7 @@ pub fn run_cascade_observable(
 /// "<rule>@propagate" }` and appends it to the cascade.
 pub fn apply_attr_propagation(
     propagations: &[EnginePropagation],
-    bindings: &std::collections::HashMap<String, GhostId>,
+    bindings: &std::collections::BTreeMap<String, GhostId>,
     new_value: &str,
     graph: &mut TypedGraph,
     cascade: &mut Cascade,
@@ -1904,7 +2359,7 @@ impl<'cascade> MatchPersistenceStore<'cascade> {
     }
 
     /// Bindings of a rule application as a read reference.
-    pub fn bindings(&self, app_idx: usize) -> Option<&std::collections::HashMap<String, GhostId>> {
+    pub fn bindings(&self, app_idx: usize) -> Option<&std::collections::BTreeMap<String, GhostId>> {
         self.cascade.entries.get(app_idx).map(|e| &e.bindings)
     }
 }
@@ -2139,7 +2594,7 @@ pub fn rollback_highest_rank(
 
     // Truncate the cascade: drop entries from highest_pos (inclusive).
     cascade.entries.truncate(highest_pos);
-    // rc10: the creator index can only grow in `append`; after a shrink it
+    // rc10: the creator-index can only grow in `append`; after a shrink it
     // must be rebuilt so it no longer points at removed entries.
     cascade.rebuild_creator_index();
 
@@ -2291,9 +2746,9 @@ mod tests {
             .collect()
     }
 
-    /// `directional_rule_refs` keeps only the rules whose
-    /// `input_domain_kinds` intersect the delta; undirected rules always
-    /// stay active.
+    /// rc8: `directional_rule_refs` (lifted up from the pilot layer) selects
+    /// the rules relevant to a Δ — directional ones only when their
+    /// `input_domain_kinds` intersect the Δ; undirected ones always.
     #[test]
     fn directional_rule_refs_filters_by_input_domain_kinds() {
         let fwd: Box<dyn Rule> = Box::new(
@@ -2308,19 +2763,19 @@ mod tests {
             Box::new(BasicRule::new("R0", 10, Pattern::new(), |_, _| vec![]));
         let rules = vec![fwd, bwd, undirected];
 
-        let delta: std::collections::HashSet<String> = ["Class".to_string()].into_iter().collect();
+        let delta: HashSet<String> = ["Class".to_string()].into_iter().collect();
         let active: Vec<&str> = directional_rule_refs(&rules, &delta)
             .iter()
             .map(|r| r.id())
             .collect();
         assert!(
             active.contains(&"R\u{2192}"),
-            "forward active on a Class delta"
+            "Fwd aktiv bei Class-\u{0394}"
         );
-        assert!(active.contains(&"R0"), "undirected rule always active");
+        assert!(active.contains(&"R0"), "Ungerichtete Regel immer aktiv");
         assert!(
             !active.contains(&"R\u{2190}"),
-            "backward must NOT be active on a Class delta, was: {active:?}"
+            "Bwd darf bei Class-\u{0394} NICHT aktiv sein, war: {active:?}"
         );
     }
 
@@ -2665,7 +3120,7 @@ mod tests {
             op_star: Vec::new(),
             anchor: Vec::new(),
             induces: Vec::new(),
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         };
         let idx = c.append(user_delta);
         assert_eq!(idx, 0);
@@ -3042,6 +3497,56 @@ mod tests {
         assert!(retraction_cascade_for(&add_op, &g).is_empty());
     }
 
+    /// rc8 #1: a DelNode must follow `corrL`/`corrR` edges and tombstone
+    /// the correspondence partner as well as the corr node itself.
+    /// Topology used here mirrors the TGG running example:
+    /// `Attribute --corrL--> CorrAttr --corrR--> JavaField`.
+    /// Deleting `JavaField` must induce `DelNode(CorrAttr)` and
+    /// `DelNode(Attribute)`.
+    #[test]
+    fn retraction_cascade_follows_correspondence_to_partner() {
+        let mut g = TypedGraph::new();
+        let attribute = g.add_baseline_node("Attribute", "attr-foo-age", attrs(&[("name", "age")]));
+        let corr_attr = g.add_baseline_node("CorrAttr", "corr-foo-age", BTreeMap::new());
+        let java_field = g.add_baseline_node("JavaField", "jf-foo-age", attrs(&[("name", "age")]));
+        g.add_edge(
+            attribute,
+            corr_attr,
+            "corrL",
+            BTreeMap::new(),
+            Status::Solid,
+        )
+        .unwrap();
+        g.add_edge(
+            corr_attr,
+            java_field,
+            "corrR",
+            BTreeMap::new(),
+            Status::Solid,
+        )
+        .unwrap();
+
+        let del_op = Op::DelNode { target: java_field };
+        let induced = retraction_cascade_for(&del_op, &g);
+
+        let del_targets: Vec<GhostId> = induced
+            .iter()
+            .filter_map(|op| match op {
+                Op::DelNode { target } => Some(*target),
+                _ => None,
+            })
+            .collect();
+
+        assert!(
+            del_targets.contains(&corr_attr),
+            "retraction must tombstone the corr node, got DelNode targets {del_targets:?}"
+        );
+        assert!(
+            del_targets.contains(&attribute),
+            "retraction must tombstone the correspondence partner, got DelNode targets {del_targets:?}"
+        );
+    }
+
     #[test]
     fn expand_with_retraction_populates_induces() {
         let (g, _, _, person_name, _) = setup_uml_graph();
@@ -3086,7 +3591,7 @@ mod tests {
             }],
             anchor: vec![parent],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         // d_1: has ghost_id as anchor
@@ -3098,7 +3603,7 @@ mod tests {
             op_star: Vec::new(),
             anchor: vec![ghost_id],
             induces: Vec::new(),
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         assert_eq!(c.creator_of(&ghost_id), Some(0));
@@ -3118,7 +3623,7 @@ mod tests {
             op_star: Vec::new(),
             anchor: vec![person],
             induces: Vec::new(),
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         // A rule that would try to create a ghost AND tombstone the
@@ -3166,7 +3671,7 @@ mod tests {
             op_star: vec![user_op],
             anchor: vec![person],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         // Rule that tries to delete exactly this d_0 ghost.
@@ -3214,7 +3719,7 @@ mod tests {
             op_star: vec![op1],
             anchor: vec![person],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         let op2 = Op::AddNode {
@@ -3232,7 +3737,7 @@ mod tests {
             op_star: vec![op2],
             anchor: vec![person],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         let op3 = Op::AddNode {
@@ -3250,7 +3755,7 @@ mod tests {
             op_star: vec![op3],
             anchor: vec![person],
             induces: vec![Vec::new()],
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         assert_eq!(c.len(), 3);
@@ -3280,7 +3785,7 @@ mod tests {
             op_star: Vec::new(),
             anchor: vec![person],
             induces: Vec::new(),
-            bindings: std::collections::HashMap::new(),
+            bindings: std::collections::BTreeMap::new(),
         });
 
         let mut limits: HashMap<usize, u64> = HashMap::new();
@@ -3708,7 +4213,7 @@ mod tests {
 
         let mut cas = Cascade::new();
         // Set up bindings: c → p1, d → r_node
-        let mut bindings = std::collections::HashMap::new();
+        let mut bindings = std::collections::BTreeMap::new();
         bindings.insert("c".to_string(), p1);
         bindings.insert("d".to_string(), r_node);
 
@@ -3747,7 +4252,7 @@ mod tests {
         let getter_node = g.add_baseline_node("Method", "m", attrs(&[("name", "old")]));
 
         let mut cas = Cascade::new();
-        let mut bindings = std::collections::HashMap::new();
+        let mut bindings = std::collections::BTreeMap::new();
         bindings.insert("a".to_string(), attr_node);
         bindings.insert("m".to_string(), getter_node);
 

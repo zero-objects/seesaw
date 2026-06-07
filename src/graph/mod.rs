@@ -9,8 +9,10 @@ use petgraph::graph::{EdgeIndex, NodeIndex};
 use petgraph::visit::EdgeRef;
 use petgraph::Graph;
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
+
+use crate::hash::FxHashMap;
 
 /// Status of an element in the ghost graph.
 ///
@@ -205,8 +207,8 @@ pub struct EdgeData {
 #[derive(Clone, Debug, Default)]
 pub struct TypedGraph {
     inner: Graph<NodeData, EdgeData>,
-    node_index: HashMap<GhostId, NodeIndex>,
-    edge_index: HashMap<GhostId, EdgeIndex>,
+    node_index: FxHashMap<GhostId, NodeIndex>,
+    edge_index: FxHashMap<GhostId, EdgeIndex>,
     /// Match index (F15 mitigation): kind → set of node IDs of that
     /// type. Enables `O(matching_kind_count)` lookup instead of
     /// `O(graph_size)` for each pattern position. BTreeSet for
@@ -232,8 +234,8 @@ pub struct TypedGraph {
 /// Memo for content-addressed GhostIds (see `TypedGraph::id_memo`).
 #[derive(Debug, Default, Clone)]
 struct IdMemo {
-    nodes: HashMap<(GhostId, String, String, BTreeMap<String, String>), GhostId>,
-    edges: HashMap<(GhostId, GhostId, String, BTreeMap<String, String>), GhostId>,
+    nodes: FxHashMap<(GhostId, String, String, BTreeMap<String, String>), GhostId>,
+    edges: FxHashMap<(GhostId, GhostId, String, BTreeMap<String, String>), GhostId>,
     /// Instrumentation: avoided hash computations (hits) vs. misses.
     hits: u64,
     misses: u64,

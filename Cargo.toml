@@ -1,7 +1,7 @@
 [package]
 name = "seesaw-tgg"
 description = "Delta-extended Triple Graph Grammar engine with rank-based backtracking: graph, ops, cascade, fold."
-version = "1.0.0-rc10"
+version = "1.0.0"
 edition = "2021"
 authors = ["Zero Principle <hello@zero-principle.org>"]
 license = "Apache-2.0"
@@ -29,6 +29,9 @@ proptest = "1.5"
 
 [features]
 regen_graphs = []
+# Deterministic structural counters for the cascade (perf diagnostics).
+# Off by default → no effect on the hot path.
+perf_trace = []
 
 [[example]]
 name = "basic_cascade"

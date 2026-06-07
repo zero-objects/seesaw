@@ -20,7 +20,10 @@
 pub mod engine;
 pub mod fold;
 pub mod graph;
+pub mod hash;
 pub mod ops;
+#[cfg(feature = "perf_trace")]
+pub mod perf_trace;
 pub mod rule;
 pub mod viz;
 pub mod xmi;
