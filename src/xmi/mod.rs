@@ -38,6 +38,10 @@ use thiserror::Error;
 pub enum XmiError {
     #[error("XML parser error: {0}")]
     Xml(#[from] quick_xml::Error),
+    // quick-xml 0.41 surfaces reader/writer I/O (and attribute unescape) errors
+    // as std::io::Error rather than folding them into quick_xml::Error.
+    #[error("XML I/O error: {0}")]
+    XmlIo(#[from] std::io::Error),
     #[error("Attribute error: {0}")]
     XmlAttr(#[from] quick_xml::events::attributes::AttrError),
     #[error("UTF-8 in XMI: {0}")]
@@ -125,6 +129,13 @@ fn read_element_attributes(elem: &BytesStart<'_>) -> XmiResult<ParsedXmiAttrs> {
     for a in elem.attributes() {
         let a = a?;
         let key = std::str::from_utf8(a.key.as_ref())?.to_string();
+        // quick-xml 0.41 deprecates `unescape_value` in favour of
+        // `normalized_value`, but the latter additionally collapses `\t\r\n`
+        // to spaces (XML attribute-value normalization). We must NOT do that:
+        // verbatim attribute payloads (e.g. Story-method bodies carrying
+        // `&#10;`-encoded newlines) have to round-trip byte-for-byte. So we
+        // deliberately keep pure entity-unescaping.
+        #[allow(deprecated)]
         let val = a.unescape_value()?.to_string();
 
         match key.as_str() {

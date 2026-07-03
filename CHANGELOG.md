@@ -6,6 +6,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0 release candidates are tagged `1.0.0-rcN`.
 
+## [1.0.1] — 2026-07-03
+
+Security patch. No engine behaviour changes — GhostIds, delta sequences and
+final graphs are identical to 1.0.0. Only the XMI interop path (`quick-xml`
+dependency) is touched.
+
+### Security
+
+- Bump `quick-xml` from `0.36` to `0.41`, which addresses two DoS advisories
+  filed against `0.36.2`:
+  - **RUSTSEC-2026-0194** — quadratic runtime when checking duplicate
+    attribute names in a start tag (CPU-exhaustion DoS on hostile XMI).
+  - **RUSTSEC-2026-0195** — unbounded namespace allocation in `NsReader`
+    (memory-exhaustion DoS); `0.41` caps declarations at 256 per element.
+
+### Changed
+
+- `XmiError` gains an `XmlIo(std::io::Error)` variant: quick-xml 0.41
+  surfaces reader/writer I/O errors as `std::io::Error` instead of folding
+  them into `quick_xml::Error`.
+- The attribute reader deliberately keeps `Attribute::unescape_value`
+  (now deprecated) rather than switching to `normalized_value`, because the
+  latter collapses `\t\r\n` to spaces — verbatim attribute payloads must
+  round-trip byte-for-byte.
+
 ## [1.0.0] — 2026-06-08
 
 First stable release. The public API and the GhostId structural-identity
