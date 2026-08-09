@@ -1,0 +1,37 @@
+{
+  "format": 3,
+  "name": "uml_java_min",
+  "rules": [
+    {
+      "name": "R_Class",
+      "rank": 40,
+      "left": {
+        "anchor": "cls",
+        "nodes": [
+          { "name": "model", "type": "Model" },
+          { "name": "cls", "type": "Class" },
+          { "name": "cname", "type": "name" }
+        ],
+        "links": [["model", "cls"], ["cls", "cname"]]
+      },
+      "right": {
+        "anchor": "jcls",
+        "nodes": [
+          { "name": "jmodel", "type": "Model", "same_as": "model" },
+          { "name": "jcls", "type": "JavaClass" },
+          { "name": "jname", "type": "name" }
+        ],
+        "links": [["jmodel", "jcls"], ["jcls", "jname"]]
+      },
+      "corrs": [
+        {
+          "type": "CorrClass",
+          "left": "cls",
+          "right": "jcls",
+          "role": "establishes",
+          "bindings": [{ "left": "cname", "right": "jname", "transform": [] }]
+        }
+      ]
+    }
+  ]
+}

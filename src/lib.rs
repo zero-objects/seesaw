@@ -1,4 +1,4 @@
-//! # seesaw-tgg
+//! # seesaw-core
 //!
 //! Core engine for delta-extended Triple Graph Grammars with ghost
 //! overlays.
@@ -8,22 +8,25 @@
 //!
 //! ## Modules
 //!
-//! - [`graph`]: typed attributed graphs, status annotation, parent-rooted
-//!   ghost ids (T₂, T₅).
-//! - [`ops`]: atomic operations, delta entries, overlay application,
-//!   rollup index κ (T₁, T₂, T₃).
-//! - [`engine`]: pattern matching, the `Rule` trait, rank-based selection,
-//!   cascade, backtracking (T₃, T₄, T₆).
-//! - [`fold`]: nullification, consolidation, materialization, net delta,
-//!   transition graph (T₅, T₇).
+//! - [`ident`]: the two shared types. `GhostId` is the structurally
+//!   derived identity of every node, `Status` its lifecycle state.
+//! - [`rules`]: the rule format. Declarative bidirectional rules,
+//!   loading and validation, lowering into two directed creation plans.
+//!   [`rules::load`] is the one way from a rule file to plans.
+//! - [`graph`]: the model. Map-based, anonymous connections, value-free
+//!   identity.
+//! - [`plan`]: what a lowered rule is — a creation plan the engine
+//!   executes.
+//! - [`engine`]: the delta-local cascade with retraction.
+//!
+//! Users write rules against [`rules`]. The layers below become visible
+//! only where a cascade is driven or a graph is read.
 
 pub mod engine;
-pub mod fold;
 pub mod graph;
 pub mod hash;
-pub mod ops;
+pub mod ident;
 #[cfg(feature = "perf_trace")]
 pub mod perf_trace;
-pub mod rule;
-pub mod viz;
-pub mod xmi;
+pub mod plan;
+pub mod rules;

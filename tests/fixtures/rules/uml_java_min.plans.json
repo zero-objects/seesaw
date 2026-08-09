@@ -1,0 +1,228 @@
+{
+  "rules": [
+    {
+      "corr_recognition": [
+        {
+          "anchor": 1,
+          "corr_type": "CorrClass",
+          "endpoint_type": "JavaClass"
+        }
+      ],
+      "create_links": [
+        [
+          {
+            "matched": 1
+          },
+          {
+            "new": 0
+          }
+        ],
+        [
+          {
+            "matched": 0
+          },
+          {
+            "new": 1
+          }
+        ],
+        [
+          {
+            "new": 1
+          },
+          {
+            "new": 2
+          }
+        ],
+        [
+          {
+            "new": 0
+          },
+          {
+            "new": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "matched": 1
+          },
+          "typ": "CorrClass"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "new": 0
+          },
+          "typ": "JavaClass"
+        },
+        {
+          "corr_full_match": false,
+          "derived": {
+            "source": 2,
+            "transform": []
+          },
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "new": 1
+          },
+          "typ": "name"
+        }
+      ],
+      "input_types": [
+        "Class",
+        "CorrClass",
+        "Model",
+        "name"
+      ],
+      "name": "R_Class→",
+      "pattern_links": [
+        {
+          "from": 0,
+          "kind": "directed",
+          "to": 1
+        },
+        {
+          "from": 1,
+          "kind": "directed",
+          "to": 2
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "Model",
+          "value": null
+        },
+        {
+          "typ": "Class",
+          "value": null
+        },
+        {
+          "typ": "name",
+          "value": null
+        }
+      ],
+      "rank": 40
+    },
+    {
+      "corr_recognition": [
+        {
+          "anchor": 1,
+          "corr_type": "CorrClass",
+          "endpoint_type": "Class"
+        }
+      ],
+      "create_links": [
+        [
+          {
+            "matched": 1
+          },
+          {
+            "new": 0
+          }
+        ],
+        [
+          {
+            "matched": 0
+          },
+          {
+            "new": 1
+          }
+        ],
+        [
+          {
+            "new": 1
+          },
+          {
+            "new": 2
+          }
+        ],
+        [
+          {
+            "new": 0
+          },
+          {
+            "new": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "matched": 1
+          },
+          "typ": "CorrClass"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "new": 0
+          },
+          "typ": "Class"
+        },
+        {
+          "corr_full_match": false,
+          "derived": {
+            "source": 2,
+            "transform": []
+          },
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "new": 1
+          },
+          "typ": "name"
+        }
+      ],
+      "input_types": [
+        "CorrClass",
+        "JavaClass",
+        "Model",
+        "name"
+      ],
+      "name": "R_Class←",
+      "pattern_links": [
+        {
+          "from": 0,
+          "kind": "directed",
+          "to": 1
+        },
+        {
+          "from": 1,
+          "kind": "directed",
+          "to": 2
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "Model",
+          "value": null
+        },
+        {
+          "typ": "JavaClass",
+          "value": null
+        },
+        {
+          "typ": "name",
+          "value": null
+        }
+      ],
+      "rank": 40
+    }
+  ]
+}

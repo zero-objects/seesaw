@@ -6,6 +6,132 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0 release candidates are tagged `1.0.0-rcN`.
 
+## [2.0.0] — Unreleased
+
+This release removes the first engine generation and makes the declarative
+rule format the interface. It is not an incremental step, so it is worth
+saying plainly what changed in thinking, not only in code.
+
+### What the first generation was good for
+
+The delta and Merkle line worked. It showed that a triple graph grammar
+can be driven by deltas instead of by full re-derivation, that ghost
+overlays make partial state observable, and that rank plus backtracking
+turns a search into something you can reason about. It improved on the
+classical formulation in measurable ways.
+
+But the underlying idea was wrong. That engine solved problems inside
+itself which do not belong there. Negative application conditions,
+typed edges carrying meaning, values entering identity, special-case
+transformations in the core: each of these is the engine compensating for
+something the model does not say.
+
+### What this release does instead
+
+It moves those problems into the model and into the graphs, where they
+belong.
+
+- **No negative application conditions.** Every one we examined turned out
+  to be a symptom of missing positive structure. The answer is a marker,
+  an extra type, or a missing layer in the metamodel, not a condition in
+  the rule.
+- **No typed edges.** Connections are anonymous. A role that carries
+  meaning becomes a node.
+- **Identity is structural.** It derives from parent, type, origin and
+  transformation chain. No attribute value enters a hash, so renaming
+  cannot disturb identity.
+- **No special cases in the core.** A mapping the format cannot express is
+  written as rules. The comparator table of the PIL2SPELL case study, six
+  operators mapped to language constants, is now six rules with an
+  equality predicate and a constant, not a transformation baked into the
+  engine.
+
+### What this costs, and it is not free
+
+This only works if the model is good enough. Two arbitrary graphs will not
+do. The metamodel has to distinguish what needs distinguishing, name what
+needs naming, and carry the layers the transformation needs. Where it does
+not, the work does not disappear, it moves to the ingest side or to a
+well-formedness layer.
+
+That is the honest trade. The engine gets smaller and provable. The
+modelling gets stricter. We think that is the right place for the
+difficulty, because a model that cannot express its own distinctions is a
+problem worth surfacing, not worth hiding in a matcher.
+
+### Removed
+
+- The first generation in full: `engine`, `rule`, `graph`, `fold`, `ops`,
+  `xmi`, `viz`. Users who need it can build against `1.0.1`.
+- The JNI bridge, the pilot user interface and the wasm binding, all of
+  which were built on it. A wasm build can be generated from the current
+  generation when it is needed.
+- `docs/principles.md`. The conceptual material belongs to the paper.
+
+### Added
+
+- `v3`: the declarative rule format. Named nodes, explicit anchors,
+  mandatory correspondence roles, transformation chains built from five
+  domain-free primitives, five value predicates with semantics normalised
+  across languages, loading with located errors, lowering into two
+  directed creation plans.
+- `ident`: the two shared types, `GhostId` and `Status`.
+- `docs/using.md` and `docs/architecture.md`, both written for this
+  version.
+
+### Changed
+
+- Transformations are chains, canonically normalised, and the chain enters
+  identity. Identities from the previous generation are not comparable.
+- `v2` remains as the engine below the format. It is not the interface.
+
+## [1.1.0] — Unreleased
+
+### Added
+
+- **New `v2` module: the value-free structural-identity engine.** A
+  second, self-contained engine generation living next to the 1.0.x
+  modules (which are unchanged — this release is purely additive):
+  - **Map-based graph** (`v2::Graph`): one global map from participant
+    id to slot; nodes, anonymous directed connections and sorted
+    participation lists instead of typed edges. Roles are reified
+    nodes; deletion is tombstoning, status is filtered on read.
+  - **Value-free identity**: node identity is structural + provenance
+    (blake3 over parent/type/source/transform), never over attribute
+    values — renames cannot touch identity by construction. Raw values
+    live only in the original (host adapter or `v2::ValueStore`);
+    derived leaves carry an invertible transform chain resolved on
+    demand (`Graph::resolve_value`).
+  - **Content-intrinsic match ordering**: a match is its ref sequence
+    in pattern order; that sequence is the μ selection key. The
+    engine's to-do list orders candidates by (rank, ref sequence,
+    rule index) — deterministic cascades without state-dependent
+    numbering, and a backtracking bound (`SelectionBound`) derivable
+    from any cascade entry.
+  - **Purely positive rule system without NACs** (`v2::rule`):
+    bidirectional rules (`RuleV2`) with positional typed nodes,
+    directed/context links, leaf constraints, invertible transform
+    bindings and rule constants; lowered into two directed
+    operationalizations. Duplicate suppression works via pure id
+    preview + corr recognition instead of negative application
+    conditions.
+  - **Delta-local engine** (`v2::engine::Engine`): add-stream
+    anchoring (`elements_added`), eager match invalidation on
+    delete/modify (`element_removed`, `link_removed`), provenance-walk
+    retraction with tentative tombstones, O(Δ) consolidation, and the
+    saturation verdicts Duplication/Convergence/Contradiction.
+  - **Mechanical v1→v2 converter** (`v2::convert`): rule sets and
+    graphs, including the mechanical edge-reification decision table.
+- `GhostId::from_raw` — construction from raw bytes for the v2
+  identity derivation (domain separation is the caller's
+  responsibility).
+
+### Performance
+
+- On identical workloads the v2 engine measured ≈ 1.4× faster than
+  the 1.0.x engine (Hermann et al. 2014 PIL2SPELL rule set at ~503k
+  rule applications: 27.2 s vs 39.2 s user CPU, equivalent output).
+
 ## [1.0.1] — 2026-07-03
 
 Security patch. No engine behaviour changes — GhostIds, delta sequences and

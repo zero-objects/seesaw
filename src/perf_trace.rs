@@ -1,44 +1,44 @@
 //! Deterministic structural counters for the cascade (perf diagnostics).
 //!
-//! Feature-gated (`perf_trace`, off by default) → in a normal build this
-//! module does not exist and there are no call-sites; the hot path is
-//! unchanged (bit-identical). With `--features perf_trace` a few counters
-//! accumulate the *structural* work per phase, to see which phase grows
-//! super-linearly with graph size (= the real quadratic driver(s)) —
-//! contention-immune, unlike timing.
+//! Feature-gated (`perf_trace`, default OFF) → in a normal build this
+//! module doesn't exist and there are no call sites at all, the hot
+//! path is unchanged (bit-identical). With `--features perf_trace` a
+//! handful of counters accumulate the *structural* work per phase, to
+//! see which phase grows superlinearly with graph size (= the/a real
+//! quadratic-growth driver) — contention-immune, unlike timing.
 
 use std::cell::RefCell;
 
-/// Counters accumulated over one cascade run.
+/// Accumulated counters over one cascade run.
 #[derive(Debug, Default, Clone)]
 pub struct Trace {
     /// Number of cascade_step_cached calls.
     pub steps: u64,
     /// Σ over steps of the built candidate list (live, emitted).
     pub collect_built: u64,
-    /// Σ over steps of all matches walked in collect (incl. dead).
+    /// Σ over steps of all matches traversed in collect (incl. dead ones).
     pub collect_scanned: u64,
-    /// Σ of candidates examined in select_and_apply_cached.
+    /// Σ of the candidates considered in select_and_apply_cached.
     pub select_examined: u64,
-    /// Σ of order entries visited in the walk (incl. skipped dead/NAC) —
-    /// measures the skip prefix (perf-D3 diagnostic).
+    /// Σ of the order entries visited in the walk (incl. skipped
+    /// dead/NAC ones) — measures the skip prefix (perf-D3 diagnostics).
     pub walk_visited: u64,
     /// produce() calls.
     pub produce_calls: u64,
     /// is_duplicate() calls.
     pub is_duplicate_calls: u64,
-    /// anchored find_matches_with_fixed calls in cache.update.
+    /// Anchored find_matches_with_fixed calls in cache.update.
     pub update_anchored_calls: u64,
-    /// matches returned by anchored matching.
+    /// Matches returned by anchored matching.
     pub update_anchored_found: u64,
-    /// full re-enumerations (removal/mutation) in cache.update.
+    /// Full re-enumerations (removal/mutation) in cache.update.
     pub update_full_reenum: u64,
-    /// matches returned by full re-enumeration.
+    /// Matches returned by a full re-enumeration.
     pub update_full_found: u64,
     /// collect_scanned at the FIRST collect call (match set at the start).
     pub collect_first: u64,
     /// collect_scanned at the LAST collect call (match set at the end).
-    /// first==last ⇒ the match set is static (does not grow).
+    /// first==last ⇒ the match set is static (doesn't grow).
     pub collect_last: u64,
     /// Op kinds in the APPLIED deltas (to understand what produce emits).
     pub applied_add_node: u64,

@@ -1,0 +1,51 @@
+{
+  "alive": 6,
+  "nodes": [
+    {
+      "id": "11980dfd4470808129866278be89dcff43fe582645826eb3cb6474d7ed234a06",
+      "out": [
+        "4cd87fed095e4604e10dc1a45d73323fb4cb96bfd831aa73a8a152c3589d284f",
+        "8080d69e4a835aa5396aa8b4070a1959409918fb7d5fd6e4bf14725a65580ac6"
+      ],
+      "typ": "Model",
+      "value": null
+    },
+    {
+      "id": "151522f4c9ac436efcaf6d07ce815ef0d06620c1789d458ea1badeb5037c3e17",
+      "out": [],
+      "typ": "name",
+      "value": "Person"
+    },
+    {
+      "id": "49d8949df672ec2b1f7d5eff93e5c5574f735533abd19ee86d2aa6c595e19377",
+      "out": [
+        "8080d69e4a835aa5396aa8b4070a1959409918fb7d5fd6e4bf14725a65580ac6"
+      ],
+      "typ": "CorrClass",
+      "value": null
+    },
+    {
+      "id": "4cd87fed095e4604e10dc1a45d73323fb4cb96bfd831aa73a8a152c3589d284f",
+      "out": [
+        "151522f4c9ac436efcaf6d07ce815ef0d06620c1789d458ea1badeb5037c3e17",
+        "49d8949df672ec2b1f7d5eff93e5c5574f735533abd19ee86d2aa6c595e19377"
+      ],
+      "typ": "Class",
+      "value": null
+    },
+    {
+      "id": "8080d69e4a835aa5396aa8b4070a1959409918fb7d5fd6e4bf14725a65580ac6",
+      "out": [
+        "daf20cc5c738da30c5da649e95d19ac16a9f56da967897de46be583456219a29"
+      ],
+      "typ": "JavaClass",
+      "value": null
+    },
+    {
+      "id": "daf20cc5c738da30c5da649e95d19ac16a9f56da967897de46be583456219a29",
+      "out": [],
+      "typ": "name",
+      "value": "Person"
+    }
+  ]
+}

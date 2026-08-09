@@ -1,0 +1,350 @@
+{
+  "cases": [
+    {
+      "id": "6bf5febd98b1a5a9da373d73a47437f90afe69ecf32ee8d4e236b8285a4f0fe1",
+      "name": "leer",
+      "transform": []
+    },
+    {
+      "id": "6bf5febd98b1a5a9da373d73a47437f90afe69ecf32ee8d4e236b8285a4f0fe1",
+      "name": "identity",
+      "transform": [
+        {
+          "op": "identity"
+        }
+      ]
+    },
+    {
+      "id": "6bf5febd98b1a5a9da373d73a47437f90afe69ecf32ee8d4e236b8285a4f0fe1",
+      "name": "identity_und_leere_affixe",
+      "transform": [
+        {
+          "op": "identity"
+        },
+        {
+          "arg": "",
+          "op": "prefix"
+        },
+        {
+          "arg": "",
+          "op": "suffix"
+        },
+        {
+          "arg": "",
+          "op": "strip_prefix"
+        },
+        {
+          "arg": "",
+          "op": "strip_suffix"
+        }
+      ]
+    },
+    {
+      "id": "37276e666059686b98089787ae9d46d830b90b43512f02cf5d00485e07edb20d",
+      "name": "capitalize",
+      "transform": [
+        {
+          "op": "capitalize"
+        }
+      ]
+    },
+    {
+      "id": "c832b8c3eeda7a4a32d75c0395a51add780c7904158c97025c3176a42918de76",
+      "name": "decapitalize",
+      "transform": [
+        {
+          "op": "decapitalize"
+        }
+      ]
+    },
+    {
+      "id": "42c3dff96b6bce12368e83e6c7848eda43bf1b8f3e4993a7694f06923d6da16c",
+      "name": "capitalize_dann_praefix",
+      "transform": [
+        {
+          "op": "capitalize"
+        },
+        {
+          "arg": "get",
+          "op": "prefix"
+        }
+      ]
+    },
+    {
+      "id": "56fd10c2f660c69c776435a2e458ffa4eb4f9fe79f6eff0b725ae6b9dc4e9e92",
+      "name": "praefix_dann_capitalize",
+      "transform": [
+        {
+          "arg": "get",
+          "op": "prefix"
+        },
+        {
+          "op": "capitalize"
+        }
+      ]
+    },
+    {
+      "id": "3cf792534b6761741ac599896365b58a46e0c3726b1287a0240bc3d8f7059d71",
+      "name": "praefix_zweistufig_roh",
+      "transform": [
+        {
+          "arg": "a",
+          "op": "prefix"
+        },
+        {
+          "arg": "b",
+          "op": "prefix"
+        }
+      ]
+    },
+    {
+      "id": "3cf792534b6761741ac599896365b58a46e0c3726b1287a0240bc3d8f7059d71",
+      "name": "praefix_zusammengezogen",
+      "transform": [
+        {
+          "arg": "ba",
+          "op": "prefix"
+        }
+      ]
+    },
+    {
+      "id": "df3d2232d39fae5dc052dadba8bfb5a3bc38763f5507308468fd5f94ef2caf01",
+      "name": "suffix",
+      "transform": [
+        {
+          "arg": "_id",
+          "op": "suffix"
+        }
+      ]
+    },
+    {
+      "id": "bce37663e993f8ec9d71796ef45587a83c85bc8457f02b6f31fbe5292019a00c",
+      "name": "suffix_zweistufig_roh",
+      "transform": [
+        {
+          "arg": "a",
+          "op": "suffix"
+        },
+        {
+          "arg": "b",
+          "op": "suffix"
+        }
+      ]
+    },
+    {
+      "id": "bce37663e993f8ec9d71796ef45587a83c85bc8457f02b6f31fbe5292019a00c",
+      "name": "suffix_zusammengezogen",
+      "transform": [
+        {
+          "arg": "ab",
+          "op": "suffix"
+        }
+      ]
+    },
+    {
+      "id": "e8080f4a544749dacac2b802edfe31f669173e1b8dc370c174391439466a3ea6",
+      "name": "strip_praefix_dann_decapitalize",
+      "transform": [
+        {
+          "arg": "get",
+          "op": "strip_prefix"
+        },
+        {
+          "op": "decapitalize"
+        }
+      ]
+    },
+    {
+      "id": "ff2b902102088b2a35ad560dfb00d17c62693a13deb040c400b2b9886c44a89e",
+      "name": "strip_suffix",
+      "transform": [
+        {
+          "arg": "_id",
+          "op": "strip_suffix"
+        }
+      ]
+    },
+    {
+      "id": "c55d98232610b25d0135bbf9a6875c10c4079498a4ca1038f259a6d8f1689ce7",
+      "name": "nicht_ascii",
+      "transform": [
+        {
+          "arg": "Ärger→",
+          "op": "prefix"
+        },
+        {
+          "arg": "Größe_ß",
+          "op": "suffix"
+        }
+      ]
+    },
+    {
+      "id": "1962d42bf8c32dfb73d3dc7581ec8fcbeb9c22edc56165db1ee984a1600d9440",
+      "name": "nicht_ascii_zusammengezogen_roh",
+      "transform": [
+        {
+          "arg": "ß",
+          "op": "prefix"
+        },
+        {
+          "arg": "Ä",
+          "op": "prefix"
+        }
+      ]
+    },
+    {
+      "id": "1962d42bf8c32dfb73d3dc7581ec8fcbeb9c22edc56165db1ee984a1600d9440",
+      "name": "nicht_ascii_zusammengezogen",
+      "transform": [
+        {
+          "arg": "Äß",
+          "op": "prefix"
+        }
+      ]
+    }
+  ],
+  "gleich": [
+    [
+      "leer",
+      "identity"
+    ],
+    [
+      "leer",
+      "identity_und_leere_affixe"
+    ],
+    [
+      "praefix_zweistufig_roh",
+      "praefix_zusammengezogen"
+    ],
+    [
+      "suffix_zweistufig_roh",
+      "suffix_zusammengezogen"
+    ],
+    [
+      "nicht_ascii_zusammengezogen_roh",
+      "nicht_ascii_zusammengezogen"
+    ]
+  ],
+  "parent": "87ca7c30406900a816847ae289b8512c051733af594b4fadc38be0251f8d7327",
+  "parent_external": "uml:/Person",
+  "source": "a5954b6ac002261d21c651a46c18df75e7c91a5633a762cc5596141f456bb774",
+  "source_external": "uml:/Person/name",
+  "typ": "getterName",
+  "vokabular": [
+    {
+      "id": "6bf5febd98b1a5a9da373d73a47437f90afe69ecf32ee8d4e236b8285a4f0fe1",
+      "name": "identity",
+      "transform": []
+    },
+    {
+      "id": "37276e666059686b98089787ae9d46d830b90b43512f02cf5d00485e07edb20d",
+      "name": "capitalize",
+      "transform": [
+        {
+          "op": "capitalize"
+        }
+      ]
+    },
+    {
+      "id": "c832b8c3eeda7a4a32d75c0395a51add780c7904158c97025c3176a42918de76",
+      "name": "decapitalize",
+      "transform": [
+        {
+          "op": "decapitalize"
+        }
+      ]
+    },
+    {
+      "id": "42c3dff96b6bce12368e83e6c7848eda43bf1b8f3e4993a7694f06923d6da16c",
+      "name": "getter_name",
+      "transform": [
+        {
+          "op": "capitalize"
+        },
+        {
+          "arg": "get",
+          "op": "prefix"
+        }
+      ]
+    },
+    {
+      "id": "e8080f4a544749dacac2b802edfe31f669173e1b8dc370c174391439466a3ea6",
+      "name": "getter_strip",
+      "transform": [
+        {
+          "arg": "get",
+          "op": "strip_prefix"
+        },
+        {
+          "op": "decapitalize"
+        }
+      ]
+    },
+    {
+      "id": "b48007aed49d1a4eb9ab02b1b9623cc162b1492d70f4e3a05e959260f6d4ed17",
+      "name": "setter_name",
+      "transform": [
+        {
+          "op": "capitalize"
+        },
+        {
+          "arg": "set",
+          "op": "prefix"
+        }
+      ]
+    },
+    {
+      "id": "6a23c75716be40b61c873217ac0666faa83b188c852003683e45a6e52314c41e",
+      "name": "setter_strip",
+      "transform": [
+        {
+          "arg": "set",
+          "op": "strip_prefix"
+        },
+        {
+          "op": "decapitalize"
+        }
+      ]
+    },
+    {
+      "id": "10e6c57486f4e2d738140e21fdeb16df73da7819d2dc2c3263e1b032d4d2cb05",
+      "name": "cmd_prefix",
+      "transform": [
+        {
+          "arg": "C ",
+          "op": "prefix"
+        }
+      ]
+    },
+    {
+      "id": "f25e0c42b372d8353bb92d7a84a59802047d505acaf2d53c8115b75ebf831cdd",
+      "name": "cmd_strip",
+      "transform": [
+        {
+          "arg": "C ",
+          "op": "strip_prefix"
+        }
+      ]
+    },
+    {
+      "id": "4aa02c0e8936c08f6d5c9b4e71f3424a33d0fc00ee9d88cca3ef11dc2638fcbb",
+      "name": "tm_prefix",
+      "transform": [
+        {
+          "arg": "T ",
+          "op": "prefix"
+        }
+      ]
+    },
+    {
+      "id": "df860099183489a13183dae5b42428334975a15f81621b3d004cb434cf9d7e1c",
+      "name": "tm_strip",
+      "transform": [
+        {
+          "arg": "T ",
+          "op": "strip_prefix"
+        }
+      ]
+    }
+  ]
+}

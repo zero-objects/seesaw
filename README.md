@@ -4,139 +4,142 @@
 [![docs.rs](https://docs.rs/seesaw-tgg/badge.svg)](https://docs.rs/seesaw-tgg)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
-**Delta-extended Triple Graph Grammar engine with rank-based backtracking.**
+**Bidirectional graph transformation with a declarative rule format.**
 
-Triple Graph Grammars (TGG) are a formal framework for bidirectional
-model-to-model transformations. Their classical formulation has a long-
-standing weakness: with generalized rule sets, the iterative rule-matching
-loop can fall into infinite folding/expansion. Existing mitigations (lazy
-evaluation, application-conditions, NACs) are local patches, not systemic
-solutions.
+A Triple Graph Grammar relates two models by rules that read in both
+directions: the same rule that builds the right side from the left
+builds the left from the right. This crate is one engine for that, plus
+the format its rules are written in.
 
-`seesaw-tgg` proposes a different control mechanism: strictly monotonic
-change handling with rank-based backtracking.
+Three properties shape everything else.
 
-## The model
+**Identity is structural.** A node's identity derives from its parent,
+its type, its origin and the chain of transformations that produced it.
+No attribute value enters the hash. Renaming something therefore cannot
+disturb its identity, and applying a rule twice cannot produce two
+nodes where there should be one.
 
-A source graph **L**, a target graph **R**, and a correspondence graph **D**
-are maintained as an observable triple. **D** is anchored in both **L** and **R**
-through its edges and is stable in state `0`.
+**Connections are anonymous.** An edge has a direction and nothing
+else. A relationship that carries meaning becomes a node, which means
+it can be matched, corresponded and deleted like anything else.
 
-When a delta is applied to **L** (or **R**), the triple freezes at state `0+1`
-(yielding e.g. **L₁**, **D₀**, **R₀**). The cascade then operates on ghost
-projections **L'₁**, **D'₀**, **R'₀** — the deltas unfold under rule matching
-until one of two cases:
-
-- the model **converges** (clean fold), or
-- the propagation directly or indirectly touches the original delta on **L**,
-  which in the classical formulation triggers the infinite-null pathology.
-
-At that point, a rank function **rank(r)** strictly monotone over the rule
-space **R** governs backtracking: the engine retreats to the highest-rank
-applied rule and either (a) takes another path by rank, (b) capitulates, or
-(c) takes another path under an alternative resolver. Once convergence is
-reached, the ghost derivations of **L₁ R₀ D₀** are re-integrated bottom-up
-to a stable **L₂ D₁ R₁**.
-
-Rank is domain-specific. Empirical evidence from adjacent domains suggests
-that **declaration order** is the simplest robust rank. The engine treats
-rank as an interface, not a fixed policy.
-
-## What's in this crate
-
-- **Graph** — `TypedGraph` with Solid/Ghost/Tombstone status tracking
-- **Ops** — `Op::{AddNode, AddEdge, DelNode, DelEdge, SetAttr}` with applicability
-  semantics matching the paper definitions
-- **Rule** — `RuleSetSpec`, `compile`, `instantiate`. JSON-based rule format.
-- **Cascade** — `cascade_step`, `run_cascade` with rank-ordered backtracking
-- **Fold** — `consolidate`, `diff` for baseline transitions
-- **XMI** — Reader for EMF-style XMI 2.0 models
+**Rules are purely positive.** There are no negative application
+conditions. Every one we examined turned out to be a symptom of missing
+positive structure, and the answer was a marker, an extra type or a
+missing layer in the model, not a condition in the rule.
 
 ## Quick start
 
 ```toml
 [dependencies]
-seesaw-tgg = "1.0.0"
+seesaw-tgg = "2.0"
 ```
 
-```rust
-use seesaw_tgg::engine::{cascade_step, Cascade, Rule};
-use seesaw_tgg::graph::{Status, TypedGraph};
-use seesaw_tgg::rule::demo::demo_rule_instantiated;
-use std::collections::BTreeMap;
+A rule set is JSON. This one relates a UML class to a Java class and
+carries the name across:
 
-fn main() {
-    // Build a small source graph: Model → Class
-    let mut g = TypedGraph::new();
-    let model = g.add_baseline_node("Model", "mApp", BTreeMap::new());
-    let class = g.add_baseline_node("Class", "cWidget", BTreeMap::new());
-    g.add_edge(model, class, "classes", BTreeMap::new(), Status::Solid).unwrap();
-
-    // Load demo rule (UML Class → Java Class bidirectional)
-    let r_class = demo_rule_instantiated("R_Class").unwrap();
-    let rules: Vec<&dyn Rule> = vec![r_class.as_ref()];
-
-    let mut cascade = Cascade::new();
-    let state = cascade_step(&mut cascade, &mut g, &rules).unwrap();
-
-    println!("state: {:?}", state);                  // Running
-    println!("cascade length: {}", cascade.len());   // 1
-    println!("graph: {} nodes, {} edges",
-             g.node_count(), g.edge_count());        // 4 nodes, 3 edges
+```json
+{
+  "format": 3,
+  "name": "uml_java",
+  "rules": [
+    {
+      "name": "R_Class",
+      "rank": 40,
+      "left": {
+        "anchor": "cls",
+        "nodes": [
+          { "name": "model", "type": "Model" },
+          { "name": "cls",   "type": "Class" },
+          { "name": "cname", "type": "name" }
+        ],
+        "links": [["model", "cls"], ["cls", "cname"]]
+      },
+      "right": {
+        "anchor": "jcls",
+        "nodes": [
+          { "name": "jmodel", "type": "Model", "same_as": "model" },
+          { "name": "jcls",   "type": "JavaClass" },
+          { "name": "jname",  "type": "name" }
+        ],
+        "links": [["jmodel", "jcls"], ["jcls", "jname"]]
+      },
+      "corrs": [
+        {
+          "type": "CorrClass", "left": "cls", "right": "jcls",
+          "role": "establishes",
+          "bindings": [{ "left": "cname", "right": "jname" }]
+        }
+      ]
+    }
+  ]
 }
 ```
 
-See [`examples/basic_cascade.rs`](examples/basic_cascade.rs) for a runnable
-demo:
+Loading it gives two creation plans per rule, forward and backward:
 
-```sh
-cargo run --example basic_cascade
+```rust
+use seesaw_tgg::engine::Engine;
+use seesaw_tgg::graph::{Graph, ValueStore};
+use seesaw_tgg::ident::Status;
+use seesaw_tgg::plan::DirectedRule;
+
+fn run(rule_file: &str) {
+    let mut g = Graph::default();
+    let rules = seesaw_tgg::rules::load(rule_file, &mut g).expect("rule file loads");
+
+    // A source model: Model → Class → name leaf.
+    let model = g.add_baseline("m", "Model");
+    let cls = g.add_baseline("m/Person", "Class");
+    let cname = g.add_baseline("m/Person/name", "name");
+    g.connect(model, cls, Status::Solid);
+    g.connect(cls, cname, Status::Solid);
+
+    // Values live in the host, not in the graph.
+    let mut values = ValueStore::default();
+    values.insert(cname, "Person");
+
+    let rules: &'static [DirectedRule] = Box::leak(rules.into_boxed_slice());
+    Engine::new(rules).run(&mut g, &values, 1000);
+    // The graph now holds a JavaClass, a CorrClass, and a name leaf
+    // that resolves to "Person" without ever storing it twice.
+}
 ```
-
-## Demo rule set
-
-The crate ships an embedded demo rule set (`tests/fixtures/demo-ruleset.json`)
-that mirrors the UML-Class → Java-Class transformation used in the paper:
-
-- **R_Class** (rank 40): `Class ↔ JavaClass` under a shared `Model` anchor
-- **R_Attr** (rank 30): `Attribute ↔ JavaField` within a corresponding `Class`
-- **R_Getter** (rank 20): adds `Getter` method for each `Attribute`
-- **R_Setter** (rank 10): adds `Setter` method for each `Attribute`
-
-All four rules are bijective and use the strictly-monotone rank order.
 
 ## Documentation
 
-Three pages cover the engine end-to-end:
+Two pages, written for this version:
 
-- **[docs/principles.md](docs/principles.md)** — *why* the engine is
-  shaped the way it is. The classical TGG pathology, strictly monotonic
-  change handling with rank-based backtracking, identity from
-  structure, symmetric correspondence.
-- **[docs/architecture.md](docs/architecture.md)** — *how it works*.
-  Module-by-module mechanics, the cascade lifecycle, ops semantics,
-  matching, fold, snapshot format.
-- **[docs/using.md](docs/using.md)** — *how to use it cleanly*. Rule
-  format, worked examples (forward, backward, rename), session
-  lifecycle, pitfalls, diagnostics, testing patterns.
+- **[docs/using.md](docs/using.md)** — how to write a rule set, load
+  it, drive a cascade and read the result. Field by field through the
+  file format, a worked example, the error messages you will meet.
+- **[docs/architecture.md](docs/architecture.md)** — how the pieces
+  fit. From rule file through validation and lowering to the engine,
+  how identity is derived, what the lifecycle states mean.
 
-Two runnable examples back the worked examples in `using.md`:
+## Modules
 
-```sh
-cargo run --example basic_cascade        # forward cascade
-cargo run --example backward_cascade     # backward cascade, same rule
-cargo run --example rename_identity      # A8: identity stable under rename
-```
+| module | what lives there |
+|---|---|
+| `rules` | the rule format: reading, validation, lowering |
+| `graph` | the model: nodes, connections, types, values |
+| `plan` | what a lowered rule is, and how it is applied |
+| `engine` | the delta-local cascade with retraction |
+| `ident` | `GhostId` and `Status`, shared by all of the above |
 
-The Rustdoc reference is at <https://docs.rs/seesaw-tgg>.
+`rules::load` is the one way from a rule file to plans. The layers
+below become visible only where a cascade is driven or a graph is read.
 
 ## Status
 
-`1.0.0` — first stable release; the public API follows semantic versioning
-from here. The core algorithms (cascade, fold, ranked backtracking) are stable
-and test-covered across ~265 unit, integration, and property tests including
-benchmark suites against published research cases (FASE 2019, JOT 2022,
-LMCS 2024, STTT 2021, TTC 2015).
+`2.0.0` removes the first engine generation. It is not an incremental
+step; see [CHANGELOG.md](CHANGELOG.md) for what changed in thinking,
+not only in code. Users who need the previous generation can build
+against `1.0.1`.
+
+The engine is covered by unit, integration and property tests,
+including reproductions of published research cases (FASE 2019, JOT
+2022, LMCS 2024, STTT 2021, TTC 2015).
 
 ## License
 

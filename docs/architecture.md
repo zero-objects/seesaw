@@ -1,421 +1,472 @@
 # Architecture
 
-How `seesaw-tgg` is wired internally. Module by module, with the data
-flow that ties them together.
+This document describes how a rule set travels from a file on disk to a
+running cascade, and where identity comes from. It is written for readers
+who want to know what happens inside, not how to write a rule set. That is
+[using.md](using.md).
 
-For the *why*, see [principles.md](./principles.md). For practical usage
-with code, see [using.md](./using.md).
+The rule format is version 3. A file declares rules by name. Loading a file
+produces two directed creation plans per rule, one for each direction. The
+engine underneath executes those plans. The engine itself is not documented
+here, only the places where it becomes visible.
 
-## 1. Module map
-
-```
-seesaw_tgg
-│
-├── graph    typed attributed graphs, Solid/Ghost/Tombstone status,
-│            parent-rooted GhostId
-│
-├── ops      atomic operations (Op enum) — AddNode, AddEdge,
-│            DelNode, DelEdge, SetAttr
-│
-├── rule     rule specification format (JSON), compilation,
-│            instantiation; RuleSpec → CompiledRuleSpec → Rule
-│
-├── engine   pattern matching, Rule trait, rank-based selection,
-│            cascade step + backtracking
-│
-├── fold     consolidation (Ghost → Solid), diff against a previous
-│            baseline
-│
-├── xmi      reader for EMF-style XMI 2.0 source models
-│
-└── viz      DOT output for visualization / debugging
-```
-
-Dependencies flow downward: `engine` and `rule` build on `graph` + `ops`;
-`fold` builds on `graph`; `xmi` and `viz` are auxiliaries.
-
-## 2. Lifecycle
-
-A session in `seesaw-tgg` is just a `TypedGraph` plus a `Cascade` plus
-some rules. There is no `Session` struct; the lifecycle is direct.
+## The path of a rule file
 
 ```
-   ┌────────────────────────────────────────────────────────────┐
-   │  TypedGraph::new()                                         │
-   │  Cascade::new()                                            │
-   │  let rules = [demo_rule_instantiated("R_Class"), …];       │
-   └────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-   ┌────────────────────────────────────────────────────────────┐
-   │  build / seed the source side                              │
-   │    g.add_baseline_node("Model", "m1", attrs)               │
-   │    g.add_edge(…)                                           │
-   └────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-   ┌────────────────────────────────────────────────────────────┐
-   │  drive the cascade                                         │
-   │    loop { cascade_step(&mut cascade, &mut g, &rules) }     │
-   │      ↳ select highest-rank applicable rule                 │
-   │      ↳ fire it: writes Ghost nodes / edges into g          │
-   │      ↳ record in cascade for backtracking                  │
-   │      ↳ stop when Converged or DeltaTouch or RolledBack     │
-   └────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-   ┌────────────────────────────────────────────────────────────┐
-   │  observe                                                   │
-   │    g.iter_nodes() / g.iter_edges()                         │
-   │    each NodeData has type_id, attrs, status                │
-   └────────────────────────────────────────────────────────────┘
-                              │
-                              ▼
-   ┌────────────────────────────────────────────────────────────┐
-   │  fold (when ready to consolidate the baseline)             │
-   │    consolidate(&mut g)                                     │
-   │      ↳ Ghost → Solid, Tombstone removed                    │
-   │    cascade cleared for the next round                      │
-   └────────────────────────────────────────────────────────────┘
+uml_java.json
+     │  serde, deny_unknown_fields
+     ▼
+RuleFile        rules::format      the file, one struct per JSON object
+     │  validate()
+     ▼
+Resolved        rules::validate    names resolved to positions, checks done
+     │  lower_all()
+     ▼
+Vec<DirectedRule>               two per rule, forward and backward
+     │  Engine::new(&rules).run(&mut graph, &values, budget)
+     ▼
+Graph                           ghost overlay over the host model
 ```
 
-Three things in this flow are worth pausing on:
+Four modules carry the four stages.
 
-- **No half-states.** The cascade either runs to a clean termination or
-  backtracks to where it started. The graph between `cascade_step`
-  calls is always coherent.
-- **Backtracking is local to one cascade.** It does not roll back the
-  baseline; only the `Ghost` overlay.
-- **Folding is explicit.** The caller decides when to consolidate. This
-  is what lets one cascade observe the result of a prior one without
-  committing it.
+| Module | File | Responsibility |
+|---|---|---|
+| `rules::format` | `src/rules/format.rs` | file structures, serde only, no logic |
+| `rules::validate` | `src/rules/validate.rs` | validation, name resolution, chain interning |
+| `rules::lower` | `src/rules/lower.rs` | two directed creation plans per rule |
+| `rules::export` | `src/rules/export.rs` | serializes lowered plans, verification artifact |
 
-## 3. Graph internals (`graph`)
+`rules::predicate` and `rules::transform` are used by two stages each. Predicates
+are parsed during validation and evaluated during matching. Transform chains
+are interned during validation, inverted during lowering, and applied during
+value resolution.
 
-`TypedGraph` is the working surface for everything else.
+## Stage 1: the file
 
-- `NodeData { id: GhostId, type_id: String, attrs: BTreeMap<String, String>,
-  status: Status }`
-- Edges carry type, attrs, and status the same way.
-- Iteration: `iter_nodes()`, `iter_edges()`, `get_node(&id)`.
+`RuleFile::from_json` is a plain serde deserialization. It has no knowledge
+of rules beyond their shape. Everything it can reject, it rejects at this
+point.
 
-### `GhostId`
-
-A 32-byte SHA-256 hash, displayable in two forms:
-
-- `id.short()` — first 4 bytes as 8 hex chars. Use for logs.
-- `id.hex()` — full 64 hex chars. Use when round-tripping through an
-  external boundary (e.g., a JNI host) that needs to refer back to
-  this exact node. `GhostId::from_hex(s)` parses it back.
-
-Two ways to construct one:
-
-- `GhostId::from_opaque(s)` — for *external identifiers* that you carry
-  in from outside (file paths, EMF URIs, JDT handles). The engine hashes
-  the string. Same opaque → same id.
-- `GhostId::from_parent(parent, edge_kind, type_id, &attrs)` — for
-  *cascade-derived* nodes. The id is parent-rooted, structural, and
-  includes the identity-bearing attrs but **not** propagated values.
-  See [principles.md §7](./principles.md#7-identity-from-structure).
-
-### `Status`
+Every struct of the format carries `#[serde(deny_unknown_fields)]`. A field
+that does not belong to the format is an error, not a value that gets
+ignored. A file that carries a field from an earlier generation fails to
+parse instead of loading with that part missing.
 
 ```
-Solid               → committed; part of the baseline
-Ghost               → live in the current cascade
-TentativeTombstone  → marked for deletion; eligible for resurrection
-                      if the same id is re-derived this cascade
-Tombstone           → definitive; will be removed at the next fold
+unknown field `nacs`, expected one of `format`, `name`, `rules` at line 1 column 40
 ```
 
-The `TentativeTombstone` step is what makes seesaw idempotent under
-re-derivation. See [principles.md §4](./principles.md#4-delta-semantics-and-ghost-projection).
+The two internally tagged enums, `PrimDecl` (tag `op`) and `PredicateDecl`
+(tag `kind`), cannot rely on `deny_unknown_fields` on the enum itself.
+Serde buffers the object before it reads the tag, and a foreign field is
+lost in that buffer. Each variant therefore carries its body as a separate
+named struct, which is strict. `{"op":"prefix","arg":"get","unknown":true}`
+fails. The JSON shape stays flat either way.
 
-## 4. Operations (`ops`)
-
-Five atomic ops carry every change:
-
-```rust
-pub enum Op {
-    AddNode { parent: GhostId, edge_type: String,
-              type_id: String, attrs: BTreeMap<String, String> },
-    AddEdge { source: GhostId, target: GhostId,
-              type_id: String, attrs: BTreeMap<String, String> },
-    DelNode { target: GhostId },
-    DelEdge { target: GhostId },
-    SetAttr { target: GhostId, key: String, value: String },
-}
-```
-
-Each op has a `target` (the element it touches) for *rollup overlay*
-semantics: two ops with the same target in the same delta are merged
-under "the later one wins".
-
-`AddNode` is the only op that creates a `GhostId`. The id is parent-rooted
-and includes the op's `attrs` and `edge_type` — so the *same* `AddNode`
-called twice produces the same id. This is the basis for the idempotent
-cascade.
-
-## 5. Rules (`rule`)
-
-A rule has two layers:
-
-- **`RuleSpec`** is the declarative format. JSON-compatible. Carries
-  `l_pattern`, `r_pattern`, `correspondence_links` (with optional
-  `role: Establishes | References`), `nacs`, `rank`, plus the
-  `creation_attrs` block that marks which attributes are
-  identity-bearing on R-only creation nodes.
-
-- **`CompiledRuleSpec`** is the lowered form the engine actually
-  matches. The lowering picks the direction (Fwd or Bwd), swaps
-  L↔R + corr endpoints for backward direction, and derives the
-  context-vs-creation role of each correspondence from `role` + the
-  bindings.
-
-> **Invariant — every created node carries a correspondence.** A node
-> that a rule *creates* (an R-only node in `nodes_to_create`) is
-> materialized by `instantiate` only as the target of an *Establishes*
-> correspondence — its `GhostId` is rooted at the correspondence node, and
-> deletion reaches it by following `corrL`/`corrR`. A created node with no
-> correspondence is therefore not a "lightweight" node — it is silently
-> unmaterializable and unreachable by retraction. `compile` rejects such a
-> rule (`CompileError::CreatedNodeWithoutCorrespondence`) instead of
-> dropping the node at production time. If several target nodes belong to
-> one source element (e.g. a `JavaField` *and* a `Getter` for one
-> `Attribute`), give each its own correspondence to that same source
-> element (fan-out) — see the demo `R_Getter`/`R_Setter` rules. Pure
-> target-side "skeleton" structure is modeled the same way: every node
-> corresponds to the source element whose projection it is part of.
-
-### Bidirectional lowering
+Both enums are closed. An operation or predicate kind the format does not
+know is a parse error with the list of valid names in the message.
 
 ```
-RuleSpec ──compile_bidirectional──► [CompiledRuleSpec ("R→"),
-                                     CompiledRuleSpec ("R←")]
-                                          │
-                                          ▼
-                                    instantiate(&compiled) → Box<dyn Rule>
+unknown variant `reverse`, expected one of `identity`, `capitalize`, `decapitalize`, `prefix`, `suffix`
 ```
 
-`compile_bidirectional` always emits two directed rules per declarative
-rule, named `"<name>→"` and `"<name>←"` (U+2192 / U+2190). You register
-**both**; the direction is chosen **per delta**, not by a manual pass
-switch. Each compiled rule carries `input_domain_kinds` (the L- resp.
-R-domain kinds it consumes). After applying a Δ, derive the set of kinds
-it touched and call `directional_rule_refs(&rules, &delta_kinds)` to get
-the rules whose input kinds intersect the Δ (undirected rules — empty
-`input_domain_kinds` — are always included); pass that slice to
-`run_cascade`. This is what keeps the bidirectional set from
-ping-ponging: a Δ on the L-domain activates only `R→`, a Δ on the
-R-domain only `R←`. Among the active rules, rank decides which fires when.
+`format` is checked in the next stage, not here. A file with a foreign
+version number still parses if it happens to fit the structures. It is
+rejected by `validate`.
 
-```rust
-let spec: RuleSpec = …;                            // one direction-neutral rule
-let rules: Vec<Box<dyn Rule>> = compile_bidirectional(&spec)?
-    .iter().map(instantiate).collect();            // register both R→ / R←
-// per delta:
-let active = directional_rule_refs(&rules, &delta_kinds);
-run_cascade(&mut cascade, &mut graph, &active, max_steps)?;
-```
+## Stage 2: validation and name resolution
 
-The `Rule` trait — `pub trait Rule: Debug + Send + Sync` — is what the
-engine consumes. The default implementation is `BasicRule`, but any
-type can implement it.
+`validate(&RuleFile) -> Result<Resolved, LoadError>` does two things at once.
+It checks the rules, and it turns every name into a position.
 
-## 6. Matching (`engine`)
+Names are file-local and per side. `left` and `right` have separate name
+spaces. The index for each side is built once, in `side_index`, and then
+used for the anchor, for the links, for `same_as` targets, for correspondence
+endpoints and for bindings. A duplicate node name inside one side is an error
+before anything is resolved against it.
 
-A pattern is a set of `NodePattern`s + `EdgePattern`s with variables.
-Matching produces a `PatternMatch` — a map from variable to `GhostId` in
-the live graph.
+After resolution, the `Resolved*` structures hold positions where the file
+held names.
 
-### Pattern kinds
+| File | Resolved |
+|---|---|
+| `SideDecl.anchor: String` | `ResolvedSide.anchor: usize` |
+| `SideDecl.links: Vec<(String, String)>` | `ResolvedSide.links: Vec<(usize, usize)>` |
+| `NodeDecl.same_as: Option<String>` | `ResolvedNode.same_as: Option<usize>` |
+| `CorrDecl.left/right: String` | `ResolvedCorr.left/right: usize` |
+| `BindingDecl.left` or `left_type` | `BindingSource::Node(usize)` or `LeafType(String)` |
+| `BindingDecl.transform: Vec<PrimDecl>` | `ResolvedBinding.chain: ChainId` |
 
-- **`NodePattern`** specifies a `kind` (the `type_id`) and zero or more
-  `AttrPredicate` constraints (literal, regex, exists).
-- **`EdgePattern`** specifies source variable, target variable, and a
-  `type_id`. It also carries a **`membership`** flag (default `false`):
-  when set, the matcher ignores edge direction *and* edge type — the
-  two endpoints only need to share any edge, in either orientation.
-  This is what makes correspondence matching orientation-agnostic
-  (see [principles.md §8](./principles.md#8-symmetric-correspondence)).
+The chain table lives in the result, as `Resolved.chains`, not beside it. A
+`ChainId` resolved against a different table gives a panic in the good case
+and the wrong chain in the bad one. Lowering therefore takes the whole
+`Resolved` and an index, never a single rule.
 
-### Finding matches
+Every error carries its location. `UnknownNode` names the rule, the side and
+the name that was not found. For a cross-side join, the first name is
+resolved against the left index and the second against the right one, so a
+name that exists but sits on the wrong side is reported on the side it was
+looked for.
 
-- `find_matches(pattern, graph)` returns every `PatternMatch` of
-  `pattern` in `graph`.
-- `find_matches_with_fixed(pattern, fixed_bindings, graph)` lets you
-  pin some variables — useful when you have an anchor and want
-  completions.
+### Rule names must be unique
 
-## 7. Cascade and backtracking (`engine`)
+Duplicate rule names inside one set are a load error, checked before any
+rule is resolved. This is not a style rule. The rule name enters the
+identity of every constant the rule creates. Two rules with the same name
+and a constant at the same plan position under the same parent would produce
+the same identity for two different elements. See the identity section below.
 
-```
-Cascade { entries: Vec<DeltaEntry> }
-```
+### Predicate and constant must match the node role
 
-A `Cascade` is the audit trail of an in-flight cascade. Each
-`DeltaEntry` records its `origin` (the seed `User` delta, or a `Rule`
-application), the `rank` at which it fired, the `op_star` it produced,
-the `anchor` nodes it referenced, and — for rule applications — the
-match `bindings` (pattern variable → `GhostId`). The first entry is
-always the user delta; the rest are the rule applications it induced.
+A value predicate is only read while matching. A constant is only written
+while creating. Whether a node is matched or created is not declared, it
+follows from the rule.
 
-### `cascade_step`
+`is_created(rule, side, i)` answers the question for the one direction in
+which that side is the output side. A node is created there unless it is one
+of three things.
 
-```rust
-pub fn cascade_step(
-    cascade: &mut Cascade,
-    graph: &mut TypedGraph,
-    rules: &[&dyn Rule],
-) -> Result<TerminationState, EngineError>
-```
+1. `context: true`. The node is matched, never created.
+2. The partner of a `same_as` relation. The right node is a left node, so
+   neither of them is created on the output side.
+3. The endpoint of a correspondence with `role: "references"`. The rule
+   points at an existing translation instead of establishing one.
 
-One step does the following:
+From that, `check_value_roles` derives four errors.
 
-1. Collect candidates: for each rule, ask "does your L-pattern match
-   the current graph?" via `find_matches`. Filter out matches that
-   violate any NAC of the rule (`nacs_forbid`).
-2. Rank-order the candidates: `select_highest_rank` picks the
-   highest-ranking applicable rule + match.
-3. Run the rule: compute its ops, check duplicates (`is_duplicate`)
-   and contradictions (`is_contradictory_with_cascade`).
-4. Apply the non-duplicate ops to the graph as `Ghost`.
-5. Record the application in `cascade`.
+- A predicate on a node that lowering creates is `PredicateOnCreatedNode`.
+  Exactly one form is allowed, an equality predicate whose value equals the
+  `constant` of the same node. That node is matched by value in one
+  direction and written with that same value in the other.
+- The same node with an equality predicate and a different constant is
+  `ConstantPredicateMismatch`.
+- A constant on a node that is never created in either direction is
+  `ConstantOnMatchedNode`. It would fall through both ways.
+- An invalid regular expression or forbidden regex syntax is `Predicate`,
+  carrying the rule, the node and a `PredicateError`.
 
-`TerminationState` is one of `Running`, `Converged`, `DeltaTouch`,
-`RolledBack`.
+The point of these four is that a rule which only holds in one direction is
+rejected at load time instead of running half correctly.
 
-### Running the cascade
+### Transform chains are normalized on the way in
 
-For most uses, call `run_cascade` instead of `cascade_step` in a loop.
-For observation between steps (logging, tracing), use
-`run_cascade_observable` with a callback. For derivations that may
-need to be undone wholesale, `run_cascade_with_rollback` snapshots the
-graph before starting.
+`ChainTable::intern` stores the normal form of a chain, and returns the same
+id for two chains that only differ in ways the normal form removes. Three
+rules apply, each of them effect preserving.
 
-### Backtracking
+1. `identity` steps drop out.
+2. Affix steps with an empty argument drop out.
+3. Adjacent affix steps of the same kind merge.
 
-When a step would *touch the original delta* — write into a node or
-edge that was already modified by the delta that started the cascade —
-the engine retreats. The exact mechanism:
+The normal form is not the shortest chain with the same effect. Shortenings
+that depend on Unicode edge cases are deliberately not applied.
+`[capitalize, capitalize]` stays as written, because idempotence of
+`capitalize` fails for values like `ß`. The reason for normalizing at all is
+identity, not size. The chain enters the identity of every leaf derived
+through it, so two rules that write the same transformation differently must
+not produce two different leaves.
 
-1. The latest applied rule (highest rank applied) is removed.
-2. Its ops are reversed: ghosts deleted, edges retracted via
-   `retraction_cascade_for`.
-3. The cascade re-runs from the previous state with that rule excluded
-   from the candidate pool.
+## Stage 3: lowering
 
-If the backtracking exhausts the rule space, the outer call returns
-`TerminationState::RolledBack`. The graph is restored to its pre-cascade
-state; the caller decides what to do.
+`lower_rule(&Resolved, ix, &mut Graph)` returns `[DirectedRule; 2]`, forward
+first. `lower_all` does the same for the whole set and returns them
+alternating in declaration order. Both take a graph, because pattern node
+types are interned into that graph's type table. The lowered rules only fit
+the graph they were lowered against.
 
-### Correspondence-following retraction
+Lowering is a mirror. One side becomes a pattern, the other becomes a
+creation plan. Forward means left matches and right is created. Backward
+swaps the two. Everything below is written for one direction, with `inn` for
+the input side and `out` for the output side.
 
-`retraction_cascade_for(op, graph)` is the same primitive backtracking
-uses in step 2, but it is also the engine's **delete-propagation**
-mechanism in its own right. Given a `DelNode { target }`, it returns the
-follow-up ops that complete the deletion:
+### The pattern
 
-1. Tombstone every edge incident to `target`.
-2. For each incident `corrL`/`corrR` edge, walk to the correspondence
-   node, then across its *other* correspondence edge to the partner on
-   the opposite domain. Tombstone both the partner and the corr node.
+The input side becomes the pattern, one to one. Position `i` of the input
+side is position `i` of the pattern. Nodes carry the interned type and their
+predicate. Links become directed pattern links.
 
-So deleting one side of a translated pair tombstones the whole triple:
-delete a `JavaClass` and its `corr` leads the cascade to tombstone the
-corresponding UML `Class` (and vice versa). This is what makes a delete
-on **R** propagate to **L** without a dedicated "delete rule" — the
-correspondence graph carries deletion in both directions, exactly as it
-carries context (see
-[principles.md §8](./principles.md#8-symmetric-correspondence)).
+The pattern then grows at the end, never in the middle, so input positions
+stay stable.
 
-The edge-walk is orientation-agnostic: it does not care whether the
-deleted node sits on the `corrL` or `corrR` side, so the same code
-propagates forward deletes and backward deletes.
+- Output nodes that are matched instead of created are appended. Those are
+  `same_as` partners, `context` nodes, and the endpoints of `references`
+  correspondences. The table `out_ctx_pattern_pos` maps an output position
+  to the pattern position where it landed.
+- A `references` correspondence appends two nodes, the correspondence itself
+  and its output endpoint, joined by two direction free context links. The
+  correspondence hangs off its own endpoint on the input side.
+- Output links between two matched nodes become pattern links. That is a
+  precondition, not something to create.
 
-> **Integration note.** When a host applies a delete as a *baseline*
-> mutation (outside an active cascade), the induced tombstones must reach
-> the baseline graph too, not just the ghost overlay — otherwise the next
-> `consolidate` resurrects the deleted node from the unchanged baseline.
-> The JNI session mirrors retraction tombstones into the baseline while
-> the cascade is empty, the same way it mirrors baseline `SetAttr`/
-> `AddNode`.
+One exception to that last point. A link between two `references` endpoints
+is not a precondition. Two independently referenced existences say nothing
+about their adjacency, and creating that edge is the purpose of such a rule.
+Every link that touches a `context` or `same_as` node stays a precondition,
+because its attachment is the author's existence statement.
 
-## 8. Fold (`fold`)
+Value equality constraints reach the pattern from three places. Input side
+`same_value_links` go in unadjusted. Output side `same_value_links` go in
+only if both ends are matched. A cross side `join` goes in if the output end
+is matched. A join on a created node is no constraint at all, because the
+value only comes into being there.
 
-A fold consolidates the current `Ghost` overlay into a new baseline.
+### The creation plan
 
-- `consolidate(base, cascade) -> Result<Consolidated, …>` — folds the
-  cascade's `Ghost` overlay onto the `base` baseline into a fresh
-  `new_baseline`: every `Ghost` becomes `Solid`; every `Tombstone` (and
-  resolved `TentativeTombstone`) is removed. It does not mutate `base` —
-  the caller swaps in `new_baseline` and bumps `baseline_counter`.
-- `diff(prev_baseline, current_baseline)` — produces the net ops
-  between two baselines, suitable for replication, journaling, or
-  patching another graph.
+The plan is a list of `CreateNode` entries plus a list of links between
+them. Links refer to plan entries by `Ref::New(ix)` and to pattern positions
+by `Ref::Matched(pos)`.
 
-Folding is a checkpoint operation. Between folds, the engine remains
-fully observable; after a fold, the consolidated state becomes the new
-ground truth and the cascade history is cleared.
+Correspondences with `role: "establishes"` come first, one plan entry each.
+A rule may have several. Each hangs off its own endpoint on the input side
+and gets a link from it. If the established endpoint is itself matched, its
+reference enters the correspondence identity, otherwise several matches at
+the same anchor would collapse into one.
 
-## 9. External identity
+Then every output position that is not matched becomes a plan entry, in
+declaration order. Each entry carries at most one value source.
 
-The engine sees nodes by `GhostId`. The outside world sees nodes by
-file paths, EMF URIs, JDT handles, or whatever an integration carries.
+- A static binding makes it a derived leaf. The value comes from an input
+  leaf through a chain. In the backward direction the chain is the inverse.
+- A `constant` makes it a constant leaf. The value lives in the rule.
+- Both at once is a lowering error.
+- Neither makes it an ordinary ghost node.
 
-The bridge is `GhostId::from_opaque(s)`: pass an external identifier
-in, get a deterministic GhostId out. The mapping is one-way and
-content-based — same string in, same id every time, with no
-state needed on either side.
+Dynamic bindings, declared with `left_type` and `right_type` instead of node
+names, are appended afterwards, one plan entry per binding, hanging off the
+established endpoint. Their source is looked up by leaf type when the plan
+runs, at the input side endpoint of their correspondence. If the source leaf
+is absent, the leaf is skipped. This is the apply-if-present rule.
 
-When an integration **needs to register an external identifier for a
-node the cascade has already created** — common case: a forward
-materializer writes a file, then needs the *file's* identifier to map
-back to the cascade-derived JavaClass — there are two patterns:
+Finally the output side's links become plan links, and each establishing
+correspondence gets a link to the endpoint it establishes.
 
-1. **Direct on `TypedGraph`.** The integration adds an `AddNode` whose
-   `parent`, `edge_type`, `type_id`, `attrs` reproduce the rule's
-   identity recipe. The resulting `GhostId` matches what the cascade
-   derived. (The `id.hex()` / `from_hex` round-trip is the
-   loss-free transport for the recipe's output.)
+### The identity parent
 
-2. **Wrapper-managed map.** The integration maintains its own
-   `external_opaque → GhostId` table outside the engine. A backward
-   delta resolves external opaques to ids via this table before
-   handing them to the cascade.
+Every created node needs a parent, because identity is derived from it. The
+precedence is fixed and worth knowing.
 
-The `seesaw-jni` host crate implements pattern 2 as a `Session` wrapper
-around `TypedGraph`. Most Rust-only users do (1).
+1. The correspondence that establishes this very position, if there is one.
+2. The created structural parent, taken from the output side's links. The
+   parent of a node is the source of the first link that points at it.
+3. The first establishing correspondence of the rule.
+4. The input anchor.
 
-## 10. Snapshot
+Step 4 is the only place where the declared `anchor` of a side is read.
+Everything else that lowering calls an anchor is a correspondence endpoint,
+taken from `corrs`, not from the `anchor` field. A rule with at least one
+establishing correspondence never reaches step 4.
 
-`seesaw-tgg` does not have a built-in JSON snapshot endpoint — the host
-integration owns serialization format. The pattern is:
+Matched nodes never qualify as an identity parent. Two matches at the same
+context node would otherwise produce colliding siblings.
 
-```rust
-let nodes: Vec<_> = g.iter_nodes()
-    .map(|n| serde_json::json!({
-        "id":      n.id.short(),
-        "idFull":  n.id.hex(),
-        "type":    n.type_id,
-        "status":  format!("{:?}", n.status),
-        "attrs":   n.attrs,
-    }))
-    .collect();
-```
+Note what step 2 means. The parent comes from the first link in the declared
+order that points at the node. Reordering `links` can move identities.
 
-Two fields are worth including in any host serializer:
+### What else the directed rule carries
 
-- `id.short()` — 8 hex chars, human-readable in logs.
-- `id.hex()` — 64 hex chars, the full id. Round-trips losslessly via
-  `GhostId::from_hex(s)`.
+`input_types` is the list of type names that make this direction relevant
+for a delta. It contains the input side's types, all correspondence types,
+and the types of matched output nodes. A rule whose only new trigger is the
+correspondence itself has to fire once that correspondence appears, which is
+why correspondence types are in the list.
 
-Edges follow the same shape with `source.short()` / `target.short()`.
+`corr_recognition` holds one triple per establishing correspondence, made of
+the correspondence type, the pattern position of its input side endpoint,
+and the type of the established endpoint. The engine uses it to recognize
+that an element has already been translated. This is what keeps the opposite
+direction from translating a translation back into a duplicate.
 
----
+`name` is the rule name plus a direction suffix. Forward gets `→`, U+2192.
+Backward gets `←`, U+2190. `R_Class` becomes `R_Class→` and `R_Class←`.
 
-## Where to go next
+## Stage 4: the engine, where it shows
 
-- [principles.md](./principles.md) — the conceptual layer.
-- [using.md](./using.md) — code patterns, worked examples, pitfalls.
-- The paper, for the formal claims that back the guarantees in §6 and §7.
+The engine takes a slice of directed rules and a graph. What a rule author
+sees of it is this.
+
+Matching is positional. A match is the sequence of node identities in
+pattern order, and that sequence is the match key. There are no variable
+names below the format level.
+
+Candidates are ordered by rank descending, then by the reference sequence
+descending, then by rule index ascending. Higher `rank` fires first.
+
+Before a candidate is applied, the engine checks whether it would produce
+anything new. It can do that without applying, because identities are pure
+functions of provenance. It also checks `corr_recognition`. If the anchor
+already carries a correspondence of that type whose other endpoint is alive
+and of the expected type, the element counts as translated and nothing
+happens, no matter which direction or which rule variant produced it.
+
+`Engine::run` returns a `Termination`.
+
+| Value | Meaning |
+|---|---|
+| `Convergence` | the candidate list ran dry without a single application |
+| `Duplication` | saturation after at least one application or duplicate hit |
+| `StepLimit` | the step budget was used up, the run is not finished |
+| `Contradiction` | a candidate wanted to reuse tombstoned substance |
+
+`Convergence` and `Duplication` are both regular termination. The name of
+the second one describes how saturation is detected, not a problem.
+
+## Identity
+
+This is the central promise of the library. Identity is derived structurally
+from provenance. A model value never enters an identity.
+
+An identity is a 32 byte blake3 hash. Six derivations exist, each with its
+own domain tag, so hashes from different kinds can never collide by
+construction.
+
+| Kind | Tag | Hashed input |
+|---|---|---|
+| baseline | `V2B` | the external name given by the host |
+| ghost node | `V2G` | parent id, type name |
+| derived leaf | `V2D` | parent id, type name, source leaf id, chain bytes |
+| connection | `V2C` | source id, target id |
+| correspondence | `V2R` | anchor id, type name, the match reference sequence |
+| constant leaf | `V2K` | parent id, type name, rule name, plan index |
+
+Read the constant row again. A constant leaf carries a value, and that value
+is nowhere in its identity. Two rule variants that write different constants
+at the same position under the same parent produce two structurally
+different leaves. Changing the constant of a rule does not move the leaf it
+creates. The same holds for a derived leaf. What enters there is the chain,
+in its normal form, including its arguments, because the chain belongs to
+the rule. The source value does not.
+
+### Which derivation a correspondence node gets
+
+The `V2R` row is the graph's match digest derivation. Rules lowered from
+this format never reach it, because the plan flag that selects it,
+`CreateNode.corr_full_match`, is always `false` here. A correspondence node
+created by a v3 rule gets one of two identities instead, and which one
+depends on the established endpoint.
+
+- The endpoint is created by the same rule. The correspondence is an
+  ordinary ghost node, `V2G` over the input side endpoint of the
+  correspondence and the correspondence type.
+- The endpoint is matched, because it is `context` or a `same_as` partner.
+  The correspondence is a derived node, `V2D` over the same parent, the
+  correspondence type, the identity of the matched counterpart, and the
+  empty chain.
+
+The second form carries a discriminator, which is the point of it. Without
+the counterpart's identity, several matches at one anchor would collapse
+into a single correspondence.
+
+The first form carries none. Its identity is the pair of anchor and
+correspondence type and nothing else. Two rules that establish the same
+correspondence type at the same anchor, each creating its own endpoint,
+therefore produce one correspondence node, not two. Give distinct
+correspondences distinct types.
+
+### Three things you would not guess
+
+These three enter the identity and are not visible when reading a rule file
+as if it were a picture.
+
+**The rule name.** It is hashed into every constant leaf the rule creates.
+Renaming a rule changes those identities. Two rules of one set may not share
+a name, and the loader rejects the file if they do.
+
+**The direction suffix.** Lowering appends `→` for the forward direction and
+`←` for the backward one, three bytes each in UTF-8. That name is what goes
+into the constant identity, not the name in the file. A second loader must
+use exactly these two characters.
+
+**The declaration order of `nodes`.** The order in `nodes` decides plan
+positions, and the plan index is hashed into constant identities. It also
+decides which link supplies the identity parent of a created node, namely
+the first one pointing at it. A generator that sorts `nodes` differently
+moves identities. The format reads as name based and is order dependent at
+this one point.
+
+## Three states, retraction, materialization
+
+Every node and every connection carries a `Status`.
+
+| State | Meaning |
+|---|---|
+| `Solid` | baseline, part of the host model, untouched |
+| `Ghost` | added by the cascade, not yet in the host model |
+| `Tombstone` | deleted virtually, invisible to matching |
+
+A fourth value exists as a transient. `TentativeTombstone` is what
+retraction produces, and it lives only between a retraction and the
+following consolidation. It stays matchable on purpose, so a new derivation
+can reclaim the identity.
+
+The overlay is insert only. Deletion is tombstoning, and status is filtered
+on read.
+
+**Retraction** is what happens when a reason disappears. If a matched
+element is gone, every applied rule application whose match contained it has
+lost its justification. `Engine::retract_for` follows the provenance edge
+from the match to its cascade entry, marks the elements that entry created
+as tentative tombstones, and walks on recursively through entries anchored
+on those elements. It also forgets the application record, so an identical
+re-derivation can apply again and reclaim.
+
+`Engine::consolidate` then decides, for each tentative tombstone only, and
+therefore in the size of the delta rather than the model. If a new
+derivation reclaimed the identity in the meantime, the element goes back to
+alive. If not, it becomes a final `Tombstone`.
+
+**Materialization** is the end of the line. `Graph::materialize` returns a
+new graph without tombstones, with every remaining ghost turned into
+`Solid`. A connection survives only if both of its endpoints survive. Values
+are not copied, because values never lived in the overlay to begin with.
+Derived leaves keep their source and their chain, and resolve through the
+same resolver as before.
+
+## Values live outside
+
+The graph stores no values. A leaf either has a value in the host, or it is
+derived from another leaf through a chain, or it carries a reference into
+the rule set's constant table.
+
+The host side is a `ValueResolver`, a single method that maps a baseline
+identity to a string. `ValueStore` is the standalone implementation for
+tests and benchmarks. `Graph::resolve_value` walks the derivation chain down
+to a baseline leaf or a constant, then applies the collected transformations
+forward. A chain that does not apply yields no value rather than a wrong
+one.
+
+The backward direction works by installing the inverse chain. Lowering
+builds it element wise in reverse, so `prefix("get")` becomes a strip and
+`capitalize` becomes `decapitalize`. Value resolution then runs that chain
+forward like any other. A strip that finds no matching affix yields no
+value, which is how an inapplicable backward direction is caught.
+
+A stronger check exists but is not on this path. `Chain::invert_checked`
+computes a source from a target value and returns it only if the forward
+chain maps that source back onto the target. Its criterion is consistency
+with the target value rather than equality with an original the backward
+direction cannot know. Nothing inside the library calls it. A caller who
+needs the case detection for `capitalize` and `decapitalize` has to call it
+directly, because the running path applies those two without verifying.
+
+## What this layer does not do
+
+- There are no negative application conditions. The format has no field for
+  them, and a file carrying one is rejected while parsing.
+- There is no converter from earlier rule formats, and no way to read them.
+- There is no JSON schema for editor support.
+- `LoadError` and `PredicateError` implement `Debug`, not `Display` and not
+  `std::error::Error`. Callers format them with `{:?}`.
+- Lowering errors are a single string type, `LowerError`, without structured
+  fields. Most cases that used to end there are now load errors with a
+  location.
+- At most one connection exists per source and target pair. The graph is a
+  set, not a multigraph.
+- `capitalize` and `decapitalize` are not invertible on every value, which
+  is why the backward direction verifies instead of trusting.
+- The regex subset check does not recognize nested character class set
+  operations such as `[a-z&&[^aeiou]]`. The permitted syntax subset does not
+  contain them anyway.
+- `rules::export` is a verification artifact for cross language equivalence,
+  not a transport path. Rules travel as declarative files, and each language
+  lowers them itself.

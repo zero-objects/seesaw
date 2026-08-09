@@ -1,472 +1,670 @@
-//! Property-based tests for the core invariants V₄, V₆, V₁₆, V₁₇.
+//! Eigenschaftsbasierte Tests der Kern-Invarianten V₄, V₆, V₁₆, V₁₇ gegen
+//! die Generation die Engine (`seesaw_tgg::graph`).
 //!
-//! Each property is tested against randomly generated graphs and cascades
-//! using the `proptest` crate. This complements the deterministic unit
-//! tests and provides the empirical validation layer from the paper's
-//! Evaluation Protocol.
+//! Portierung von `proptest_invariants.rs`, das an der alten Generation
+//! (`engine`, `fold`, `graph::TypedGraph`, `ops`) hängt. Die Aussagen sind
+//! dieselben, die Begriffe sind die des heutigen Modells:
 //!
-//! See `chapters/09_verifikation.tex` for the formal statements.
+//! | Begriff first-generation                  | Begriff die Engine                                |
+//! |-----------------------------|-------------------------------------------|
+//! | `Cascade` (Liste `DeltaEntry`) | `Engine::cascade` (Liste `Entry`)      |
+//! | `Op::apply` auf `TypedGraph` | `Engine::step` auf `graph::Graph`            |
+//! | `fold::consolidate`          | `Engine::consolidate` (TT → Tombstone)   |
+//! | `TypedGraph::materialize`    | `graph::Graph::materialize`                  |
+//!
+//! Jeder Test nennt am Kopf Datei und Lemma seines formalen Gegenstücks in
+//! `proofs/Seesaw/`.
+
+mod common;
 
 use proptest::prelude::*;
-use seesaw_tgg::engine::{run_cascade_cached, run_cascade_full, Cascade, Rule};
-use seesaw_tgg::fold::{consolidate, diff};
-use seesaw_tgg::graph::{GhostId, NodeData, Status, TypedGraph};
-use seesaw_tgg::ops::{DeltaEntry, Op, Origin};
-use std::collections::BTreeMap;
+use seesaw_tgg::engine::{Engine, Termination};
+use seesaw_tgg::graph::{Graph, ValueStore};
+use seesaw_tgg::ident::{GhostId, Status};
+use seesaw_tgg::plan::DirectedRule;
+use std::collections::BTreeSet;
 
-// ══ Strategies ═══════════════════════════════════════════════════════════
+// ══ Regelsatz ════════════════════════════════════════════════════════════
 
-/// Generates an opaque string identifier from a restricted alphabet.
-fn arb_opaque_id() -> impl Strategy<Value = String> {
-    "[a-z]{3,6}[0-9]{0,2}".prop_map(|s| s.to_string())
-}
-
-/// Small attribute bag (0-3 entries).
-fn arb_attrs() -> impl Strategy<Value = BTreeMap<String, String>> {
-    prop::collection::btree_map("[a-z]{2,4}", "[a-zA-Z]{1,8}", 0..3)
-}
-
-/// Baseline graph with n random SOLID nodes.
-fn arb_baseline_graph(size: usize) -> impl Strategy<Value = (TypedGraph, Vec<GhostId>)> {
-    prop::collection::vec(arb_opaque_id(), size..=size).prop_map(move |opaques| {
-        let mut graph = TypedGraph::new();
-        let mut ids = Vec::new();
-        for (i, name) in opaques.iter().enumerate() {
-            let id = GhostId::from_baseline(&format!("{name}_{i}"));
-            if graph.get_node(&id).is_none() {
-                graph.insert_node_data(NodeData {
-                    id,
-                    type_id: "Class".to_string(),
-                    attrs: BTreeMap::new(),
-                    status: Status::Solid,
-                });
-                ids.push(id);
-            }
-        }
-        (graph, ids)
-    })
-}
-
-/// Strategy for an Op that picks any known node from `ids`
-/// as parent/target.
-fn arb_op_over_ids(ids: Vec<GhostId>) -> impl Strategy<Value = Op> {
-    if ids.is_empty() {
-        return Just(Op::SetAttr {
-            target: GhostId::from_opaque("dummy"),
-            key: "noop".to_string(),
-            value: "".to_string(),
-        })
-        .boxed();
-    }
-    let ids_add = ids.clone();
-    let ids_del = ids.clone();
-    let ids_set = ids.clone();
-    let ids_edge = ids.clone();
-
-    prop_oneof![
-        // AddNode: new ghost child of any existing node
-        (
-            0..ids_add.len(),
-            "[a-z]{3,5}",
-            "[A-Z][a-z]{3,6}",
-            arb_attrs()
-        )
-            .prop_map(move |(i, edge_type, type_id, attrs)| Op::AddNode {
-                parent: ids_add[i],
-                edge_type,
-                type_id,
-                attrs,
-            }),
-        // AddEdge between two known nodes
-        (0..ids_edge.len(), 0..ids_edge.len(), "[a-z]{2,5}").prop_map(move |(s, t, etype)| {
-            Op::AddEdge {
-                source: ids_edge[s],
-                target: ids_edge[t],
-                type_id: etype,
-                attrs: BTreeMap::new(),
-            }
-        }),
-        // SetAttr on a known node
-        (0..ids_set.len(), "[a-z]{2,4}", "[a-z0-9]{1,6}").prop_map(move |(i, k, v)| {
-            Op::SetAttr {
-                target: ids_set[i],
-                key: k,
-                value: v,
-            }
-        }),
-        // DelNode on a known node (low weight, TOMB rare)
-        (0..ids_del.len()).prop_map(move |i| Op::DelNode { target: ids_del[i] }),
+/// Family→Person, zwei gerichtete Rollen mit verschiedenem Rang — damit die
+/// Rang-Ordnung der To-do-Liste im Test überhaupt eine Rolle spielt.
+fn regelsatz(g: &mut Graph) -> Vec<DirectedRule> {
+    let specs: Vec<serde_json::Value> = [
+        ("Father", "Male", "MaleCorr", 850u64),
+        ("Mother", "Female", "FemaleCorr", 800u64),
     ]
-    .boxed()
+    .into_iter()
+    .map(|(rolle, ziel, corr, rank)| {
+        serde_json::json!({
+            "name": format!("{rolle}_2_{ziel}"),
+            "rank": rank,
+            "left": {
+                "anchor": "fam",
+                "nodes": [
+                    {"name": "fam", "type": "Family"},
+                    {"name": "rolle", "type": rolle},
+                    {"name": "member", "type": "Member"},
+                    {"name": "first", "type": "firstName"}
+                ],
+                "links": [["fam", "rolle"], ["rolle", "member"], ["member", "first"]]
+            },
+            "right": {
+                "anchor": "ziel",
+                "nodes": [
+                    {"name": "ziel", "type": ziel},
+                    {"name": "name", "type": "name"}
+                ],
+                "links": [["ziel", "name"]]
+            },
+            "corrs": [
+                {"type": corr, "left": "member", "right": "ziel", "role": "establishes",
+                 "bindings": [{"left": "first", "right": "name"}]}
+            ]
+        })
+    })
+    .collect();
+    common::load("proptest_invariants", specs, g)
 }
 
-/// Generates a cascade of up to `max_entries` delta entries, each with
-/// 1-3 ops, where ops reference baseline nodes.
-fn arb_cascade(max_entries: usize, ids: Vec<GhostId>) -> impl Strategy<Value = Cascade> {
-    prop::collection::vec(
-        prop::collection::vec(arb_op_over_ids(ids.clone()), 1..=3),
-        0..=max_entries,
+// ══ Strategien ═══════════════════════════════════════════════════════════
+
+/// Eine Familie im Zufallsmodell: welche Rollen existieren und wie die
+/// Vornamen lauten. Fehlende Rollen erzeugen unvollständige L-Pattern —
+/// so matcht nicht jede Familie jede Regel.
+#[derive(Debug, Clone)]
+struct FamilieSpec {
+    vater: Option<String>,
+    mutter: Option<String>,
+    /// Member ohne Vornamens-Blatt: das L-Pattern bricht an Position 3 ab.
+    vater_blatt: bool,
+    /// Zweiter Family-Knoten an DERSELBEN Vater-Kette. Damit hat das
+    /// L-Pattern zwei Matches, die dieselbe Ziel-Identität erzeugen —
+    /// die Identität eines erzeugten Knotens hängt am Member, nicht an
+    /// der Familie. Fällt der erste Family-Knoten weg, zieht die
+    /// Retraktion das Erzeugte tentativ zurück, und die zweite
+    /// Herleitung REKLAMIERT es (M5-Resurrektion). Ohne diesen Fall
+    /// liefe die Konsolidierung im Test nie gegen reklamiertes
+    /// Material, und V₁₇ wäre nur halb geprüft.
+    geteilte_kette: bool,
+}
+
+fn arb_familie() -> impl Strategy<Value = FamilieSpec> {
+    (
+        prop::option::of("[A-Z][a-z]{2,5}"),
+        prop::option::of("[A-Z][a-z]{2,5}"),
+        any::<bool>(),
+        any::<bool>(),
     )
-    .prop_map(move |op_lists| {
-        let mut cascade = Cascade::new();
-        for (i, ops) in op_lists.into_iter().enumerate() {
-            let anchor = if ids.is_empty() {
-                Vec::new()
-            } else {
-                vec![ids[i % ids.len()]]
-            };
-            let op_count = ops.len();
-            cascade.append(DeltaEntry {
-                origin: if i == 0 {
-                    Origin::User
-                } else {
-                    Origin::Rule {
-                        rule_id: format!("r{i}"),
-                    }
-                },
-                rank: (i as u64) * 10,
-                op_star: ops,
-                anchor,
-                induces: vec![Vec::new(); op_count],
-                bindings: std::collections::BTreeMap::new(),
-            });
-        }
-        cascade
-    })
-}
-
-// ══ V₆: cascade length monotonicity ═════════════════════════════════════
-
-proptest! {
-    /// V₆: append is strictly monotone and append-only; |D_x| = x+1.
-    #[test]
-    fn v6_cascade_length_monotone(
-        n in 0..25usize,
-    ) {
-        let mut cascade = Cascade::new();
-        prop_assert_eq!(cascade.len(), 0);
-        for i in 0..n {
-            cascade.append(DeltaEntry {
-                origin: Origin::Rule { rule_id: format!("r{i}") },
-                rank: i as u64,
-                op_star: Vec::new(),
-                anchor: Vec::new(),
-                induces: Vec::new(),
-            bindings: std::collections::BTreeMap::new(),
-            });
-            prop_assert_eq!(cascade.len(), i + 1);
-        }
-    }
-}
-
-// ══ GhostId determinism ══════════════════════════════════════════════════
-
-proptest! {
-    /// `GhostId::from_opaque` is deterministic.
-    #[test]
-    fn ghost_id_from_opaque_deterministic(s in "[a-zA-Z0-9_-]{1,32}") {
-        let a = GhostId::from_opaque(&s);
-        let b = GhostId::from_opaque(&s);
-        prop_assert_eq!(a, b);
-    }
-
-    /// `GhostId::from_baseline` is deterministic.
-    #[test]
-    fn ghost_id_from_baseline_deterministic(s in "[a-zA-Z0-9]{1,16}") {
-        let a = GhostId::from_baseline(&s);
-        let b = GhostId::from_baseline(&s);
-        prop_assert_eq!(a, b);
-    }
-
-    /// Distinct opaque strings produce distinct ids (SHA-256
-    /// collision resistance).
-    #[test]
-    fn ghost_id_opaque_distinguishes(
-        s1 in "[a-zA-Z]{1,16}",
-        s2 in "[a-zA-Z]{1,16}",
-    ) {
-        prop_assume!(s1 != s2);
-        let a = GhostId::from_opaque(&s1);
-        let b = GhostId::from_opaque(&s2);
-        prop_assert_ne!(a, b);
-    }
-}
-
-// ══ V₄: projection determinism ══════════════════════════════════════════
-
-proptest! {
-    /// V₄: Repeated application of an op sequence on the same
-    /// initial graph yields a structurally equal result graph.
-    #[test]
-    fn v4_projection_deterministic(
-        (base, ids) in arb_baseline_graph(3),
-        ops in prop::collection::vec(arb_op_over_ids(vec![GhostId::from_baseline("seed_0_0")]), 0..8),
-    ) {
-        let _ = ids; // baseline generation only
-        let mut g1 = base.clone();
-        let mut g2 = base.clone();
-
-        for op in &ops {
-            let _ = op.apply(&mut g1);
-        }
-        for op in &ops {
-            let _ = op.apply(&mut g2);
-        }
-
-        prop_assert_eq!(g1.node_count(), g2.node_count());
-        prop_assert_eq!(g1.edge_count(), g2.edge_count());
-    }
-}
-
-// ══ V₁₆: fold termination ═══════════════════════════════════════════════
-
-proptest! {
-    /// V₁₆: `consolidate` terminates on every finite cascade without
-    /// deadlock.
-    #[test]
-    fn v16_fold_terminates(
-        (base, ids) in arb_baseline_graph(3),
-        cascade in arb_cascade(6, vec![
-            GhostId::from_baseline("seed_0_0"),
-            GhostId::from_baseline("seed_1_1"),
-            GhostId::from_baseline("seed_2_2"),
-        ]),
-    ) {
-        let _ = ids;
-        // consolidate() may return Err (e.g. on a reference to a
-        // non-existent node), but it must _terminate_.
-        let result = consolidate(&base, &cascade);
-        // Only predicate: it returns a result and does not hang.
-        let _ = result;
-    }
-}
-
-// ══ V₁₇: fold preserves materialization (simplified) ═════════════════════
-
-proptest! {
-    /// V₁₇ restricted: when `consolidate` succeeds, the result has
-    /// fewer or equal nodes/edges than direct application of the
-    /// full cascade (upper bound via nullification).
-    #[test]
-    fn v17_fold_is_reduction(
-        (base, _ids) in arb_baseline_graph(2),
-        cascade in arb_cascade(4, vec![
-            GhostId::from_baseline("seed_0_0"),
-            GhostId::from_baseline("seed_1_1"),
-        ]),
-    ) {
-        // Full application
-        let mut direct = base.clone();
-        let mut direct_ok = true;
-        for entry in &cascade.entries {
-            for op in &entry.op_star {
-                if op.apply(&mut direct).is_err() {
-                    direct_ok = false;
-                    break;
-                }
-            }
-            if !direct_ok { break; }
-        }
-
-        // Fold path
-        let fold_result = consolidate(&base, &cascade);
-        if let Ok(result) = fold_result {
-            let net = diff(&base, &result.new_baseline);
-            // Null delta is possible; check formal summary functionality.
-            let _ = net.summary();
-            // Upper bound: fold baseline has ≤ as many nodes as
-            // full-apply (because fold removes nullifications + tombstones).
-            if direct_ok {
-                let direct_mat = direct.materialize();
-                prop_assert!(
-                    result.new_baseline.node_count() <= direct_mat.node_count(),
-                    "fold reduces or preserves node_count: fold={}, direct={}",
-                    result.new_baseline.node_count(),
-                    direct_mat.node_count(),
-                );
-            }
-        }
-    }
-}
-
-// ══ rc10 Differential: cached matcher ≡ full matcher ═════════════════════
-
-/// Stable IDs of the seeded model (Model + 2 Classes) — the random ops
-/// reference these as parent/target.
-fn rc8_seed_ids() -> Vec<GhostId> {
-    vec![
-        GhostId::from_opaque("m"),
-        GhostId::from_opaque("cA"),
-        GhostId::from_opaque("cB"),
-    ]
-}
-
-/// Seeded UML graph: a `Model` with two `classes`-contained `Class` nodes —
-/// the structure `R_Class` matches in its L-pattern, so the (bidirectional)
-/// demo rules fire under the random deltas.
-fn rc8_seeded_graph() -> TypedGraph {
-    let mut g = TypedGraph::new();
-    let m = GhostId::from_opaque("m");
-    g.insert_node_data(NodeData {
-        id: m,
-        type_id: "Model".to_string(),
-        attrs: BTreeMap::from([("name".to_string(), "M".to_string())]),
-        status: Status::Solid,
-    });
-    for (opq, name) in [("cA", "A"), ("cB", "B")] {
-        let c = GhostId::from_opaque(opq);
-        g.insert_node_data(NodeData {
-            id: c,
-            type_id: "Class".to_string(),
-            attrs: BTreeMap::from([("name".to_string(), name.to_string())]),
-            status: Status::Solid,
-        });
-        g.add_edge(m, c, "classes", BTreeMap::new(), Status::Solid);
-    }
-    g
-}
-
-/// All demo rules in BOTH directions (as the host does via
-/// `registerRuleSetFromJson` → `compile_bidirectional`).
-fn rc8_bidirectional_rules() -> Vec<Box<dyn Rule>> {
-    let spec = seesaw_tgg::rule::demo::demo_ruleset_spec();
-    let mut rules: Vec<Box<dyn Rule>> = Vec::new();
-    for r in &spec.rules {
-        for compiled in
-            seesaw_tgg::rule::compile::compile_bidirectional(r).expect("compile_bidirectional")
-        {
-            rules.push(seesaw_tgg::rule::instantiate::instantiate(&compiled));
-        }
-    }
-    rules
-}
-
-/// Delta kinds of an applied op — replica of the host's `collect_delta_kinds`:
-/// AddNode carries the `type_id` directly, reference ops look the target's
-/// kind up in the graph.
-fn rc8_collect_kinds(op: &Op, g: &TypedGraph, out: &mut std::collections::HashSet<String>) {
-    match op {
-        Op::AddNode { type_id, .. } => {
-            out.insert(type_id.clone());
-        }
-        Op::SetAttr { target, .. } | Op::DelNode { target } => {
-            if let Some(n) = g.get_node(target) {
-                out.insert(n.type_id.clone());
-            }
-        }
-        Op::AddEdge { source, target, .. } => {
-            for id in [source, target] {
-                if let Some(n) = g.get_node(id) {
-                    out.insert(n.type_id.clone());
-                }
-            }
-        }
-        _ => {}
-    }
-}
-
-/// Direction bundling — replica of `directional_rule_refs`: only rules whose
-/// `input_domain_kinds` intersect the last delta (or that are undirected).
-/// Without this gating the fwd/bwd rule set ping-pongs (by design — exactly
-/// this gating prevents it on the host runtime path).
-fn rc8_directional<'a>(
-    rules: &'a [Box<dyn Rule>],
-    kinds: &std::collections::HashSet<String>,
-) -> Vec<&'a dyn Rule> {
-    rules
-        .iter()
-        .filter(|r| {
-            let idk = r.input_domain_kinds();
-            idk.is_empty() || idk.iter().any(|k| kinds.contains(k))
+        .prop_map(|(vater, mutter, vater_blatt, geteilte_kette)| FamilieSpec {
+            vater,
+            mutter,
+            vater_blatt,
+            geteilte_kette,
         })
-        .map(|r| r.as_ref())
+}
+
+/// Die erste Familie ist immer vollständig (Vater mit Vornamens-Blatt)
+/// und trägt immer die geteilte Kette. Ohne diese Zusicherung erzeugt ein
+/// Teil der Zufallsmodelle gar keinen Match und keine Reklamation, und die
+/// Invarianten würden über leeren Kaskaden geprüft.
+fn arb_modell() -> impl Strategy<Value = Vec<FamilieSpec>> {
+    (
+        "[A-Z][a-z]{2,5}",
+        prop::option::of("[A-Z][a-z]{2,5}"),
+        prop::collection::vec(arb_familie(), 0..=5),
+    )
+        .prop_map(|(vater, mutter, rest)| {
+            let mut v = vec![FamilieSpec {
+                vater: Some(vater),
+                mutter,
+                vater_blatt: true,
+                geteilte_kette: true,
+            }];
+            v.extend(rest);
+            v
+        })
+}
+
+/// Baut das Quellmodell (nur die L-Seite) aus der Spezifikation.
+fn baue(spec: &[FamilieSpec]) -> (Graph, ValueStore) {
+    let mut g = Graph::new();
+    let mut vs = ValueStore::default();
+    for (i, f) in spec.iter().enumerate() {
+        let fam = g.add_baseline(&format!("f{i}"), "Family");
+        for (rolle, name, mit_blatt) in [
+            ("Father", f.vater.as_ref(), f.vater_blatt),
+            ("Mother", f.mutter.as_ref(), true),
+        ] {
+            let Some(name) = name else { continue };
+            let r = g.add_baseline(&format!("f{i}/{rolle}"), rolle);
+            let m = g.add_baseline(&format!("f{i}/{rolle}/m"), "Member");
+            g.connect(fam, r, Status::Solid);
+            g.connect(r, m, Status::Solid);
+            if f.geteilte_kette {
+                // Zweiter Family-Knoten an derselben Rollen-Kette.
+                let fam2 = g.add_baseline(&format!("f{i}b"), "Family");
+                g.connect(fam2, r, Status::Solid);
+            }
+            if mit_blatt {
+                let leaf = g.add_baseline(&format!("f{i}/{rolle}/m/fn"), "firstName");
+                g.connect(m, leaf, Status::Solid);
+                vs.insert(leaf, name.clone());
+            }
+        }
+    }
+    (g, vs)
+}
+
+// ══ Fingerabdrücke ═══════════════════════════════════════════════════════
+
+/// Knoten-Fingerabdruck: (Id, Typ-Name, Status). Deterministisch sortiert.
+fn knoten_fp(g: &Graph) -> Vec<(GhostId, String, u8)> {
+    let mut v: Vec<_> = g
+        .iter_nodes()
+        .map(|n| (n.id, g.types.name(n.typ).to_string(), n.status as u8))
+        .collect();
+    v.sort();
+    v
+}
+
+/// Alle Verbindungs-Ids des Graphen — über die Beteiligungs-Listen, weil
+/// die Map selbst privat ist.
+fn verbindungen(g: &Graph) -> BTreeSet<GhostId> {
+    let mut out = BTreeSet::new();
+    for n in g.iter_nodes() {
+        for p in g.parts(&n.id) {
+            out.insert(p.connection);
+        }
+    }
+    out
+}
+
+/// Effektive Materialisierung im Sinne von `Consolidation.matAt`: der
+/// Rollup-Gewinner an einer Identität ist entweder ein `present`-Wert
+/// (Solid/Ghost) oder `absent`. Ein TentativeTombstone ist eine
+/// zurückgezogene Herleitung, also `absent` — genau `effVal .absent`.
+///
+/// `Graph::materialize` selbst überspringt nur `Tombstone` und lässt TT
+/// stehen; das ist die Materialisierung VOR der Konsolidierung. Die
+/// effektive Sicht hier ist die, über die V₁₇ redet.
+fn mat_effektiv(g: &Graph) -> (BTreeSet<GhostId>, BTreeSet<GhostId>) {
+    let knoten: BTreeSet<GhostId> = g
+        .iter_nodes()
+        .filter(|n| matches!(n.status, Status::Solid | Status::Ghost))
+        .map(|n| n.id)
+        .collect();
+    let kanten: BTreeSet<GhostId> = verbindungen(g)
+        .into_iter()
+        .filter(|c| {
+            g.connection(c).is_some_and(|c| {
+                matches!(c.status, Status::Solid | Status::Ghost)
+                    && knoten.contains(&c.source)
+                    && knoten.contains(&c.target)
+            })
+        })
+        .collect();
+    (knoten, kanten)
+}
+
+/// Materialisierung wie `Graph::materialize` sie liefert, als Mengen.
+fn mat_graph(g: &Graph) -> (BTreeSet<GhostId>, BTreeSet<GhostId>) {
+    let m = g.materialize();
+    let knoten: BTreeSet<GhostId> = m.iter_nodes().map(|n| n.id).collect();
+    let kanten: BTreeSet<GhostId> = verbindungen(&m);
+    (knoten, kanten)
+}
+
+/// Ein Kaskaden-Eintrag als Vergleichswert: Regel, Rang, Ref-Folge (μ),
+/// erzeugte Knoten, erzeugte Verbindungen.
+type EintragFp = (usize, u64, Vec<GhostId>, Vec<GhostId>, Vec<GhostId>);
+
+/// Cascade-Fingerabdruck: was angewandt wurde, in Anwendungs-Reihenfolge.
+fn cascade_fp(e: &Engine<'_>) -> Vec<EintragFp> {
+    e.cascade
+        .iter()
+        .map(|x| {
+            (
+                x.rule_ix,
+                x.rank,
+                x.refs.clone(),
+                x.created.clone(),
+                x.created_edges.clone(),
+            )
+        })
         .collect()
 }
 
-proptest! {
-    #![proptest_config(ProptestConfig::with_cases(256))]
+/// Cascade bis Sättigung, ohne erneutes `seed` (der Aufrufer hat entweder
+/// `seed` oder `elements_added` gerufen).
+fn bis_saettigung(e: &mut Engine<'_>, g: &mut Graph, vs: &ValueStore) -> usize {
+    let mut schritte = 0;
+    while e.step(g, vs).is_some() {
+        schritte += 1;
+        assert!(schritte < 100_000, "Sättigungs-Schranke");
+    }
+    schritte
+}
 
-    /// rc10 — differential proof for wiring the cached matcher as the
-    /// default: over ANY random delta sequence (Add/Del/SetAttr/AddEdge,
-    /// **bidirectional** rule set, directional gating, incl. retraction
-    /// after a Del), [`run_cascade_cached`] yields a **bit-identical**
-    /// cascade sequence (origin, rank, op_star, anchor, bindings) AND an
-    /// identical final graph as [`run_cascade_full`]. Closes the
-    /// forward/backward/delete/edit gaps statistically (256 cases).
-    #[test]
-    fn cached_equals_full_under_random_deltas(
-        delta_seq in prop::collection::vec(
-            prop::collection::vec(arb_op_over_ids(rc8_seed_ids()), 1..=4),
-            1..=8),
-    ) {
-        let rules_full = rc8_bidirectional_rules();
-        let rules_inc = rc8_bidirectional_rules();
+/// Ein Δ auf das synchronisierte Modell, danach Re-Derivation bis
+/// Sättigung. Die Konsolidierung bleibt dem Aufrufer.
+///
+/// Zwei Arten, weil sie die Konsolidierung an verschiedene Stellen führen:
+///
+/// * `Art::Knoten` — ein Baseline-Knoten fällt weg. Die Retraktion zieht
+///   das daraus Erzeugte tentativ zurück, und nichts reklamiert es: die
+///   Konsolidierung sieht ausschließlich TT-Material.
+/// * `Art::Kante` — eine Verbindung zwischen zwei Teilnehmern eines
+///   angewandten Matches fällt weg. `Engine::link_removed` ist hier
+///   bewusst eine Über-Approximation (siehe dort): es zieht auch Matches
+///   zurück, die die entfernte Kante gar nicht benutzt haben. Genau diese
+///   Matches sind danach noch herleitbar und REKLAMIEREN das
+///   Zurückgezogene (M5-Resurrektion). Die Konsolidierung läuft dann
+///   gegen gemischtes Material — reklamiert und unreklamiert. Ohne diese
+///   Art bliebe der Reklamations-Zweig von `consolidate` ungeprüft.
+#[derive(Debug, Clone, Copy)]
+enum Art {
+    Knoten,
+    Kante,
+}
 
-        let mut g_full = rc8_seeded_graph();
-        let mut c_full = Cascade::new();
-        let mut g_inc = rc8_seeded_graph();
-        let mut c_inc = Cascade::new();
-
-        let fingerprint = |g: &TypedGraph| {
-            let mut v: Vec<(GhostId, String, u8)> = g
-                .iter_nodes()
-                .map(|n| (n.id, n.type_id.clone(), n.status as u8))
-                .collect();
-            v.sort();
-            v
-        };
-
-        for ops in &delta_seq {
-            // Identical delta application to both (synchronized) graphs.
-            let mut kinds = std::collections::HashSet::new();
-            for op in ops {
-                let ok_full = op.apply(&mut g_full).is_ok();
-                let ok_inc = op.apply(&mut g_inc).is_ok();
-                prop_assert_eq!(ok_full, ok_inc, "delta apply diverges");
-                if ok_full {
-                    rc8_collect_kinds(op, &g_full, &mut kinds);
-                }
+fn delta_anwenden(e: &mut Engine<'_>, g: &mut Graph, vs: &ValueStore, art: Art, ix: usize) -> bool {
+    let geschehen = match art {
+        Art::Kante if !e.cascade.is_empty() => {
+            let refs = e.cascade[ix % e.cascade.len()].refs.clone();
+            if refs.len() < 2 {
+                false
+            } else {
+                let (a, b) = (refs[0], refs[refs.len() - 1]);
+                e.link_removed(g, &a, &b);
+                true
             }
-
-            let active_full = rc8_directional(&rules_full, &kinds);
-            let active_inc = rc8_directional(&rules_inc, &kinds);
-
-            let r_full = run_cascade_full(&mut c_full, &mut g_full, &active_full, 400);
-            let r_inc = run_cascade_cached(&mut c_inc, &mut g_inc, &active_inc, 400);
-
-            // (1) Identical termination.
-            prop_assert_eq!(format!("{r_full:?}"), format!("{r_inc:?}"), "termination diverges");
-
-            // (2) Bit-identical cascade sequence.
-            prop_assert_eq!(c_full.entries.len(), c_inc.entries.len(), "step count diverges");
-            for (ef, ei) in c_full.entries.iter().zip(c_inc.entries.iter()) {
-                prop_assert_eq!(&ef.origin, &ei.origin, "origin diverges");
-                prop_assert_eq!(ef.rank, ei.rank, "rank diverges");
-                prop_assert_eq!(&ef.op_star, &ei.op_star, "op_star diverges");
-                prop_assert_eq!(&ef.anchor, &ei.anchor, "anchor diverges");
-                prop_assert_eq!(&ef.bindings, &ei.bindings, "bindings diverge");
-            }
-
-            // (3) Identical final graph.
-            prop_assert_eq!(fingerprint(&g_full), fingerprint(&g_inc), "final graph diverges");
         }
+        _ => {
+            let kandidaten: Vec<GhostId> = g
+                .iter_nodes()
+                .filter(|n| n.status == Status::Solid)
+                .map(|n| n.id)
+                .collect();
+            if kandidaten.is_empty() {
+                false
+            } else {
+                let opfer = kandidaten[ix % kandidaten.len()];
+                g.set_node_status(&opfer, Status::Tombstone);
+                e.element_removed(&opfer);
+                e.retract_for(g, &opfer);
+                true
+            }
+        }
+    };
+    if geschehen {
+        // Re-Derivation: was noch begründbar ist, reklamiert sich.
+        e.seed(g, vs);
+        bis_saettigung(e, g, vs);
+    }
+    geschehen
+}
+
+fn arb_art() -> impl Strategy<Value = Art> {
+    prop_oneof![Just(Art::Knoten), Just(Art::Kante)]
+}
+
+// ══ V₄ — Projektionsstabilität ═══════════════════════════════════════════
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    /// **V₄ (Projektionsstabilität).**
+    /// Formales Gegenstück: `proofs/Seesaw/Projection.lean`,
+    /// `Seesaw.Applies_total` (Totalität) und `Seesaw.Applies_functional`
+    /// (Determinismus), gestützt auf `Seesaw.Applies_iff`.
+    ///
+    /// Lean-Aussage: die Projektions-Relation `Applies σ ops σ'` hat für
+    /// jedes Op-Skript mindestens ein (total) und höchstens ein
+    /// (funktional) Ergebnis — φ_L ist eine Funktion, keine Relation.
+    /// `Applies_iff` sagt zusätzlich, dass JEDE Herleitung dasselbe
+    /// `applyScript` berechnet, unabhängig davon, wie sie zerlegt wurde.
+    ///
+    /// hiesige Form: die Projektion ist der Kaskaden-Lauf. Der alte Test hat
+    /// nur zwei identische Läufe verglichen (Knoten-/Kantenzahl). Hier
+    /// wird die stärkere Hälfte von `Applies_iff` geprüft: ZWEI
+    /// VERSCHIEDENE Herleitungswege müssen dasselbe Ergebnis liefern.
+    /// Weg A ist die Voll-Enumeration (`Engine::seed`), Weg B die
+    /// delta-lokale Verankerung (`Engine::elements_added` über alle
+    /// Baseline-Knoten). Beide Wege sind verschiedene Zerlegungen
+    /// desselben Op-Skripts. Dasselbe Endergebnis heißt: die Projektion
+    /// hängt am Eingabe-Graphen, nicht am Enumerations-Pfad.
+    /// Totalität: beide Wege liefern eine Terminierung, keiner hängt.
+    #[test]
+    fn v4_projektion_ist_funktion(spec in arb_modell()) {
+        // Weg A: Voll-Enumeration.
+        let (mut ga, vsa) = baue(&spec);
+        let rules_a = regelsatz(&mut ga);
+        let mut ea = Engine::new(&rules_a);
+        ea.seed(&ga, &vsa);
+        bis_saettigung(&mut ea, &mut ga, &vsa);
+
+        // Weg B: delta-lokale Verankerung jedes Baseline-Knotens.
+        let (mut gb, vsb) = baue(&spec);
+        let rules_b = regelsatz(&mut gb);
+        let neu: Vec<GhostId> = gb.iter_nodes().map(|n| n.id).collect();
+        let mut eb = Engine::new(&rules_b);
+        eb.elements_added(&gb, &vsb, &neu);
+        bis_saettigung(&mut eb, &mut gb, &vsb);
+
+        // Totalität: beide Wege sind fertig geworden (kein Hänger, kein
+        // Widerspruch) — `Applies_total`.
+        prop_assert!(!ea.saw_contradiction, "Weg A: Widerspruch");
+        prop_assert!(!eb.saw_contradiction, "Weg B: Widerspruch");
+
+        // Funktionalität: identisches Ergebnis — `Applies_functional`.
+        prop_assert_eq!(
+            cascade_fp(&ea), cascade_fp(&eb),
+            "Herleitungsweg verändert die Kaskade"
+        );
+        prop_assert_eq!(
+            knoten_fp(&ga), knoten_fp(&gb),
+            "Herleitungsweg verändert den Ergebnis-Graphen"
+        );
+        prop_assert_eq!(
+            verbindungen(&ga), verbindungen(&gb),
+            "Herleitungsweg verändert die Verbindungen"
+        );
     }
 }
 
-// ══ GhostId::from_parent usage ══════════════════════════════════════════
+// ══ V₆ — strikte Längen-Monotonie ════════════════════════════════════════
 
 proptest! {
-    /// Parent-rooted hash is structurally determined.
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    /// **V₆ (Strikte Monotonie der Länge).**
+    /// Formales Gegenstück: `proofs/Seesaw/Delta.lean`,
+    /// `Seesaw.deltaRun_length` (|D_x| = x + 1) und
+    /// `Seesaw.append1_strict_mono` (jeder Schritt wächst strikt),
+    /// zusammen mit `Seesaw.append1_length`.
+    ///
+    /// Lean-Aussage: der Delta-Graph ist append-only; ein Kaskaden-Schritt
+    /// hängt genau einen Eintrag an, also gilt nach x Schritten |D_x| =
+    /// x + 1 und |D_x| < |D_{x+1}|.
+    ///
+    /// hiesige Form: der Delta-Graph ist `Engine::cascade`. Der alte Test hat
+    /// `Cascade::append` direkt gerufen und die Länge gezählt — geprüft
+    /// wurde also die Datenstruktur. Hier wird die ENGINE getrieben, denn
+    /// in die Engine ist `append` nicht öffentlich: nur `step` schreibt in die
+    /// Kaskade. `step` liefert `Some(true)` für eine Anwendung,
+    /// `Some(false)` für ein erkanntes Duplikat (Def. der Nullifikation:
+    /// ein Duplikat ist kein Kaskaden-Eintrag) und `None` bei Sättigung.
+    /// Geprüft wird deshalb dreierlei:
+    ///   1. jede Anwendung hängt GENAU einen Eintrag an (`append1_length`),
+    ///   2. keine Anwendung verkürzt (`append1_strict_mono`),
+    ///   3. das bereits geschriebene Präfix bleibt unverändert — das ist
+    ///      die Append-only-Eigenschaft, die in Lean in der Konstruktion
+    ///      `append1 D e = D ++ [e]` steckt.
+    /// Zusammen: |D| = Zahl der Anwendungen (das x + 1 der Lean-Aussage,
+    /// verschoben um den Start-Eintrag d₀, den die Engine nicht kennt — die
+    /// Kaskade startet leer).
     #[test]
-    fn ghost_id_from_parent_deterministic(
-        parent_name in "[a-z]{1,8}",
-        edge_type in "[a-z]{1,6}",
-        type_id in "[A-Z][a-z]{1,8}",
-        attrs in arb_attrs(),
-    ) {
-        let parent = GhostId::from_baseline(&parent_name);
-        let a = GhostId::from_parent(&parent, &edge_type, &type_id, &attrs);
-        let b = GhostId::from_parent(&parent, &edge_type, &type_id, &attrs);
-        prop_assert_eq!(a, b);
+    fn v6_kaskade_ist_append_only(spec in arb_modell()) {
+        let (mut g, vs) = baue(&spec);
+        let rules = regelsatz(&mut g);
+        let mut e = Engine::new(&rules);
+        e.seed(&g, &vs);
+
+        let mut anwendungen = 0usize;
+        prop_assert_eq!(e.cascade.len(), 0, "Kaskade startet leer");
+
+        loop {
+            let vorher_len = e.cascade.len();
+            let vorher_fp = cascade_fp(&e);
+            match e.step(&mut g, &vs) {
+                None => break,
+                Some(angewandt) => {
+                    let nachher_fp = cascade_fp(&e);
+                    // (3) Append-only: das Präfix ist unangetastet.
+                    prop_assert_eq!(
+                        &nachher_fp[..vorher_len], &vorher_fp[..],
+                        "Kaskaden-Präfix wurde verändert"
+                    );
+                    if angewandt {
+                        anwendungen += 1;
+                        // (1) genau ein Eintrag …
+                        prop_assert_eq!(
+                            e.cascade.len(), vorher_len + 1,
+                            "Anwendung hängt nicht genau einen Eintrag an"
+                        );
+                        // (2) … also strikt gewachsen.
+                        prop_assert!(vorher_len < e.cascade.len());
+                    } else {
+                        // Duplikat: nullifiziert, kein Eintrag.
+                        prop_assert_eq!(
+                            e.cascade.len(), vorher_len,
+                            "Duplikat hat einen Eintrag angehängt"
+                        );
+                    }
+                }
+            }
+            prop_assert!(anwendungen < 100_000, "Sättigungs-Schranke");
+        }
+
+        // |D| = Zahl der Anwendungen.
+        prop_assert_eq!(
+            e.cascade.len(), anwendungen,
+            "Kaskaden-Länge ≠ Zahl der Anwendungen"
+        );
     }
+}
+
+// ══ V₁₆ — Terminierung der Konsolidierung ════════════════════════════════
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    /// **V₁₆ (Terminierung der Konsolidierung).**
+    /// Formales Gegenstück: `proofs/Seesaw/Fold.lean`,
+    /// `Seesaw.fold_fixpoint`.
+    ///
+    /// Lean-Aussage: sei `c i` die Größe der Nullifikations-Menge C nach
+    /// i Fold-Iterationen. Ist `c` durch B beschränkt (`bound`) und wächst
+    /// jede Iteration entweder gar nicht oder um mindestens 1
+    /// (`progress`), dann gibt es ein i ≤ B mit c(i+1) = c(i) — der
+    /// Fixpunkt wird innerhalb von B Iterationen erreicht.
+    ///
+    /// hiesige Form: die Nullifikations-Menge C ist die Menge der Elemente
+    /// (Knoten und Verbindungen) mit Status `Tombstone` — das ist genau,
+    /// was `Engine::consolidate` schreibt. B ist die Gesamtzahl der
+    /// Teilnehmer im Modell, denn mehr Elemente kann C nicht enthalten.
+    /// Der alte Test war schwächer: er rief `fold::consolidate` einmal
+    /// auf und prüfte nur, dass ein Ergebnis kam. Hier werden die beiden
+    /// Hypothesen des Lemmas GEMESSEN (Schranke, Monotonie) und die
+    /// Konklusion geprüft (Fixpunkt-Index ≤ B).
+    #[test]
+    fn v16_konsolidierung_erreicht_fixpunkt(
+        spec in arb_modell(),
+        art in arb_art(),
+        loesch_ix in 0..64usize,
+    ) {
+        let (mut g, vs) = baue(&spec);
+        let rules = regelsatz(&mut g);
+        let mut e = Engine::new(&rules);
+        e.seed(&g, &vs);
+        bis_saettigung(&mut e, &mut g, &vs);
+
+        // Ein Δ — erst dann hat die Konsolidierung überhaupt Arbeit.
+        delta_anwenden(&mut e, &mut g, &vs, art, loesch_ix);
+
+        // B = Gesamtzahl der Teilnehmer. C ⊆ Teilnehmer, also c i ≤ B.
+        let b = g.node_count() + verbindungen(&g).len();
+
+        // c 0 … c (B+1): Konsolidierung iterieren und C messen.
+        let c = |g: &Graph| -> usize {
+            let tote_knoten = g
+                .iter_nodes()
+                .filter(|n| n.status == Status::Tombstone)
+                .count();
+            let tote_kanten = verbindungen(g)
+                .into_iter()
+                .filter(|id| {
+                    g.connection(id).is_some_and(|x| x.status == Status::Tombstone)
+                })
+                .count();
+            tote_knoten + tote_kanten
+        };
+
+        let mut reihe = vec![c(&g)];
+        for _ in 0..=b {
+            e.consolidate(&mut g);
+            reihe.push(c(&g));
+        }
+
+        // Hypothese `bound`: ∀ i, c i ≤ B.
+        for (i, &ci) in reihe.iter().enumerate() {
+            prop_assert!(ci <= b, "c {} = {} überschreitet die Schranke B = {}", i, ci, b);
+        }
+        // Hypothese `progress`: c (i+1) = c i ∨ c i + 1 ≤ c (i+1). Über
+        // natürlichen Zahlen ist die zweite Hälfte `c i < c (i+1)`.
+        // (Die Nullifikations-Menge schrumpft nie — Tombstone ist final.)
+        for i in 0..reihe.len() - 1 {
+            prop_assert!(
+                reihe[i + 1] == reihe[i] || reihe[i] < reihe[i + 1],
+                "c {} = {} → c {} = {} ist weder Fixpunkt noch Wachstum",
+                i, reihe[i], i + 1, reihe[i + 1]
+            );
+        }
+        // Konklusion `fold_fixpoint`: ∃ i ≤ B mit c (i+1) = c i.
+        let fixpunkt = (0..reihe.len() - 1).find(|&i| reihe[i + 1] == reihe[i]);
+        prop_assert!(fixpunkt.is_some(), "kein Fixpunkt innerhalb von B = {}", b);
+        prop_assert!(
+            fixpunkt.unwrap() <= b,
+            "Fixpunkt erst bei i = {}, Schranke B = {}", fixpunkt.unwrap(), b
+        );
+    }
+}
+
+// ══ V₁₇ — semantische Treue der Konsolidierung ═══════════════════════════
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    /// **V₁₇ (Semantische Treue der Konsolidierung).**
+    /// Formales Gegenstück: `proofs/Seesaw/Consolidation.lean`,
+    /// `Seesaw.consolidation_faithful` (∀ t, matAt (D.filter keep) t =
+    /// matAt D t) und die Punktfrei-Fassung
+    /// `Seesaw.consolidation_effect_equiv`; zusätzlich geprüft wird
+    /// `Seesaw.consolidation_idempotent`.
+    ///
+    /// Lean-Aussage: entfernt die Konsolidierung nur dominierte oder
+    /// annullierte Ops und behält an jeder Identität den Rollup-Gewinner,
+    /// dann ist die Materialisierung unverändert.
+    ///
+    /// hiesige Form: `matAt` an einer Identität ist ihr aktueller Rollup-
+    /// Gewinner. `Solid`/`Ghost` ist `Effect.present`, ein
+    /// `TentativeTombstone` ist eine zurückgezogene Herleitung, also
+    /// `Effect.absent` — genau wie ein `Tombstone`. `Engine::consolidate`
+    /// ist der `filter`: es schreibt TT → Tombstone und lässt alles
+    /// andere stehen. Beide Status sind unter `matAt` `absent`, folglich
+    /// darf die effektive Materialisierung sich NICHT ändern. Das ist
+    /// wörtlich `mat(φ_L(D_x)) = mat(φ_L(D̂_x))`.
+    ///
+    /// Der alte Test hat V₁₇ auf eine Ungleichung abgeschwächt
+    /// (`fold`-Baseline hat ≤ so viele Knoten wie die Voll-Anwendung).
+    /// Hier steht die Gleichung selbst, als Mengen-Gleichheit über
+    /// Knoten UND Verbindungen.
+    ///
+    /// Zweite Zusage im selben Test: nach der Konsolidierung stimmt die
+    /// naive Materialisierung `Graph::materialize` (die nur `Tombstone`
+    /// überspringt und TT stehen lässt) mit der effektiven überein —
+    /// die Konsolidierung ist genau der Schritt, der beide zur Deckung
+    /// bringt. Dritte Zusage: ein zweiter Lauf ändert nichts mehr
+    /// (`consolidation_idempotent`).
+    #[test]
+    fn v17_konsolidierung_erhaelt_materialisierung(
+        spec in arb_modell(),
+        art in arb_art(),
+        loesch_ix in 0..64usize,
+    ) {
+        let (mut g, vs) = baue(&spec);
+        let rules = regelsatz(&mut g);
+        let mut e = Engine::new(&rules);
+        e.seed(&g, &vs);
+        bis_saettigung(&mut e, &mut g, &vs);
+
+        // Δ + Re-Derivation — erzeugt das (teils reklamierte)
+        // TT-Material, an dem die Konsolidierung arbeitet.
+        prop_assume!(delta_anwenden(&mut e, &mut g, &vs, art, loesch_ix));
+
+        // Nicht-Leerlauf-Zeuge: solange TT-Material offen ist, weicht die
+        // naive `materialize`-Sicht von der effektiven ab — die
+        // Konsolidierung hat also wirklich etwas zu tun. Ohne diese
+        // Zusicherung könnte der Test über einem TT-freien Graphen
+        // trivial grün sein.
+        let tt: Vec<GhostId> = g
+            .iter_nodes()
+            .filter(|n| n.status == Status::TentativeTombstone)
+            .map(|n| n.id)
+            .collect();
+        let vor = mat_effektiv(&g);
+        if !tt.is_empty() {
+            let naiv = mat_graph(&g);
+            for id in &tt {
+                prop_assert!(naiv.0.contains(id), "materialize lässt TT stehen");
+                prop_assert!(!vor.0.contains(id), "effektive Sicht zählt TT als absent");
+            }
+        }
+
+        e.consolidate(&mut g);
+        let nach = mat_effektiv(&g);
+
+        // V₁₇: die effektive Materialisierung ist unverändert.
+        prop_assert_eq!(
+            &vor.0, &nach.0,
+            "Konsolidierung hat Knoten-Materialisierung verändert"
+        );
+        prop_assert_eq!(
+            &vor.1, &nach.1,
+            "Konsolidierung hat Kanten-Materialisierung verändert"
+        );
+
+        // Nach der Konsolidierung deckt sich `materialize` mit der
+        // effektiven Sicht: es gibt kein unentschiedenes TT mehr.
+        prop_assert_eq!(
+            mat_graph(&g), nach.clone(),
+            "materialize weicht nach der Konsolidierung ab"
+        );
+
+        // `consolidation_idempotent`: zweiter Lauf ändert nichts.
+        e.consolidate(&mut g);
+        prop_assert_eq!(
+            mat_effektiv(&g), nach,
+            "Konsolidierung ist nicht idempotent"
+        );
+    }
+}
+
+// ══ Rahmen-Zusicherung ═══════════════════════════════════════════════════
+
+/// Kein Invarianten-Test, sondern die Zusicherung, dass der Regelsatz
+/// oben überhaupt arbeitet — sonst prüften die vier Tests über leeren
+/// Kaskaden und wären wertlos.
+#[test]
+fn regelsatz_erzeugt_kaskade() {
+    let spec = vec![
+        FamilieSpec {
+            vater: Some("Ann".into()),
+            mutter: Some("Bea".into()),
+            vater_blatt: true,
+            geteilte_kette: false,
+        },
+        FamilieSpec {
+            vater: Some("Cyd".into()),
+            mutter: None,
+            vater_blatt: true,
+            geteilte_kette: false,
+        },
+    ];
+    let (mut g, vs) = baue(&spec);
+    let rules = regelsatz(&mut g);
+    let mut e = Engine::new(&rules);
+    let t = e.run(&mut g, &vs, 10_000);
+    assert_eq!(t, Termination::Duplication);
+    assert_eq!(e.cascade.len(), 3, "2 Väter + 1 Mutter übersetzt");
 }

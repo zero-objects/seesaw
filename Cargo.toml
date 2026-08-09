@@ -1,7 +1,7 @@
 [package]
 name = "seesaw-tgg"
-description = "Delta-extended Triple Graph Grammar engine with rank-based backtracking: graph, ops, cascade, fold."
-version = "1.0.1"
+description = "Bidirectional graph transformation with a declarative rule format: value-free structural identity, delta-local cascade, no negative application conditions."
+version = "2.0.0"
 edition = "2021"
 authors = ["Zero Principle <hello@zero-principle.org>"]
 license = "Apache-2.0"
@@ -11,29 +11,24 @@ documentation = "https://docs.rs/seesaw-tgg"
 readme = "README.md"
 keywords = ["tgg", "graph", "model-transformation", "bidirectional", "cascade"]
 categories = ["data-structures", "algorithms", "science"]
+# The Java implementation lives in the repository, not in the crate:
+# it reads the same rule files but is built and released separately.
+exclude = ["java/", ".github/"]
 
 [dependencies]
-petgraph = { version = "0.6", features = ["serde-1"] }
-# rc10: blake3 instead of SHA-256 for GhostIds — cryptographically
-# collision-resistant (the structural identity contract of Def. 5.3 holds),
-# but SIMD-accelerated and without sha2's software-crypto fallback.
+# blake3 rather than SHA-256 for identities: collision resistant, so the
+# structural identity contract holds, and SIMD accelerated without a
+# software crypto fallback.
 blake3 = "1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "1.0"
-# 0.41 fixes RUSTSEC-2026-0194 (O(N²) attr-dedup DoS) + RUSTSEC-2026-0195 (unbounded NS alloc DoS)
-quick-xml = { version = "0.41", features = ["serialize"] }
 regex = "1.11"
 
 [dev-dependencies]
 proptest = "1.5"
 
 [features]
-regen_graphs = []
-# Deterministic structural counters for the cascade (perf diagnostics).
-# Off by default → no effect on the hot path.
+# Deterministic structural counters for the cascade, for diagnostics.
+# Off by default, no effect on the hot path.
 perf_trace = []
-
-[[example]]
-name = "basic_cascade"
-path = "examples/basic_cascade.rs"

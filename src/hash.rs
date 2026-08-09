@@ -1,35 +1,36 @@
 //! Fast, deterministic, dependency-free hasher for internal indices
 //! (perf lever A).
 //!
-//! The engine performs a large number of `HashMap` lookups on GhostId keys
-//! (`node_index`, `edge_index`) and content-addressed memo keys (`IdMemo`).
-//! The std default hasher is SipHash-1-3 — DoS-resistant, but expensive due
-//! to a keyed permutation per 8-byte block. For purely internal indices (no
-//! adversarial input) that is overkill, and it was the #1 compute block in
-//! the CPU sample.
+//! The engine does massive amounts of `HashMap` lookups on GhostId keys
+//! (`node_index`, `edge_index`) and content-addressed memo keys
+//! (`IdMemo`). std's default hasher is SipHash-1-3 — DoS-resistant, but
+//! with a keyed permutation per 8-byte block, expensive. For purely
+//! internal indices (no adversarial input) that's overkill and was the
+//! #1 hot block in the CPU sample.
 //!
-//! This is a ported, dependency-free variant of the FxHash algorithm (as in
-//! `rustc-hash`): word-wise `rotate_left(5) ^ word` followed by a
-//! multiplication with an odd constant.
+//! This is a ported, dependency-free variant of the FxHash algorithm
+//! (as in `rustc-hash`): word-wise `rotate_left(5) ^ word` followed by
+//! a multiplication with an odd constant.
 //!
 //! Two deliberate properties:
-//! - **Fixed seed (0)** → hash values are stable across process boundaries.
-//!   Unlike std's `RandomState` (seeded randomly per process), iteration
-//!   order is therefore *deterministic*. For the maps used here this is
-//!   irrelevant (lookup only, never iterated), but it is strictly ≥ the
-//!   status quo with respect to bit-identity.
-//! - **Correctness independent of write chunking**: `write` processes any
-//!   byte stream (no matter how std splits a key's bytes) and yields the
-//!   same hash for the same byte sequence. The `HashMap` compares keys with
-//!   `Eq` in the end, so collisions cost only a comparison, never
-//!   correctness.
+//! - **Fixed seed (0)** → the hash values are stable across process
+//!   boundaries. Unlike std's `RandomState` (randomly seeded per
+//!   process), the iteration order is therefore *deterministic*. For
+//!   the maps used here that's irrelevant (only lookup, never
+//!   iterated), but it is strictly ≥ the status quo regarding bit
+//!   identity.
+//! - **Correctness independent of write chunking**: `write` processes
+//!   any byte stream (however std splits up a key's bytes) and
+//!   produces the same hash for equal byte sequences. The `HashMap`
+//!   finally compares keys via `Eq`, so collisions only cost a
+//!   comparison, never correctness.
 
 use std::hash::{BuildHasher, Hasher};
 
 /// Odd multiplication constant (FxHash / `rustc-hash`).
 const K: u64 = 0x51_7c_c1_b7_27_22_0a_95;
 
-/// FxHash hasher with a fixed seed. See the module docs.
+/// FxHash hasher with a fixed seed. See module docs.
 #[derive(Default)]
 pub struct FxHasher {
     hash: u64,
@@ -60,8 +61,8 @@ impl Hasher for FxHasher {
 
     #[inline]
     fn finish(&self) -> u64 {
-        // A final scramble of the low bits so the `HashMap` (which uses only
-        // the low bits as the bucket index) distributes well.
+        // A final scramble of the low bits, so `HashMap` (which only
+        // uses the lower bits as the bucket index) distributes well.
         self.hash.rotate_left(5)
     }
 }
@@ -86,14 +87,14 @@ pub type FxHashMap<K, V> = std::collections::HashMap<K, V, FxBuildHasher>;
 mod tests {
     use super::*;
 
-    /// Round-trip: get/insert behave like a normal HashMap.
+    /// Round trip: get/insert behave like a normal HashMap.
     #[test]
     fn fx_hashmap_roundtrips_keys() {
         let mut m: FxHashMap<[u8; 32], u32> = FxHashMap::default();
         for i in 0u32..1000 {
             let mut key = [0u8; 32];
             key[..4].copy_from_slice(&i.to_le_bytes());
-            // Vary higher bytes too, to exercise word-wise mixing.
+            // Also vary the higher bytes, to hit the word-wise mixing.
             key[16] = (i % 251) as u8;
             m.insert(key, i);
         }
@@ -102,13 +103,13 @@ mod tests {
             let mut key = [0u8; 32];
             key[..4].copy_from_slice(&i.to_le_bytes());
             key[16] = (i % 251) as u8;
-            assert_eq!(m.get(&key), Some(&i), "key {i} must be found");
+            assert_eq!(m.get(&key), Some(&i), "key {i} must be findable");
         }
-        // Absent key.
+        // A key that doesn't exist.
         assert_eq!(m.get(&[0xFFu8; 32]), None);
     }
 
-    /// Same byte sequence → same hash, independent of write chunking.
+    /// Equal byte sequence → equal hash, independent of write chunking.
     #[test]
     fn hash_is_chunking_independent() {
         let data = [3u8, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9];
@@ -118,9 +119,10 @@ mod tests {
         for chunk in data.chunks(3) {
             b.write(chunk);
         }
-        // Note: with different chunking the hash may differ (word-wise
-        // processing), but within ONE HashMap a key is always hashed the
-        // same way. This test only documents: same chunking → same hash.
+        // Note: with different chunking the hash CAN differ (word-wise
+        // processing), but within ONE HashMap a key is always hashed
+        // the same way. This test only documents: same chunking → same
+        // hash.
         let mut c = FxHasher::default();
         c.write(&data);
         assert_eq!(a.finish(), c.finish());

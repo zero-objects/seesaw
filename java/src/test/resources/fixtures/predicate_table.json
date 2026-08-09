@@ -1,0 +1,377 @@
+{
+  "accepted": [
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "exists"
+      },
+      "value": ""
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "exists"
+      },
+      "value": "x"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "exists"
+      },
+      "value": null
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "equals",
+        "value": "x"
+      },
+      "value": "x"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "equals",
+        "value": "x"
+      },
+      "value": "y"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "equals",
+        "value": "x"
+      },
+      "value": null
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "equals",
+        "value": ""
+      },
+      "value": ""
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "prefix",
+        "value": "ab"
+      },
+      "value": "abc"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "prefix",
+        "value": "ab"
+      },
+      "value": "ab"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "prefix",
+        "value": "ab"
+      },
+      "value": "a"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "prefix",
+        "value": ""
+      },
+      "value": "x"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "ab"
+      },
+      "value": "ab"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "ab"
+      },
+      "value": "xaby"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "a|b"
+      },
+      "value": "a"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "a|b"
+      },
+      "value": "ab"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "[0-9]+"
+      },
+      "value": "123"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "[0-9]+"
+      },
+      "value": "12a"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "[^a]"
+      },
+      "value": "b"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "[^a]"
+      },
+      "value": "a"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "a\\^b"
+      },
+      "value": "a^b"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "\\*+"
+      },
+      "value": "**"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "\\\\b"
+      },
+      "value": "\\b"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "a.c"
+      },
+      "value": "abc"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "a.c"
+      },
+      "value": "a\nc"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "(?:ab)+"
+      },
+      "value": "abab"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "a{2,3}"
+      },
+      "value": "aa"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "a{2,3}"
+      },
+      "value": "a"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "regex",
+        "pattern": "ab"
+      },
+      "value": null
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 2.0,
+        "min": 1.0
+      },
+      "value": "1"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 2.0,
+        "min": 1.0
+      },
+      "value": "2"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 2.0,
+        "min": 1.0
+      },
+      "value": "1.5"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 2.0,
+        "min": 1.0
+      },
+      "value": "2.1"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 1.0,
+        "min": -1.0
+      },
+      "value": "-1"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 2000.0,
+        "min": 0.0
+      },
+      "value": "-1.5e3"
+    },
+    {
+      "expected": true,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 0.0,
+        "min": -2000.0
+      },
+      "value": "-1.5e3"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 9.0,
+        "min": 0.0
+      },
+      "value": "1d"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 9.0,
+        "min": 0.0
+      },
+      "value": "0x1p3"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 9.0,
+        "min": 0.0
+      },
+      "value": "inf"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 9.0,
+        "min": 0.0
+      },
+      "value": "NaN"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 9.0,
+        "min": 0.0
+      },
+      "value": "Infinity"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 9.0,
+        "min": 0.0
+      },
+      "value": " 4"
+    },
+    {
+      "expected": false,
+      "predicate": {
+        "kind": "numeric_range",
+        "max": 9.0,
+        "min": 0.0
+      },
+      "value": null
+    }
+  ],
+  "rejected_patterns": [
+    "^ab",
+    "ab$",
+    "[a]^",
+    "(?=a)",
+    "(?!a)",
+    "(?<=a)",
+    "(?<!a)",
+    "(?P<n>a)",
+    "(?<n>a)",
+    "(\\w)\\1",
+    "\\bx",
+    "\\Bx",
+    "\\p{L}",
+    "\\P{L}",
+    "a*+",
+    "a++",
+    "a?+",
+    "a{2,3}+",
+    "\\d+",
+    "\\D",
+    "\\w",
+    "\\W",
+    "\\s",
+    "\\S"
+  ]
+}

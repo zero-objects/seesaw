@@ -1,5 +1,6 @@
-# Rust build artifacts
+# Build artifacts
 target/
+java/target/
 Cargo.lock.bak
 
 # macOS
