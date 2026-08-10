@@ -185,3 +185,82 @@ fn kaskaden_endzustand_ist_aktuell() {
          `cargo test -p seesaw-core --test format -- --ignored`"
     );
 }
+
+/// MESSUNG (2026-08-10): endet ein Delta nach einer Materialisierung
+/// noch in einem Tombstone?
+///
+/// Eine Retraktion endet im Tombstone. Die Frage ist nur, ob sie einen
+/// setzt, wenn das Erzeugnis zwischenzeitlich materialisiert wurde.
+#[test]
+fn retraktion_nach_materialisierung() {
+    for materialisieren in [false, true] {
+        let file = RuleFile::from_json(MIN).expect("parst");
+        let mut g = Graph::default();
+        let lowered = seesaw_tgg::rules::load_file(&file, &mut g).expect("laedt");
+        let model = g.add_baseline("m", "Model");
+        let cls = g.add_baseline("m/Person", "Class");
+        let cname = g.add_baseline("m/Person/name", "name");
+        g.connect(model, cls, Status::Solid);
+        g.connect(cls, cname, Status::Solid);
+        let mut vs = ValueStore::default();
+        vs.insert(cname, "Person");
+        let rules: &'static [DirectedRule] = Box::leak(lowered.into_boxed_slice());
+        let mut e = Engine::new(rules);
+        e.run(&mut g, &vs, 1000);
+
+        let jt = g.types.lookup("JavaClass").expect("JavaClass existiert");
+        let jcls = g.nodes_of_type(jt).next().expect("eine JavaClass").id;
+        let vor = g.node(&jcls).expect("da").status;
+
+        if materialisieren {
+            g = g.materialize();
+        }
+        let nach_mat = g.node(&jcls).expect("da").status;
+
+        // Delta: die Quelle faellt weg.
+        g.set_node_status(&cls, Status::Tombstone);
+        e.element_removed(&cls);
+        e.retract_for(&mut g, &cls);
+        e.consolidate(&mut g);
+
+        let nach_delta = g.node(&jcls).map(|n| n.status);
+        eprintln!(
+            "materialisiert={materialisieren}: vor={vor:?} nach_mat={nach_mat:?} \
+             nach_delta={nach_delta:?}"
+        );
+    }
+}
+
+/// Erzeuger des Java-Golden für die Identitäts-Ableitung.
+///
+/// Die sechs Ableitungen mit festen Eingaben. Bis 2026-08-10 standen
+/// diese Werte nur hartkodiert im Java-Test, mit dem Vermerk, sie
+/// stammten aus dem Rust-Pfad — ohne Erzeuger, der das belegt. Genau
+/// dieser Mangel schlug beim Ändern der Kodierung zu.
+#[test]
+#[ignore = "manuell: schreibt das Java-Golden der Identitaets-Ableitung"]
+fn schreibt_ident_golden() {
+    let path = "../../seesaw-java/src/test/resources/fixtures/ident_golden.json";
+    let cls = seesaw_tgg::graph::preview_baseline_id("uml:/Person");
+    let name = seesaw_tgg::graph::preview_baseline_id("uml:/Person/name");
+    let getter =
+        seesaw_tgg::graph::PlanTransform::Chain(seesaw_tgg::rules::transform::Chain(vec![
+            seesaw_tgg::rules::transform::Prim::Capitalize,
+            seesaw_tgg::rules::transform::Prim::Prefix("get".into()),
+        ]));
+    let j = serde_json::json!({
+        "baseline_class": cls.hex(),
+        "baseline_name": name.hex(),
+        "ghost": seesaw_tgg::graph::preview_ghost_id(&cls, "Member").hex(),
+        "derived": seesaw_tgg::graph::preview_derived_id(&cls, "getterName", &name, &getter).hex(),
+        "connection": seesaw_tgg::graph::preview_connection_id(&cls, &name).hex(),
+        "corr": seesaw_tgg::graph::preview_corr_id(&cls, "Corr", &[cls, name]).hex(),
+        "konst": seesaw_tgg::graph::preview_konst_id(&cls, "Op", "mkOp", 3).hex(),
+    });
+    std::fs::write(
+        path,
+        serde_json::to_string_pretty(&j).expect("serialisiert"),
+    )
+    .expect("Schreibversuch");
+    eprintln!("Ident-Golden nach {path} geschrieben");
+}

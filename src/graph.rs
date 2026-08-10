@@ -227,13 +227,34 @@ impl ValueResolver for ValueStore {
 
 /// Identity derivation: purely structural plus provenance. Every kind
 /// of node hashes under its own domain prefix.
+///
+/// ## Unambiguous encoding
+///
+/// Every field of VARIABLE length is preceded by its length as a
+/// little-endian `u32`. Fixed-width fields (32-byte ids, the plan
+/// index) are hashed raw, because the domain tag at the front already
+/// fixes the structure.
+///
+/// Without the length prefixes the encoding is not injective, and not
+/// as a hash-collision argument but before hashing even starts: with
+/// two adjacent variable fields, `("ab", "c")` and `("a", "bc")`
+/// produce the same input bytes. Two distinct nodes would then share
+/// an identity and silently collapse into one. Found in the review of
+/// 2026-08-10, fixed for every derivation at once, so the rule is one
+/// sentence rather than a case distinction.
 mod ident {
     use super::*;
+
+    /// A variable-length field: length first, then content.
+    fn var(h: &mut blake3::Hasher, bytes: &[u8]) {
+        h.update(&(bytes.len() as u32).to_le_bytes());
+        h.update(bytes);
+    }
 
     pub fn baseline(external: &str) -> GhostId {
         let mut h = blake3::Hasher::new();
         h.update(b"V2B\0");
-        h.update(external.as_bytes());
+        var(&mut h, external.as_bytes());
         GhostId::from_raw(*h.finalize().as_bytes())
     }
 
@@ -241,10 +262,13 @@ mod ident {
         let mut h = blake3::Hasher::new();
         h.update(b"V2G\0");
         h.update(&parent.as_bytes());
-        h.update(typ_name.as_bytes());
+        var(&mut h, typ_name.as_bytes());
         GhostId::from_raw(*h.finalize().as_bytes())
     }
 
+    /// Derived leaf: value = transform(source), materialized only at
+    /// the boundary. The chain enters via `ident_bytes`, which is
+    /// itself length-prefixed per primitive.
     pub fn derived(
         parent: &GhostId,
         typ_name: &str,
@@ -254,9 +278,9 @@ mod ident {
         let mut h = blake3::Hasher::new();
         h.update(b"V2D\0");
         h.update(&parent.as_bytes());
-        h.update(typ_name.as_bytes());
+        var(&mut h, typ_name.as_bytes());
         h.update(&source.as_bytes());
-        h.update(&t.ident_bytes());
+        var(&mut h, &t.ident_bytes());
         GhostId::from_raw(*h.finalize().as_bytes())
     }
 
@@ -272,11 +296,15 @@ mod ident {
     /// "same rule + same match ⇒ same id") — refs are structure, not
     /// values; multiple matches at the same anchor don't collide,
     /// reapplication is idempotent.
+    ///
+    /// The ref list carries its COUNT, not a byte length: without it a
+    /// longer type name and one ref fewer would hash the same.
     pub fn corr(anchor: &GhostId, typ_name: &str, refs: &[GhostId]) -> GhostId {
         let mut h = blake3::Hasher::new();
         h.update(b"V2R\0");
         h.update(&anchor.as_bytes());
-        h.update(typ_name.as_bytes());
+        var(&mut h, typ_name.as_bytes());
+        h.update(&(refs.len() as u32).to_le_bytes());
         for r in refs {
             h.update(&r.as_bytes());
         }
@@ -291,8 +319,8 @@ mod ident {
         let mut h = blake3::Hasher::new();
         h.update(b"V2K\0");
         h.update(&parent.as_bytes());
-        h.update(typ_name.as_bytes());
-        h.update(rule_name.as_bytes());
+        var(&mut h, typ_name.as_bytes());
+        var(&mut h, rule_name.as_bytes());
         h.update(&plan_ix.to_le_bytes());
         GhostId::from_raw(*h.finalize().as_bytes())
     }
@@ -301,6 +329,16 @@ mod ident {
 /// Pure id preview (spec §1.4) — identical to the derivation in the
 /// add_*constructors, without inserting. Basis of duplicate detection
 /// BEFORE application (engine, spec §1.6).
+/// Baseline id of an external name, without touching a graph.
+pub fn preview_baseline_id(external: &str) -> GhostId {
+    ident::baseline(external)
+}
+
+/// Connection id of two endpoints, without touching a graph.
+pub fn preview_connection_id(source: &GhostId, target: &GhostId) -> GhostId {
+    ident::connection(source, target)
+}
+
 pub fn preview_ghost_id(parent: &GhostId, typ_name: &str) -> GhostId {
     ident::ghost(parent, typ_name)
 }
@@ -903,5 +941,94 @@ mod tests {
         assert_eq!(a1, a2);
         assert_ne!(a1, b);
         assert_eq!(g.types.name(a1), "Class");
+    }
+}
+
+#[cfg(test)]
+mod ident_encoding {
+    use super::*;
+    use crate::rules::transform::Prim;
+
+    /// The boundary between two variable fields must not be shiftable.
+    ///
+    /// Before the length prefixes, `konst(p, "ab", "c", 0)` and
+    /// `konst(p, "a", "bc", 0)` produced the same bytes and therefore
+    /// the same identity — two distinct nodes silently became one.
+    /// This test walks the boundary across every split of a fixed
+    /// string, so a future field added without a prefix fails here
+    /// rather than in a user's model.
+    #[test]
+    fn konst_boundary_is_not_shiftable() {
+        let parent = ident::baseline("p");
+        let joined = "abcde";
+        let ids: Vec<GhostId> = (0..=joined.len())
+            .map(|i| ident::konst(&parent, &joined[..i], &joined[i..], 0))
+            .collect();
+        for (i, a) in ids.iter().enumerate() {
+            for (j, b) in ids.iter().enumerate().skip(i + 1) {
+                assert_ne!(
+                    a, b,
+                    "split at {i} and at {j} share an identity — the field \
+                     boundary is shiftable"
+                );
+            }
+        }
+    }
+
+    /// Same for the type/source boundary of a derived leaf.
+    #[test]
+    fn derived_type_boundary_is_not_shiftable() {
+        let parent = ident::baseline("p");
+        let src = ident::baseline("s");
+        let empty = PlanTransform::Chain(Chain::default());
+        let cap = PlanTransform::Chain(Chain(vec![Prim::Capitalize]));
+        assert_ne!(
+            ident::derived(&parent, "ab", &src, &empty),
+            ident::derived(&parent, "a", &src, &empty),
+            "type name length must be part of the identity"
+        );
+        assert_ne!(
+            ident::derived(&parent, "a", &src, &empty),
+            ident::derived(&parent, "a", &src, &cap),
+            "the chain must be part of the identity"
+        );
+    }
+
+    /// A corr's ref list carries its count, so a longer type name with
+    /// one ref fewer cannot hash the same.
+    #[test]
+    fn corr_ref_count_is_part_of_the_identity() {
+        let anchor = ident::baseline("a");
+        let r1 = ident::baseline("r1");
+        let r2 = ident::baseline("r2");
+        assert_ne!(
+            ident::corr(&anchor, "C", &[r1, r2]),
+            ident::corr(&anchor, "C", &[r1]),
+            "the number of refs must be part of the identity"
+        );
+        assert_ne!(
+            ident::corr(&anchor, "CC", &[r1]),
+            ident::corr(&anchor, "C", &[r1]),
+            "the type name must be distinguishable from what follows"
+        );
+    }
+
+    /// Every derivation lives under its own domain tag, so the same
+    /// inputs cannot mean two things.
+    #[test]
+    fn domains_do_not_overlap() {
+        let p = ident::baseline("x");
+        let ids = [
+            ident::baseline("x"),
+            ident::ghost(&p, "x"),
+            ident::connection(&p, &p),
+            ident::corr(&p, "x", &[]),
+            ident::konst(&p, "x", "", 0),
+        ];
+        for (i, a) in ids.iter().enumerate() {
+            for (j, b) in ids.iter().enumerate().skip(i + 1) {
+                assert_ne!(a, b, "derivations {i} and {j} share an identity");
+            }
+        }
     }
 }

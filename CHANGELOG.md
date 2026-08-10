@@ -6,7 +6,74 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0 release candidates are tagged `1.0.0-rcN`.
 
-## [2.0.0] — Unreleased
+## [2.0.1] — 2026-08-10
+
+Three defects found in a review of the 2.0.0 release, all in the code
+that shipped.
+
+### Identity encoding was ambiguous
+
+`konst(parent, "ab", "c", 0)` and `konst(parent, "a", "bc", 0)
+produced the same identity. Not a hash collision — the same input
+bytes, before hashing began. Three of the six derivations had two
+adjacent variable-length fields with nothing marking the boundary.
+
+Every variable-length field now carries its length as a little-endian
+`u32`, and a correspondence's ref list carries its count. Four tests
+walk the boundary across every split, so a field added without a
+prefix fails there rather than in a model.
+
+**Every identity changes.** Anyone persisting `GhostId` values across
+the 2.0.0 boundary will not find them again. The collision was not
+theoretical: it occurred in our own test corpus, where it made two
+distinct correspondences look like one.
+
+### Retraction stopped at a materialization
+
+`retract_match` checked for `Status::Ghost`, so a folded product —
+which is `Solid` — was left standing and the same delta produced no
+tombstone at all. The criterion is now provenance: whatever appears in
+a cascade entry's `created` list falls with it, nodes and edges alike.
+What entered through `add_baseline` appears in no such list and is
+never touched.
+
+The retraction stays tentative; consolidation at the end of the run
+decides. Re-derived within the run means reclaimed, otherwise it
+resolves to a tombstone.
+
+This defect was hidden by the one above: the colliding identity meant
+no second product was created, so nobody noticed the first was never
+retracted.
+
+### A rank ceiling was void whenever the runtime mask was set
+
+`step_with_limit` chose a candidate below its ceiling and then, with
+`active` set, replaced that choice by a search over the whole queue.
+Mask and ceiling now intersect. That is precisely the combination
+backtracking relies on.
+
+### Also
+
+- A correspondence no longer moves when a node it attests is replaced.
+  It attests the translation of exactly one node; at a foreign anchor
+  neither its statement nor its identity holds.
+- The Java match key used `Integer.toHexString`, which drops leading
+  zeros: `01 23` and `12 03` produced the same key, so a legitimate
+  match could be discarded as a duplicate. Fixed-width now, plus a
+  length check on `Id`.
+
+### Verification
+
+The six identity derivations are now written by a Rust test and read
+by the Java one. Until now those values sat hard-coded in the Java
+test with a note saying they came from Rust, and nothing that proved
+it — which is what made this fix expensive.
+
+Structure is unchanged across the fix: 3498 and 8353 live nodes on
+astra, 22 and 1538 applications, only the hashes over identities
+differ. Rust 342 tests green, Java 111.
+
+## [2.0.0] — 2026-08-09
 
 This release removes the first engine generation and makes the declarative
 rule format the interface. It is not an incremental step, so it is worth
@@ -84,53 +151,6 @@ problem worth surfacing, not worth hiding in a matcher.
 - Transformations are chains, canonically normalised, and the chain enters
   identity. Identities from the previous generation are not comparable.
 - `v2` remains as the engine below the format. It is not the interface.
-
-## [1.1.0] — Unreleased
-
-### Added
-
-- **New `v2` module: the value-free structural-identity engine.** A
-  second, self-contained engine generation living next to the 1.0.x
-  modules (which are unchanged — this release is purely additive):
-  - **Map-based graph** (`v2::Graph`): one global map from participant
-    id to slot; nodes, anonymous directed connections and sorted
-    participation lists instead of typed edges. Roles are reified
-    nodes; deletion is tombstoning, status is filtered on read.
-  - **Value-free identity**: node identity is structural + provenance
-    (blake3 over parent/type/source/transform), never over attribute
-    values — renames cannot touch identity by construction. Raw values
-    live only in the original (host adapter or `v2::ValueStore`);
-    derived leaves carry an invertible transform chain resolved on
-    demand (`Graph::resolve_value`).
-  - **Content-intrinsic match ordering**: a match is its ref sequence
-    in pattern order; that sequence is the μ selection key. The
-    engine's to-do list orders candidates by (rank, ref sequence,
-    rule index) — deterministic cascades without state-dependent
-    numbering, and a backtracking bound (`SelectionBound`) derivable
-    from any cascade entry.
-  - **Purely positive rule system without NACs** (`v2::rule`):
-    bidirectional rules (`RuleV2`) with positional typed nodes,
-    directed/context links, leaf constraints, invertible transform
-    bindings and rule constants; lowered into two directed
-    operationalizations. Duplicate suppression works via pure id
-    preview + corr recognition instead of negative application
-    conditions.
-  - **Delta-local engine** (`v2::engine::Engine`): add-stream
-    anchoring (`elements_added`), eager match invalidation on
-    delete/modify (`element_removed`, `link_removed`), provenance-walk
-    retraction with tentative tombstones, O(Δ) consolidation, and the
-    saturation verdicts Duplication/Convergence/Contradiction.
-  - **Mechanical v1→v2 converter** (`v2::convert`): rule sets and
-    graphs, including the mechanical edge-reification decision table.
-- `GhostId::from_raw` — construction from raw bytes for the v2
-  identity derivation (domain separation is the caller's
-  responsibility).
-
-### Performance
-
-- On identical workloads the v2 engine measured ≈ 1.4× faster than
-  the 1.0.x engine (Hermann et al. 2014 PIL2SPELL rule set at ~503k
-  rule applications: 27.2 s vs 39.2 s user CPU, equivalent output).
 
 ## [1.0.1] — 2026-07-03
 

@@ -103,14 +103,30 @@ public final class Engine {
 
     public Engine(List<Rule> rules) { this.rules = rules; }
 
+    /**
+     * Schluessel eines Matches: Regelindex plus Referenzfolge.
+     *
+     * <p>Feste Breite je Byte. {@code Integer.toHexString} laesst
+     * fuehrende Nullen weg, damit war die Kodierung nicht injektiv:
+     * die Folgen {@code 01 23} und {@code 12 03} ergaben beide
+     * {@code "123"}, und {@link #record} konnte einen berechtigten
+     * Match als Duplikat verwerfen. Rust nutzt die Referenzfolge
+     * direkt als Schluessel, ohne Kodierung -- Java kann also nur
+     * dann dieselben Entscheidungen treffen, wenn die Kodierung
+     * umkehrbar ist. Im Review vom 2026-08-10 gefunden.
+     */
     public static String key(int ruleIx, Id[] refs) {
         StringBuilder sb = new StringBuilder().append(ruleIx);
         for (Id r : refs) {
             sb.append(':');
-            for (byte b : r.b) sb.append(Integer.toHexString(b & 0xFF));
+            for (byte b : r.b) {
+                sb.append(HEX[(b >> 4) & 0xF]).append(HEX[b & 0xF]);
+            }
         }
         return sb.toString();
     }
+
+    private static final char[] HEX = "0123456789abcdef".toCharArray();
 
     public void record(int ruleIx, Id[] refs) {
         String k = key(ruleIx, refs);
@@ -155,16 +171,33 @@ public final class Engine {
         if (entry != null) {
             Entry e = cascade.get(entry);
             for (Id c : e.created) {
+                // Erzeugnis GENAU DIESES Eintrags, die Herkunft ist
+                // durch die Schleife bewiesen -- der Status entscheidet
+                // nicht.
+                //
+                // Bis 2026-08-10 stand hier == GHOST, und damit endete
+                // die Retraktion an einer Materialisierung: ein
+                // gefaltetes Erzeugnis ist SOLID und blieb stehen, das
+                // Delta setzte also gar keinen Tombstone. Kriterium ist
+                // die Herkunft, nicht der Lebenszyklus-Zustand; was
+                // ueber addBaseline kam, steht in keinem created.
+                //
+                // TENTATIV, nicht endgueltig: die Konsolidierung am
+                // Ende des Laufs entscheidet. Im selben Lauf neu
+                // abgeleitet heisst reklamiert, sonst loest es zu
+                // TOMBSTONE auf. Im Ruhezustand bleiben nur GHOST und
+                // SOLID.
                 Node n = g.node(c);
-                if (n != null && n.status == St.GHOST) {
+                if (n != null && n.status.matchable()) {
                     g.setNodeStatus(c, St.TENTATIVE_TOMBSTONE);
                     pendingTtNodes.add(c);
                 }
                 queue.add(c);
             }
             for (Id ed : e.createdEdges) {
+                // Dieselbe Begruendung wie oben fuer die Knoten.
                 Conn c = g.conn(ed);
-                if (c != null && c.status == St.GHOST) {
+                if (c != null && c.status.matchable()) {
                     g.setConnectionStatus(ed, St.TENTATIVE_TOMBSTONE);
                     pendingTtEdges.add(ed);
                 }

@@ -132,10 +132,15 @@ below become visible only where a cascade is driven or a graph is read.
 
 ## Status
 
-`2.0.0` removes the first engine generation. It is not an incremental
+`2.0.0` removed the first engine generation. It is not an incremental
 step; see [CHANGELOG.md](CHANGELOG.md) for what changed in thinking,
 not only in code. Users who need the previous generation can build
 against `1.0.1`.
+
+`2.0.1` fixes three defects found in a review of that release, one of
+them in the identity encoding. **Every identity changes between 2.0.0
+and 2.0.1**, so persisted `GhostId` values do not carry across. Use
+`2.0.1`.
 
 The engine is covered by unit, integration and property tests,
 including reproductions of published research cases (FASE 2019, JOT

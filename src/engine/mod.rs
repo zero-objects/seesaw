@@ -263,7 +263,21 @@ impl<'r> Engine<'r> {
             let created = self.cascade[eix as usize].created.clone();
             let created_edges = self.cascade[eix as usize].created_edges.clone();
             for c in created {
-                if g.node(&c).is_some_and(|n| n.status == Status::Ghost) {
+                // A product of THIS entry, so its provenance is proven
+                // by the loop itself — the status does not decide.
+                //
+                // Until 2026-08-10 the condition read `== Ghost`, which
+                // ended retraction at a materialization: a folded
+                // product is `Solid` and was left standing, so the
+                // delta produced no tombstone at all. Provenance is the
+                // criterion, not the lifecycle state; `add_baseline`
+                // nodes appear in no `created` and stay untouched.
+                //
+                // TENTATIVE, not final: the consolidation at the end of
+                // the run decides. Re-derived within this run means the
+                // element is reclaimed, otherwise it resolves to
+                // `Tombstone`. At rest only `Ghost` and `Solid` remain.
+                if g.node(&c).is_some_and(|n| n.status.is_matchable()) {
                     g.set_node_status(&c, Status::TentativeTombstone);
                     self.pending_tt_nodes.push(c);
                 }
@@ -274,7 +288,11 @@ impl<'r> Engine<'r> {
             // otherwise `consolidate` finalizes to tombstone. Edges
             // have no provenance children ⇒ not queued.
             for e in created_edges {
-                if g.connection(&e).is_some_and(|c| c.status == Status::Ghost) {
+                // Same reasoning as for the nodes above: provenance
+                // decides, not the lifecycle state. A materialized
+                // edge is `Solid` and was left standing until
+                // 2026-08-10, so a retracted node kept its connections.
+                if g.connection(&e).is_some_and(|c| c.status.is_matchable()) {
                     g.set_connection_status(&e, Status::TentativeTombstone);
                     self.pending_tt_edges.push(e);
                 }
@@ -451,10 +469,25 @@ impl<'r> Engine<'r> {
                 }
             };
             // Runtime mask: inactive candidates are left alone.
-            let key = if let Some(active) = &self.active {
-                self.todo.iter().find(|k| active[k.2]).cloned()?
-            } else {
-                key
+            //
+            // The mask must INTERSECT with the ceiling, not replace it.
+            // Until 2026-08-10 this searched `self.todo.iter()`, the
+            // whole queue, and overwrote the choice made above — with a
+            // mask set, the ceiling had no effect at all and
+            // backtracking could pick a candidate at or above its own
+            // bound. Found in the review of that day.
+            let key = match &self.active {
+                None => key,
+                Some(active) => match ceiling {
+                    None => self.todo.iter().find(|k| active[k.2]).cloned()?,
+                    Some(b) => {
+                        let bound = todo_key(b.rank, &b.refs, 0);
+                        self.todo
+                            .range(bound.clone()..)
+                            .find(|k| !(k.0 == bound.0 && k.1 == bound.1) && active[k.2])
+                            .cloned()?
+                    }
+                },
             };
             self.todo.remove(&key);
             let (rule_ix, refs) = (key.2, (key.1).0.clone());
@@ -934,6 +967,68 @@ mod tests {
                 ms * 1000.0 / n as f64
             );
         }
+    }
+
+    /// The runtime mask must INTERSECT with the rank ceiling, not
+    /// replace it.
+    ///
+    /// Two rules over the same match space. With a ceiling at the
+    /// high-ranked one and both rules active, only the low-ranked one
+    /// may fire. Until 2026-08-10 the mask branch searched the whole
+    /// queue and handed back the high-ranked candidate, so the ceiling
+    /// was silently void whenever `active` was set — exactly the
+    /// combination backtracking needs.
+    #[test]
+    fn mask_and_ceiling_intersect() {
+        let (mut g, vs) = seed(1);
+        let file: RuleFile = serde_json::from_value(serde_json::json!({
+            "format": 3,
+            "name": "mask_and_ceiling",
+            "rules": [
+                variant_rule("Low", 10, "CorrLow"),
+                variant_rule("High", 900, "CorrHigh"),
+            ]
+        }))
+        .expect("Regeldatei parst");
+        let lowered = crate::rules::load_file(&file, &mut g).expect("laedt");
+        let rules: Vec<DirectedRule> = lowered.into_iter().step_by(2).collect();
+
+        let mut e = Engine::new(&rules);
+        e.active = Some(vec![true, true]);
+        e.seed(&g, &vs);
+
+        // Schranke beim hochrangigen Kandidaten: nur der niedrige darf
+        // gewaehlt werden.
+        let bound = {
+            let high = e
+                .todo
+                .iter()
+                .find(|k| k.2 == 1)
+                .expect("der hochrangige steht in der Queue")
+                .clone();
+            SelectionBound {
+                rank: (bound_rank(&high)),
+                refs: (bound_refs(&high)),
+            }
+        };
+        assert!(e.step_with_limit(&mut g, &vs, Some(&bound)).is_some());
+        assert_eq!(
+            e.cascade.len(),
+            1,
+            "genau eine Anwendung unterhalb der Schranke"
+        );
+        assert_eq!(
+            e.rules[e.cascade[0].rule_ix].name, "Low\u{2192}",
+            "die Schranke muss den hochrangigen ausschliessen, auch mit gesetzter Maske"
+        );
+    }
+
+    fn bound_rank(k: &TodoKey) -> u64 {
+        k.0 .0
+    }
+
+    fn bound_refs(k: &TodoKey) -> Bindings {
+        k.1 .0.clone()
     }
 
     #[test]

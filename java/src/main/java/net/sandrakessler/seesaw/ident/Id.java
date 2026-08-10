@@ -7,7 +7,12 @@ import java.util.Arrays;
 public final class Id implements Comparable<Id> {
     public final byte[] b; // 32
 
-    public Id(byte[] b) { this.b = b; }
+    public Id(byte[] b) {
+        if (b.length != 32) {
+            throw new IllegalArgumentException("Id braucht 32 Byte, bekam " + b.length);
+        }
+        this.b = b;
+    }
 
     public static Id fromHex(String s) {
         byte[] out = new byte[32];
