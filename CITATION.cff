@@ -1,0 +1,32 @@
+cff-version: 1.2.0
+title: seesaw-tgg
+message: >-
+  If you use this software, please cite both the software and the
+  paper it implements.
+type: software
+authors:
+  - given-names: Sandra Theresa
+    family-names: Keßler
+    email: mail@sandra-kessler.net
+repository-code: https://github.com/zero-objects/seesaw
+license: Apache-2.0
+version: 2.0.2
+abstract: >-
+  A bidirectional graph transformation engine for Triple Graph
+  Grammars with a declarative, purely positive rule format.
+  Identity is structural, connections are anonymous, and the
+  cascade is delta-local in both directions.
+preferred-citation:
+  type: article
+  title: >-
+    seesaw: Delta-extended Triple Graph Grammars with Constructive
+    Termination, Irredundant Consolidation, and Non-destructive
+    History
+  authors:
+    - given-names: Sandra Theresa
+      family-names: Keßler
+      email: mail@sandra-kessler.net
+    - given-names: Thomas
+      family-names: Maier
+  doi: 10.5281/zenodo.21954055
+  year: 2026

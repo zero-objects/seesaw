@@ -3,6 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/seesaw-tgg.svg)](https://crates.io/crates/seesaw-tgg)
 [![docs.rs](https://docs.rs/seesaw-tgg/badge.svg)](https://docs.rs/seesaw-tgg)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21954055.svg)](https://doi.org/10.5281/zenodo.21954055)
 
 **Bidirectional graph transformation with a declarative rule format.**
 
@@ -117,6 +118,29 @@ Two pages, written for this version:
   fit. From rule file through validation and lowering to the engine,
   how identity is derived, what the lifecycle states mean.
 
+## Paper and proofs
+
+The engine implements a published design. The paper states the
+formal core, the termination and consolidation results, and the
+measurements:
+
+> Sandra Theresa Keßler and Thomas Maier. *seesaw: Delta-extended
+> Triple Graph Grammars with Constructive Termination, Irredundant
+> Consolidation, and Non-destructive History.*
+> [10.5281/zenodo.21954055](https://doi.org/10.5281/zenodo.21954055)
+
+**[proofs/](proofs/)** holds the Lean 4 development: 23 verification
+obligations, machine-checked, no `sorry`. Seventeen use no
+project-specific assumption; six rest on one of three named interface
+idealisations, each isolated in its own axiom cluster. It builds
+against Lean-Core alone, without Mathlib, in under a second:
+
+```sh
+cd proofs && lake build
+```
+
+`proofs/README.md` maps each obligation to its theorem and file.
+
 ## Modules
 
 | module | what lives there |
@@ -139,8 +163,12 @@ against `1.0.1`.
 
 `2.0.1` fixes three defects found in a review of that release, one of
 them in the identity encoding. **Every identity changes between 2.0.0
-and 2.0.1**, so persisted `GhostId` values do not carry across. Use
-`2.0.1`.
+and 2.0.1**, so persisted `GhostId` values do not carry across.
+
+`2.0.2` derives the direction of a cascade from the incoming delta
+instead of a manual switch, so a source-side change activates only
+forward rules and a target-side change only backward ones. Identities
+are unchanged from `2.0.1`. Use `2.0.2`.
 
 The engine is covered by unit, integration and property tests,
 including reproductions of published research cases (FASE 2019, JOT
