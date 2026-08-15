@@ -19,6 +19,22 @@
         ],
         [
           {
+            "new": 3
+          },
+          {
+            "matched": 2
+          }
+        ],
+        [
+          {
+            "new": 3
+          },
+          {
+            "new": 2
+          }
+        ],
+        [
+          {
             "matched": 0
           },
           {
@@ -75,13 +91,21 @@
             "new": 1
           },
           "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "matched": 2
+          },
+          "typ": "CorrClass_name"
         }
       ],
+      "direction": "forward",
       "input_types": [
-        "Class",
-        "CorrClass",
-        "Model",
-        "name"
+        "Class"
       ],
       "name": "R_Class→",
       "pattern_links": [
@@ -127,6 +151,22 @@
           },
           {
             "new": 0
+          }
+        ],
+        [
+          {
+            "new": 3
+          },
+          {
+            "matched": 2
+          }
+        ],
+        [
+          {
+            "new": 3
+          },
+          {
+            "new": 2
           }
         ],
         [
@@ -187,13 +227,21 @@
             "new": 1
           },
           "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "matched": 2
+          },
+          "typ": "CorrClass_name"
         }
       ],
+      "direction": "backward",
       "input_types": [
-        "CorrClass",
-        "JavaClass",
-        "Model",
-        "name"
+        "JavaClass"
       ],
       "name": "R_Class←",
       "pattern_links": [

@@ -21,7 +21,7 @@
 
 mod common;
 
-use seesaw_tgg::engine::Engine;
+use seesaw_tgg::engine::{DeltaDomain, Engine};
 use seesaw_tgg::graph::{Graph, ValueStore};
 use seesaw_tgg::ident::Status;
 use seesaw_tgg::plan::DirectedRule;
@@ -127,6 +127,7 @@ impl World {
         w.vs.insert(cn, "C");
         w.vs.insert(f1n, "F1");
         w.vs.insert(f2n, "F2");
+        w.engine.admit_delta(&[DeltaDomain::Source]);
         w
     }
 
@@ -207,7 +208,7 @@ impl World {
     fn remove_node(&mut self, id: Id) {
         self.g.set_node_status(&id, Status::Tombstone);
         self.engine.element_removed(&id);
-        self.engine.retract_for(&mut self.g, &id);
+        self.engine.element_deleted(&mut self.g, &id);
     }
 
     fn annotate(&mut self, node: Id, note: &str) {
@@ -244,6 +245,7 @@ fn emptying_does_not_collapse_to_trivial_fixpoint() {
     // manuelle Ziel-Ergänzung an der Table — muss überleben.
     w.annotate(table, "kept");
 
+    w.engine.admit_delta(&[DeltaDomain::Source]);
     w.remove_node(w.f1);
     w.remove_node(w.f2);
     w.sync();
@@ -280,6 +282,7 @@ fn emptying_does_not_collapse_to_trivial_fixpoint() {
 fn deleting_the_class_itself_does_remove_target() {
     let mut w = World::new();
     w.sync();
+    w.engine.admit_delta(&[DeltaDomain::Source]);
     w.remove_node(w.f1);
     w.remove_node(w.f2);
     w.remove_node(w.c); // jetzt explizit die Class löschen

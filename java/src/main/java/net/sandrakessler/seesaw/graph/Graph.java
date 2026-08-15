@@ -88,6 +88,17 @@ public final class Graph {
     }
 
     /** Corr-Knoten (Match-Digest-Identität, Spec §1.4). */
+    /**
+     * Markiert einen vorhandenen Knoten als Korrespondenz. Getrennt vom
+     * Anlegen, weil eine Korrespondenz im kanonischen Regelformat ueber
+     * dieselben Wege entsteht wie jeder andere Knoten -- die Markierung
+     * darf die Identitaet nicht beruehren.
+     */
+    public void markCorr(Id id) {
+        Node n = node(id);
+        if (n != null) n.isCorr = true;
+    }
+
     public Id addCorr(Id anchor, String typName, Id[] refs) {
         Id id = Ident.identCorr(anchor, typName, refs);
         insertNode(new Node(id, intern(typName), St.GHOST, null, null));
@@ -242,8 +253,13 @@ public final class Graph {
         for (Slot s : map.values()) {
             Node n = s.node;
             if (n == null || n.status == St.TOMBSTONE) continue;
-            out.insertNode(new Node(n.id, n.typ, St.SOLID,
-                    n.derivedSource, n.derivedTransform, n.konstIx));
+            Node m = new Node(n.id, n.typ, St.SOLID,
+                    n.derivedSource, n.derivedTransform, n.konstIx);
+            // Die Korrespondenz-Eigenschaft ueberlebt die
+            // Materialisierung: das Loeschen laeuft an ihr entlang, und
+            // ein materialisiertes Erzeugnis bleibt zurueckziehbar.
+            m.isCorr = n.isCorr;
+            out.insertNode(m);
         }
         for (Slot s : map.values()) {
             Conn c = s.connection;

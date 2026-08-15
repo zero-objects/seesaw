@@ -8,7 +8,9 @@
 //! `Resolved`-Ergebnis, nicht mehr einem separaten Parameter (siehe
 //! `rules::validate::Resolved::chains`).
 
-use seesaw_tgg::engine::{Engine, Termination};
+use std::collections::BTreeSet;
+
+use seesaw_tgg::engine::{DeltaDomain, Engine, Termination};
 use seesaw_tgg::graph::{Graph, ValueStore};
 use seesaw_tgg::ident::{GhostId, Status};
 use seesaw_tgg::plan::DirectedRule;
@@ -145,6 +147,31 @@ fn cascade_state(g: &Graph, vs: &ValueStore) -> serde_json::Value {
     serde_json::json!({ "alive": nodes.len(), "nodes": nodes })
 }
 
+/// Vollständige operationelle Folge, nicht nur Anzahl oder Endzustand.
+/// Damit wird eine Abweichung der Kandidatenauswahl zwischen Rust und
+/// Java unmittelbar sichtbar.
+fn cascade_trace(engine: &Engine<'_>) -> serde_json::Value {
+    serde_json::Value::Array(
+        engine
+            .cascade
+            .iter()
+            .map(|entry| {
+                serde_json::json!({
+                    "rule": engine.rules[entry.rule_ix].name,
+                    "rank": entry.rank,
+                    "refs": entry.refs.iter().map(GhostId::hex).collect::<Vec<_>>(),
+                    "created": entry.created.iter().map(GhostId::hex).collect::<Vec<_>>(),
+                    "created_edges": entry
+                        .created_edges
+                        .iter()
+                        .map(GhostId::hex)
+                        .collect::<Vec<_>>(),
+                })
+            })
+            .collect(),
+    )
+}
+
 /// Faehrt die Fixture und liefert den Endzustand.
 fn run_min_cascade() -> serde_json::Value {
     let file = RuleFile::from_json(MIN).expect("parst");
@@ -158,8 +185,12 @@ fn run_min_cascade() -> serde_json::Value {
     let mut vs = ValueStore::default();
     vs.insert(cname, "Person");
     let rules: &'static [DirectedRule] = Box::leak(lowered.into_boxed_slice());
-    Engine::new(rules).run(&mut g, &vs, 1000);
-    cascade_state(&g, &vs)
+    let mut engine = Engine::new(rules);
+    engine.admit_delta(&[DeltaDomain::Source]);
+    engine.run(&mut g, &vs, 1000);
+    let mut state = cascade_state(&g, &vs);
+    state["cascade"] = cascade_trace(&engine);
+    state
 }
 
 #[test]
@@ -186,13 +217,21 @@ fn kaskaden_endzustand_ist_aktuell() {
     );
 }
 
-/// MESSUNG (2026-08-10): endet ein Delta nach einer Materialisierung
-/// noch in einem Tombstone?
+/// Ein materialisiertes Erzeugnis wird zurückgezogen, ein
+/// Baseline-Element nicht.
 ///
-/// Eine Retraktion endet im Tombstone. Die Frage ist nur, ob sie einen
-/// setzt, wenn das Erzeugnis zwischenzeitlich materialisiert wurde.
+/// Beide Hälften zählen. Die erste ist der Fix vom 2026-08-10: bis
+/// dahin prüfte `retract_match` auf `Status::Ghost`, also blieb ein
+/// gefaltetes Erzeugnis (`Solid`) stehen und dasselbe Delta setzte
+/// keinen Tombstone. Die zweite hält fest, dass der Fix nicht zu viel
+/// zurückzieht: was der Host selbst angelegt hat, steht in keiner
+/// Produktmenge und bleibt unberührt. Genau das ist die Aussage, die
+/// die Kaskaden-Isolation schützen soll.
+///
+/// Knoten UND Kanten, weil der Fix beide betrifft und Kanten vorher
+/// von niemandem gemessen wurden.
 #[test]
-fn retraktion_nach_materialisierung() {
+fn materialisiertes_erzeugnis_wird_zurueckgezogen() {
     for materialisieren in [false, true] {
         let file = RuleFile::from_json(MIN).expect("parst");
         let mut g = Graph::default();
@@ -208,29 +247,62 @@ fn retraktion_nach_materialisierung() {
         let mut e = Engine::new(rules);
         e.run(&mut g, &vs, 1000);
 
+        // Das Erzeugnis der Kaskade und die Kante, die zu ihm führt.
         let jt = g.types.lookup("JavaClass").expect("JavaClass existiert");
         let jcls = g.nodes_of_type(jt).next().expect("eine JavaClass").id;
-        let vor = g.node(&jcls).expect("da").status;
+        let corr_t = g.types.lookup("CorrClass").expect("CorrClass existiert");
+        let corr = g.nodes_of_type(corr_t).next().expect("eine Corr").id;
+        let kante = g
+            .parts(&corr)
+            .find(|p| p.outgoing && p.other == jcls)
+            .expect("Corr zeigt auf die JavaClass")
+            .connection;
 
         if materialisieren {
             g = g.materialize();
+            assert_eq!(
+                g.node(&jcls).expect("ueberlebt").status,
+                Status::Solid,
+                "die Materialisierung macht das Erzeugnis solid"
+            );
+            assert_eq!(
+                g.connection(&kante).expect("ueberlebt").status,
+                Status::Solid,
+                "die Materialisierung macht auch die Kante solid"
+            );
         }
-        let nach_mat = g.node(&jcls).expect("da").status;
 
-        // Delta: die Quelle faellt weg.
+        // Delta: die Quelle fällt weg.
         g.set_node_status(&cls, Status::Tombstone);
         e.element_removed(&cls);
-        e.retract_for(&mut g, &cls);
+        e.element_deleted(&mut g, &cls);
         e.consolidate(&mut g);
 
-        let nach_delta = g.node(&jcls).map(|n| n.status);
-        eprintln!(
-            "materialisiert={materialisieren}: vor={vor:?} nach_mat={nach_mat:?} \
-             nach_delta={nach_delta:?}"
+        assert_eq!(
+            g.node(&jcls).map(|n| n.status),
+            Some(Status::Tombstone),
+            "materialisiert={materialisieren}: das Erzeugnis muss zurückgezogen werden"
+        );
+        assert_eq!(
+            g.connection(&kante).map(|c| c.status),
+            Some(Status::Tombstone),
+            "materialisiert={materialisieren}: die erzeugte Kante muss mitfallen"
+        );
+
+        // Die Gegenrichtung: Baseline-Elemente stehen in keiner
+        // Produktmenge und bleiben unberührt.
+        assert_eq!(
+            g.node(&model).map(|n| n.status),
+            Some(Status::Solid),
+            "materialisiert={materialisieren}: der Baseline-Anker bleibt unberührt"
+        );
+        assert_eq!(
+            g.node(&cname).map(|n| n.status),
+            Some(Status::Solid),
+            "materialisiert={materialisieren}: das Baseline-Blatt bleibt unberührt"
         );
     }
 }
-
 /// Erzeuger des Java-Golden für die Identitäts-Ableitung.
 ///
 /// Die sechs Ableitungen mit festen Eingaben. Bis 2026-08-10 standen
@@ -263,4 +335,198 @@ fn schreibt_ident_golden() {
     )
     .expect("Schreibversuch");
     eprintln!("Ident-Golden nach {path} geschrieben");
+}
+
+/// **Löschen entlang der Korrespondenz: der Host löscht das Erzeugnis.**
+///
+/// Die Gegenrichtung zu `materialisiertes_erzeugnis_wird_zurueckgezogen`.
+/// Dort fällt die Quelle und das Erzeugnis muss mitfallen; hier fällt das
+/// Erzeugnis und die Quelle muss mitfallen.
+///
+/// Entscheidung Sandra 2026-08-11: wer die erzeugte Java-Klasse löscht,
+/// löscht die UML-Klasse. Eine Korrespondenz, die eine Übersetzung
+/// bezeugt, deren Ergebnis nicht mehr existiert, ist kein zulässiger
+/// Ruhezustand. Wer das Erzeugnis behalten will, nimmt die Löschung
+/// zurück (Undo), statt dass der Sync einen Sonderfall kennt.
+#[test]
+fn geloeschtes_erzeugnis_reisst_die_quelle_mit() {
+    for materialisieren in [false, true] {
+        let file = RuleFile::from_json(MIN).expect("parst");
+        let mut g = Graph::default();
+        let lowered = seesaw_tgg::rules::load_file(&file, &mut g).expect("laedt");
+        let model = g.add_baseline("m", "Model");
+        let cls = g.add_baseline("m/Person", "Class");
+        let cname = g.add_baseline("m/Person/name", "name");
+        g.connect(model, cls, Status::Solid);
+        g.connect(cls, cname, Status::Solid);
+        let mut vs = ValueStore::default();
+        vs.insert(cname, "Person");
+        let rules: &'static [DirectedRule] = Box::leak(lowered.into_boxed_slice());
+        let mut e = Engine::new(rules);
+        e.run(&mut g, &vs, 1000);
+
+        let jt = g.types.lookup("JavaClass").expect("JavaClass existiert");
+        let jcls = g.nodes_of_type(jt).next().expect("eine JavaClass").id;
+        let corr_t = g.types.lookup("CorrClass").expect("CorrClass existiert");
+        let corr = g.nodes_of_type(corr_t).next().expect("eine Corr").id;
+
+        if materialisieren {
+            g = g.materialize();
+        }
+        let fall = format!("materialisiert={materialisieren}");
+
+        // Delta: der Host löscht das ERZEUGNIS.
+        g.set_node_status(&jcls, Status::Tombstone);
+        e.element_removed(&jcls);
+        e.element_deleted(&mut g, &jcls);
+        e.consolidate(&mut g);
+
+        assert_eq!(
+            g.node(&corr).map(|n| n.status),
+            Some(Status::Tombstone),
+            "{fall}: die Korrespondenz darf keine Uebersetzung mehr bezeugen"
+        );
+        assert_eq!(
+            g.node(&cls).map(|n| n.status),
+            Some(Status::Tombstone),
+            "{fall}: die Quelle faellt entlang der Korrespondenz mit"
+        );
+        // Und die Abgrenzung: was an keiner gefallenen Korrespondenz
+        // haengt, bleibt. Der Baseline-Anker traegt keine.
+        assert_eq!(
+            g.node(&model).map(|n| n.status),
+            Some(Status::Solid),
+            "{fall}: der Baseline-Anker bleibt unberuehrt"
+        );
+    }
+}
+
+/// **Der Zweck der ganzen Reihe, als Test:** der Host löscht ein
+/// erzeugtes Blatt, und die Löschung trägt auf die Quellseite.
+///
+/// Das erzeugte Namensblatt der Java-Klasse ist kein Endpunkt der
+/// Klassen-Korrespondenz. Es steht in einer EIGENEN Korrespondenz, der
+/// Attribut-Korrespondenz zwischen den beiden Namensblättern (Sandra
+/// 2026-08-12). Über die trägt die Löschung.
+#[test]
+fn geloeschtes_erzeugtes_blatt_traegt_zur_quelle() {
+    let file = RuleFile::from_json(MIN).expect("parst");
+    let mut g = Graph::default();
+    let lowered = seesaw_tgg::rules::load_file(&file, &mut g).expect("laedt");
+    let model = g.add_baseline("m", "Model");
+    let cls = g.add_baseline("m/Person", "Class");
+    let cname = g.add_baseline("m/Person/name", "name");
+    g.connect(model, cls, Status::Solid);
+    g.connect(cls, cname, Status::Solid);
+    let mut vs = ValueStore::default();
+    vs.insert(cname, "Person");
+    let rules: &'static [DirectedRule] = Box::leak(lowered.into_boxed_slice());
+    let mut e = Engine::new(rules);
+    e.run(&mut g, &vs, 1000);
+
+    let jt = g.types.lookup("JavaClass").expect("JavaClass existiert");
+    let jcls = g.nodes_of_type(jt).next().expect("eine JavaClass").id;
+    let jname = g
+        .child_leaf_of_type(&jcls, "name")
+        .expect("die JavaClass hat ein erzeugtes Namensblatt");
+    let at = g
+        .types
+        .lookup("CorrClass_name")
+        .expect("die Attribut-Korrespondenz existiert");
+    let acorr = g
+        .nodes_of_type(at)
+        .next()
+        .expect("eine Attribut-Korrespondenz")
+        .id;
+
+    g.set_node_status(&jname, Status::Tombstone);
+    e.element_removed(&jname);
+    e.element_deleted(&mut g, &jname);
+    e.consolidate(&mut g);
+
+    assert_eq!(
+        g.node(&acorr).map(|n| n.status),
+        Some(Status::Tombstone),
+        "die Attribut-Korrespondenz darf kein fehlendes Blatt bezeugen"
+    );
+    assert_eq!(
+        g.node(&cname).map(|n| n.status),
+        Some(Status::Tombstone),
+        "das Quellblatt faellt entlang der Attribut-Korrespondenz mit"
+    );
+    assert_eq!(
+        g.node(&model).map(|n| n.status),
+        Some(Status::Solid),
+        "der Baseline-Anker bleibt unberuehrt"
+    );
+}
+
+const DYN: &str = include_str!("fixtures/rules/uml_java_dyn.json");
+
+/// **Der dynamische Fall: `left_type`/`right_type` statt Musterposition.**
+///
+/// Dieselbe Aussage wie im statischen Fall, nur wird die Quelle erst
+/// beim Anwenden über `child_leaf_of_type` gefunden. Die
+/// Attribut-Korrespondenz entsteht deshalb in `apply_creation` statt im
+/// Lowering — anderer Ort, gleiche Sache. Ohne diesen Test wäre der
+/// Zweig unbelegt: dynamische Constraints kommen sonst nur in den
+/// dry-cleaner-Regelsätzen vor, deren Roundtrip `#[ignore]` trägt.
+#[test]
+fn dynamische_bindung_erzeugt_blatt_korrespondenz() {
+    let file = RuleFile::from_json(DYN).expect("parst");
+    let mut g = Graph::default();
+    let lowered = seesaw_tgg::rules::load_file(&file, &mut g).expect("laedt");
+    let model = g.add_baseline("m", "Model");
+    let cls = g.add_baseline("m/Person", "Class");
+    let cname = g.add_baseline("m/Person/name", "name");
+    g.connect(model, cls, Status::Solid);
+    g.connect(cls, cname, Status::Solid);
+    let mut vs = ValueStore::default();
+    vs.insert(cname, "Person");
+    let rules: &'static [DirectedRule] = Box::leak(lowered.into_boxed_slice());
+    let mut e = Engine::new(rules);
+    e.run(&mut g, &vs, 1000);
+
+    let jt = g.types.lookup("JavaClass").expect("JavaClass existiert");
+    let jcls = g.nodes_of_type(jt).next().expect("eine JavaClass").id;
+    let jname = g
+        .child_leaf_of_type(&jcls, "name")
+        .expect("die JavaClass hat ein erzeugtes Namensblatt");
+    assert_eq!(
+        g.resolve_value(&jname, &vs).as_deref(),
+        Some("Person"),
+        "das dynamisch gebundene Blatt traegt den Quellwert"
+    );
+
+    // Die Blatt-Korrespondenz existiert und haengt an BEIDEN Blättern.
+    let at = g
+        .types
+        .lookup("CorrClass_name")
+        .expect("die Attribut-Korrespondenz des dynamischen Falls");
+    let acorr = g
+        .nodes_of_type(at)
+        .next()
+        .expect("eine Attribut-Korrespondenz")
+        .id;
+    let enden: BTreeSet<GhostId> = g.parts(&acorr).map(|p| p.other).collect();
+    assert!(
+        enden.contains(&cname) && enden.contains(&jname),
+        "die Attribut-Korrespondenz haelt Quell- und Zielblatt, hat aber {enden:?}"
+    );
+
+    // Und sie trägt: das erzeugte Blatt löschen holt das Quellblatt mit.
+    g.set_node_status(&jname, Status::Tombstone);
+    e.element_removed(&jname);
+    e.element_deleted(&mut g, &jname);
+    e.consolidate(&mut g);
+    assert_eq!(
+        g.node(&cname).map(|n| n.status),
+        Some(Status::Tombstone),
+        "das Quellblatt faellt entlang der dynamischen Attribut-Korrespondenz"
+    );
+    assert_eq!(
+        g.node(&model).map(|n| n.status),
+        Some(Status::Solid),
+        "der Baseline-Anker bleibt unberuehrt"
+    );
 }

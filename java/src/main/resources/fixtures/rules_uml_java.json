@@ -1,0 +1,1932 @@
+{
+  "attr_types": [
+    "direction",
+    "index",
+    "isStatic",
+    "name",
+    "param",
+    "returnType",
+    "returns",
+    "type"
+  ],
+  "corr_types": [
+    "CorrAttr",
+    "CorrClass",
+    "CorrGetter",
+    "CorrMethod",
+    "CorrParam",
+    "CorrSetter"
+  ],
+  "edge_combos": [
+    [
+      "Class",
+      "attributes",
+      "Attribute",
+      "direct"
+    ],
+    [
+      "Class",
+      "ownedOperations",
+      "Operation",
+      "direct"
+    ],
+    [
+      "JavaClass",
+      "hasField",
+      "JavaField",
+      "direct"
+    ],
+    [
+      "JavaClass",
+      "hasMethod",
+      "JavaMethod",
+      "direct"
+    ],
+    [
+      "JavaField",
+      "hasGetter",
+      "Getter",
+      "direct"
+    ],
+    [
+      "JavaField",
+      "hasSetter",
+      "Setter",
+      "direct"
+    ],
+    [
+      "JavaMethod",
+      "hasParameter",
+      "JavaParam",
+      "direct"
+    ],
+    [
+      "Model",
+      "classes",
+      "Class",
+      "direct"
+    ],
+    [
+      "Model",
+      "javaClasses",
+      "JavaClass",
+      "direct"
+    ],
+    [
+      "Operation",
+      "ownedParameters",
+      "Parameter",
+      "direct"
+    ]
+  ],
+  "rules": [
+    {
+      "corr_recognition": [
+        [
+          "CorrClass",
+          1,
+          "JavaClass"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "m": 0
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "CorrClass"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "JavaClass"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "name",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "name"
+        }
+      ],
+      "input_types": [
+        "Class"
+      ],
+      "nacs": [],
+      "name": "R_Class→",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "Model",
+          "value": null
+        },
+        {
+          "typ": "Class",
+          "value": null
+        }
+      ],
+      "rank": 40,
+      "direction": "forward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrClass",
+          1,
+          "Class"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "m": 0
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "CorrClass"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "Class"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "name",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "name"
+        }
+      ],
+      "input_types": [
+        "JavaClass"
+      ],
+      "nacs": [],
+      "name": "R_Class←",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "Model",
+          "value": null
+        },
+        {
+          "typ": "JavaClass",
+          "value": null
+        }
+      ],
+      "rank": 40,
+      "direction": "backward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrAttr",
+          1,
+          "JavaField"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 3
+          }
+        ],
+        [
+          {
+            "m": 3
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "CorrAttr"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "JavaField"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "name",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "type",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "type"
+        }
+      ],
+      "input_types": [
+        "Attribute"
+      ],
+      "nacs": [],
+      "name": "R_Attr→",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 0
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 3
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "Class",
+          "value": null
+        },
+        {
+          "typ": "Attribute",
+          "value": null
+        },
+        {
+          "typ": "CorrClass",
+          "value": null
+        },
+        {
+          "typ": "JavaClass",
+          "value": null
+        }
+      ],
+      "rank": 30,
+      "direction": "forward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrAttr",
+          1,
+          "Attribute"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 3
+          }
+        ],
+        [
+          {
+            "m": 3
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "CorrAttr"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "Attribute"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "name",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "type",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "type"
+        }
+      ],
+      "input_types": [
+        "JavaField"
+      ],
+      "nacs": [],
+      "name": "R_Attr←",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 0
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 3
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "JavaClass",
+          "value": null
+        },
+        {
+          "typ": "JavaField",
+          "value": null
+        },
+        {
+          "typ": "CorrClass",
+          "value": null
+        },
+        {
+          "typ": "Class",
+          "value": null
+        }
+      ],
+      "rank": 30,
+      "direction": "backward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrGetter",
+          1,
+          "Getter"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 3
+          }
+        ],
+        [
+          {
+            "m": 3
+          },
+          {
+            "m": 5
+          }
+        ],
+        [
+          {
+            "m": 5
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "CorrGetter"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "Getter"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "name",
+            "transform": [
+              {
+                "op": "capitalize"
+              },
+              {
+                "op": "prefix",
+                "arg": "get"
+              }
+            ]
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "type",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "returns"
+        }
+      ],
+      "input_types": [
+        "Attribute"
+      ],
+      "nacs": [],
+      "name": "R_Getter→",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 0
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 3
+        },
+        {
+          "context": true,
+          "from": 4,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 4,
+          "to": 5
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "Class",
+          "value": null
+        },
+        {
+          "typ": "Attribute",
+          "value": null
+        },
+        {
+          "typ": "CorrClass",
+          "value": null
+        },
+        {
+          "typ": "JavaClass",
+          "value": null
+        },
+        {
+          "typ": "CorrAttr",
+          "value": null
+        },
+        {
+          "typ": "JavaField",
+          "value": null
+        }
+      ],
+      "rank": 20,
+      "direction": "forward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrGetter",
+          2,
+          "Attribute"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 2
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "m": 6
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "m": 6
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "m": 4
+          },
+          {
+            "m": 6
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "m": 6
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": {
+            "leaf": 6,
+            "transform": []
+          },
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 2
+          },
+          "typ": "CorrGetter"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 2,
+            "attr": "name",
+            "transform": [
+              {
+                "op": "strip_prefix",
+                "arg": "get"
+              },
+              {
+                "op": "decapitalize"
+              }
+            ]
+          },
+          "konst": null,
+          "parent": {
+            "m": 6
+          },
+          "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 2,
+            "attr": "returns",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "m": 6
+          },
+          "typ": "type"
+        }
+      ],
+      "input_types": [
+        "Getter"
+      ],
+      "nacs": [],
+      "name": "R_Getter←",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": false,
+          "from": 1,
+          "to": 2
+        },
+        {
+          "context": true,
+          "from": 3,
+          "to": 0
+        },
+        {
+          "context": true,
+          "from": 3,
+          "to": 4
+        },
+        {
+          "context": true,
+          "from": 5,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 5,
+          "to": 6
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "JavaClass",
+          "value": null
+        },
+        {
+          "typ": "JavaField",
+          "value": null
+        },
+        {
+          "typ": "Getter",
+          "value": null
+        },
+        {
+          "typ": "CorrClass",
+          "value": null
+        },
+        {
+          "typ": "Class",
+          "value": null
+        },
+        {
+          "typ": "CorrAttr",
+          "value": null
+        },
+        {
+          "typ": "Attribute",
+          "value": null
+        }
+      ],
+      "rank": 20,
+      "direction": "backward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrSetter",
+          1,
+          "Setter"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 3
+          }
+        ],
+        [
+          {
+            "m": 3
+          },
+          {
+            "m": 5
+          }
+        ],
+        [
+          {
+            "m": 5
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "CorrSetter"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "Setter"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "name",
+            "transform": [
+              {
+                "op": "capitalize"
+              },
+              {
+                "op": "prefix",
+                "arg": "set"
+              }
+            ]
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "type",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "param"
+        }
+      ],
+      "input_types": [
+        "Attribute"
+      ],
+      "nacs": [],
+      "name": "R_Setter→",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 0
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 3
+        },
+        {
+          "context": true,
+          "from": 4,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 4,
+          "to": 5
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "Class",
+          "value": null
+        },
+        {
+          "typ": "Attribute",
+          "value": null
+        },
+        {
+          "typ": "CorrClass",
+          "value": null
+        },
+        {
+          "typ": "JavaClass",
+          "value": null
+        },
+        {
+          "typ": "CorrAttr",
+          "value": null
+        },
+        {
+          "typ": "JavaField",
+          "value": null
+        }
+      ],
+      "rank": 10,
+      "direction": "forward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrSetter",
+          2,
+          "Attribute"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 2
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "m": 6
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "m": 6
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "m": 4
+          },
+          {
+            "m": 6
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "m": 6
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": {
+            "leaf": 6,
+            "transform": []
+          },
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 2
+          },
+          "typ": "CorrSetter"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 2,
+            "attr": "name",
+            "transform": [
+              {
+                "op": "strip_prefix",
+                "arg": "set"
+              },
+              {
+                "op": "decapitalize"
+              }
+            ]
+          },
+          "konst": null,
+          "parent": {
+            "m": 6
+          },
+          "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 2,
+            "attr": "param",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "m": 6
+          },
+          "typ": "type"
+        }
+      ],
+      "input_types": [
+        "Setter"
+      ],
+      "nacs": [],
+      "name": "R_Setter←",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": false,
+          "from": 1,
+          "to": 2
+        },
+        {
+          "context": true,
+          "from": 3,
+          "to": 0
+        },
+        {
+          "context": true,
+          "from": 3,
+          "to": 4
+        },
+        {
+          "context": true,
+          "from": 5,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 5,
+          "to": 6
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "JavaClass",
+          "value": null
+        },
+        {
+          "typ": "JavaField",
+          "value": null
+        },
+        {
+          "typ": "Setter",
+          "value": null
+        },
+        {
+          "typ": "CorrClass",
+          "value": null
+        },
+        {
+          "typ": "Class",
+          "value": null
+        },
+        {
+          "typ": "CorrAttr",
+          "value": null
+        },
+        {
+          "typ": "Attribute",
+          "value": null
+        }
+      ],
+      "rank": 10,
+      "direction": "backward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrMethod",
+          1,
+          "JavaMethod"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 3
+          }
+        ],
+        [
+          {
+            "m": 3
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 4
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "CorrMethod"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "JavaMethod"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "name",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "returnType",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "returnType"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "isStatic",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "isStatic"
+        }
+      ],
+      "input_types": [
+        "Operation"
+      ],
+      "nacs": [],
+      "name": "R_Method→",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 0
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 3
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "Class",
+          "value": null
+        },
+        {
+          "typ": "Operation",
+          "value": null
+        },
+        {
+          "typ": "CorrClass",
+          "value": null
+        },
+        {
+          "typ": "JavaClass",
+          "value": null
+        }
+      ],
+      "rank": 25,
+      "direction": "forward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrMethod",
+          1,
+          "Operation"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 3
+          }
+        ],
+        [
+          {
+            "m": 3
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 4
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "CorrMethod"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "Operation"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "name",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "returnType",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "returnType"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "isStatic",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "isStatic"
+        }
+      ],
+      "input_types": [
+        "JavaMethod"
+      ],
+      "nacs": [],
+      "name": "R_Method←",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 0
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 3
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "JavaClass",
+          "value": null
+        },
+        {
+          "typ": "JavaMethod",
+          "value": null
+        },
+        {
+          "typ": "CorrClass",
+          "value": null
+        },
+        {
+          "typ": "Class",
+          "value": null
+        }
+      ],
+      "rank": 25,
+      "direction": "backward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrParam",
+          1,
+          "JavaParam"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 3
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 4
+          }
+        ],
+        [
+          {
+            "m": 3
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "CorrParam"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "JavaParam"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "name",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "type",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "type"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "index",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "index"
+        }
+      ],
+      "input_types": [
+        "Parameter"
+      ],
+      "nacs": [],
+      "name": "R_Param→",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 0
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 3
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "Operation",
+          "value": null
+        },
+        {
+          "typ": "Parameter",
+          "value": null
+        },
+        {
+          "typ": "CorrMethod",
+          "value": null
+        },
+        {
+          "typ": "JavaMethod",
+          "value": null
+        }
+      ],
+      "rank": 15,
+      "direction": "forward"
+    },
+    {
+      "corr_recognition": [
+        [
+          "CorrParam",
+          1,
+          "Parameter"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 3
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 4
+          }
+        ],
+        [
+          {
+            "m": 3
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "CorrParam"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "Parameter"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "name",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "name"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "type",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "type"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": {
+            "anchor": 1,
+            "attr": "index",
+            "transform": []
+          },
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "index"
+        }
+      ],
+      "input_types": [
+        "JavaParam"
+      ],
+      "nacs": [],
+      "name": "R_Param←",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 0
+        },
+        {
+          "context": true,
+          "from": 2,
+          "to": 3
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "JavaMethod",
+          "value": null
+        },
+        {
+          "typ": "JavaParam",
+          "value": null
+        },
+        {
+          "typ": "CorrMethod",
+          "value": null
+        },
+        {
+          "typ": "Operation",
+          "value": null
+        }
+      ],
+      "rank": 15,
+      "direction": "backward"
+    }
+  ]
+}

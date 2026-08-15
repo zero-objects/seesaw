@@ -5,6 +5,7 @@ import net.sandrakessler.seesaw.graph.Graph;
 import net.sandrakessler.seesaw.ident.Id;
 import net.sandrakessler.seesaw.ident.St;
 import net.sandrakessler.seesaw.plan.Rule;
+import net.sandrakessler.seesaw.session.Fixtures;
 
 import org.junit.jupiter.api.Test;
 
@@ -58,7 +59,7 @@ class LoadEndToEndTest {
 
     @Test
     void regeldateiTreibtEineKaskade() throws Exception {
-        String json = Resources.read("/fixtures/uml_java_min.json").toString();
+        String json = Fixtures.resource("/fixtures/uml_java_min.json").toString();
 
         Graph g = new Graph();
         List<Rule> lowered = Rules.load(json, g);

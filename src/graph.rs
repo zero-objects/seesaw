@@ -81,6 +81,14 @@ pub struct Node {
     /// hash, identity is disambiguated via the generating rule
     /// (see the constant case in the identity derivation).
     pub konst: Option<KonstId>,
+    /// Is this node a correspondence?
+    ///
+    /// A property of the node, not engine bookkeeping: it survives
+    /// `materialize` with the node and is what deletion follows. When a
+    /// correspondence falls, the elements it connects fall with it —
+    /// the correspondence is the carrier, so an attestation of a
+    /// translation whose result is gone is not a legal state at rest.
+    pub is_corr: bool,
 }
 
 /// Interned rule constant (reference, analogous to [`TypeId`]).
@@ -376,6 +384,7 @@ impl Graph {
             status: Status::Ghost,
             derived: None,
             konst: None,
+            is_corr: true,
         });
         id
     }
@@ -421,6 +430,7 @@ impl Graph {
             status: Status::Solid,
             derived: None,
             konst: None,
+            is_corr: false,
         });
         id
     }
@@ -437,6 +447,7 @@ impl Graph {
             status: Status::Ghost,
             derived: None,
             konst: None,
+            is_corr: false,
         });
         id
     }
@@ -470,6 +481,7 @@ impl Graph {
                 transform,
             }),
             konst: None,
+            is_corr: false,
         });
         id
     }
@@ -493,8 +505,20 @@ impl Graph {
             status: Status::Ghost,
             derived: None,
             konst: Some(konst),
+            is_corr: false,
         });
         id
+    }
+
+    /// Mark an existing node as a correspondence. Separate from
+    /// creation because a correspondence is created through the same
+    /// paths as any other node (in the canonical rule format it is a
+    /// node with two endpoints, not a special kind) — the mark must not
+    /// touch identity.
+    pub fn mark_corr(&mut self, id: &GhostId) {
+        if let Some(n) = self.map.get_mut(id).and_then(|s| s.node.as_mut()) {
+            n.is_corr = true;
+        }
     }
 
     fn insert_node(&mut self, node: Node) {

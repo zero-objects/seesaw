@@ -20,7 +20,7 @@ use crate::ident::{GhostId, Status};
 
 use crate::engine::matcher::{find_matches, find_matches_with_fixed, Bindings};
 use crate::graph::{Graph, ValueResolver};
-use crate::plan::{apply_creation, DirectedRule, Ref};
+use crate::plan::{apply_creation, DirectedRule, Ref, RuleDirection};
 
 fn self_node_tt(g: &Graph, id: &GhostId) -> bool {
     g.node(id)
@@ -64,6 +64,33 @@ pub enum Termination {
     Contradiction,
 }
 
+/// Domain in which an incoming host delta originated.
+///
+/// A delta may name both domains (a concurrent/mixed edit). The engine
+/// turns the complete set into one immutable route for the following
+/// realisation wave; products created during that wave cannot change it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeltaDomain {
+    Source,
+    Target,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct WaveDirections {
+    forward: bool,
+    backward: bool,
+}
+
+impl WaveDirections {
+    fn admits(self, direction: RuleDirection) -> bool {
+        match direction {
+            RuleDirection::Forward => self.forward,
+            RuleDirection::Backward => self.backward,
+            RuleDirection::Undirected => true,
+        }
+    }
+}
+
 /// Backtracking bound: the intrinsic selection position (rule rank,
 /// ref sequence) of the undone choice — derivable from every entry, no
 /// state-dependent numbers.
@@ -101,15 +128,51 @@ pub struct Engine<'r> {
     pub saw_contradiction: bool,
     /// (rule_ix, refs) → match store index for todo resolution.
     by_key: crate::hash::FxHashMap<(usize, Bindings), u32>,
+    /// Element → the cascade entries that PRODUCED it. The counterpart
+    /// to `by_element`, which answers which matches CONTAIN an element.
+    ///
+    /// Without it, retraction cannot start from a product: a rule's
+    /// match does not contain what the rule creates, so following
+    /// `by_element` from a deleted product finds nothing, and the
+    /// correspondence built by the same entry is unreachable. Deleting
+    /// a generated element then left a correspondence attesting a
+    /// translation whose result no longer exists (measured 2026-08-11).
+    by_product: crate::hash::FxHashMap<GhostId, Vec<u32>>,
     pub cascade: Vec<Entry>,
     /// Runtime activation (tool configuration, e.g. Benchmarx
     /// decisions): None = all active. Inactive candidates stay in the
     /// todo (a configuration change reactivates them).
     pub active: Option<Vec<bool>>,
+    /// Direction selected by the complete incoming delta for the
+    /// current realisation wave. `None` is the deliberately un-routed
+    /// initial/batch run. This is separate from `active`: tool choices,
+    /// delta direction, and a backtracking ceiling are intersected.
+    wave_directions: Option<WaveDirections>,
     /// TT collection of the retraction: `retract_match` notes here
     /// which nodes/edges it tentatively retracted — `consolidate`
     /// processes ONLY these (O(Δ)), instead of scanning the whole
     /// model.
+    /// Elements the HOST deleted, as opposed to elements the engine
+    /// retracted itself.
+    ///
+    /// The distinction Sandra's delta types draw: a delete acts along
+    /// the correspondences, an add or a change must not. The engine
+    /// cannot read it off the status — a change retracts and re-derives
+    /// through the very same path, and mid-run a product looks equally
+    /// dead either way. It can read it off the CALLER: `retract_for`
+    /// receives an element the host already tombstoned.
+    /// Ist die laufende Welle durch ein DELETE ausgeloest? Kommt von
+    /// der Tuer (`element_deleted` gegen `element_changed`), nicht aus
+    /// einer Statuspruefung. Eigenschaft der Welle, nicht eines
+    /// Elements: dasselbe Element kann heute geloescht und morgen
+    /// geaendert werden.
+    deleting: bool,
+    /// Was in der laufenden Welle GELOESCHT wurde. Gefuellt von
+    /// `element_deleted` und von der Transitivitaet, geleert von der
+    /// Konsolidierung -- die Markierung gehoert der Welle, nicht der
+    /// Identitaet. Als dauerhafte Menge waere sie bei Undo oder einem
+    /// Baseline-Wechsel falsch (Review 2026-08-11, Punkt 3).
+    deleted: BTreeSet<GhostId>,
     pending_tt_nodes: Vec<GhostId>,
     pending_tt_edges: Vec<GhostId>,
 }
@@ -123,9 +186,13 @@ impl<'r> Engine<'r> {
             applied: BTreeSet::new(),
             todo: BTreeSet::new(),
             by_key: Default::default(),
+            by_product: Default::default(),
             saw_contradiction: false,
             cascade: Vec::new(),
             active: None,
+            wave_directions: None,
+            deleting: false,
+            deleted: BTreeSet::new(),
             pending_tt_nodes: Vec::new(),
             pending_tt_edges: Vec::new(),
         }
@@ -133,6 +200,53 @@ impl<'r> Engine<'r> {
 
     pub fn step(&mut self, g: &mut Graph, resolver: &dyn ValueResolver) -> Option<bool> {
         self.step_with_limit(g, resolver, None)
+    }
+
+    /// Admit one complete external delta before invoking its Add,
+    /// Change, and Delete doors. The domain union is fixed for the
+    /// complete retraction/re-derivation/consolidation wave.
+    pub fn admit_delta(&mut self, domains: &[DeltaDomain]) {
+        let mut directions = WaveDirections::default();
+        for domain in domains {
+            match domain {
+                DeltaDomain::Source => directions.forward = true,
+                DeltaDomain::Target => directions.backward = true,
+            }
+        }
+        self.wave_directions = Some(directions);
+    }
+
+    /// Select the un-routed initial/batch semantics explicitly after a
+    /// routed wave. A fresh engine starts in this state already.
+    pub fn admit_initial(&mut self) {
+        self.wave_directions = None;
+    }
+
+    fn admit_delta_types(&mut self, delta_types: &[String]) {
+        let mut directions = WaveDirections::default();
+        for rule in self.rules {
+            if rule
+                .input_types
+                .iter()
+                .any(|t| delta_types.iter().any(|d| d == t))
+            {
+                match rule.direction {
+                    RuleDirection::Forward => directions.forward = true,
+                    RuleDirection::Backward => directions.backward = true,
+                    RuleDirection::Undirected => {}
+                }
+            }
+        }
+        self.wave_directions = Some(directions);
+    }
+
+    fn rule_active(&self, rule_ix: usize) -> bool {
+        self.active
+            .as_ref()
+            .is_none_or(|configured| configured[rule_ix])
+            && self
+                .wave_directions
+                .is_none_or(|directions| directions.admits(self.rules[rule_ix].direction))
     }
 
     fn record(&mut self, rule_ix: usize, refs: Bindings) {
@@ -143,6 +257,30 @@ impl<'r> Engine<'r> {
         let ix = self.matches.len() as u32;
         for id in &refs {
             self.by_element.entry(*id).or_default().push(ix);
+        }
+        // The match's LINKS belong in the registry too, not only its
+        // nodes. A match rests on the edges its pattern requires, so
+        // removing one has to kill it exactly as removing a node does.
+        //
+        // Until now `by_element` held nodes only, and a pure edge delta
+        // (an owner or super change) killed no match at all. That is
+        // why `link_removed` exists as an over-approximation, and why
+        // the ecore2sql ledger cannot express a super change as the
+        // edge delta it is and replaces the whole node instead — which
+        // leaves a leaf owned by two carriers for the duration of the
+        // move. Sandra ruled that state out on 2026-08-12: a delta
+        // changes or deletes, and a temporary multi-ownership makes no
+        // technical sense.
+        for l in &self.rules[rule_ix].pattern.links {
+            // SameValue is a join over two leaf values, not an edge —
+            // there is no connection in the graph to index.
+            if l.kind == crate::engine::matcher::LinkKind::SameValue {
+                continue;
+            }
+            if let (Some(a), Some(b)) = (refs.get(l.from), refs.get(l.to)) {
+                let e = crate::graph::preview_connection_id(a, b);
+                self.by_element.entry(e).or_default().push(ix);
+            }
         }
         self.todo
             .insert(todo_key(self.rules[rule_ix].rank, &refs, rule_ix));
@@ -159,7 +297,9 @@ impl<'r> Engine<'r> {
     /// (add stream) this special path mostly disappears.
     pub fn seed(&mut self, g: &Graph, resolver: &dyn ValueResolver) {
         for ri in 0..self.rules.len() {
-            self.seed_rule(g, resolver, ri);
+            if self.rule_active(ri) {
+                self.seed_rule(g, resolver, ri);
+            }
         }
     }
 
@@ -169,16 +309,14 @@ impl<'r> Engine<'r> {
         }
     }
 
-    /// Δ routing (first-generation parity, rc7): a directed rule is active when the
-    /// delta touches one of its input types — the direction lives in
-    /// the delta, not in a pass switch.
+    /// Compatibility route for hosts that report touched type names.
+    /// The types select a DIRECTION; every rule lowered for that
+    /// direction remains active for the wave, including follow-up rules
+    /// enabled by newly created correspondence context.
     pub fn seed_routed(&mut self, g: &Graph, resolver: &dyn ValueResolver, delta_types: &[String]) {
+        self.admit_delta_types(delta_types);
         for ri in 0..self.rules.len() {
-            if self.rules[ri]
-                .input_types
-                .iter()
-                .any(|t| delta_types.iter().any(|d| d == t))
-            {
+            if self.rule_active(ri) {
                 self.seed_rule(g, resolver, ri);
             }
         }
@@ -203,6 +341,9 @@ impl<'r> Engine<'r> {
     /// Delta-local expansion: anchor new elements (spec §1.6 add).
     fn expand_at(&mut self, g: &Graph, resolver: &dyn ValueResolver, new_nodes: &[GhostId]) {
         for (ri, rule) in self.rules.iter().enumerate() {
+            if !self.rule_active(ri) {
+                continue;
+            }
             for &id in new_nodes {
                 let Some(node) = g.node(&id) else { continue };
                 for (pos, pn) in rule.pattern.nodes.iter().enumerate() {
@@ -227,9 +368,47 @@ impl<'r> Engine<'r> {
     /// Consolidation (`consolidate`) decides TT → tombstone or
     /// resurrection (if a new derivation reclaimed the same structural
     /// identity).
-    pub fn retract_for(&mut self, g: &mut Graph, removed: &GhostId) {
-        let mut queue: Vec<GhostId> = vec![*removed];
+    /// **Der Host hat ein Element GELOESCHT.** Eine der drei Tueren des
+    /// Interfaces zwischen Host und Engine (add / delete / update).
+    ///
+    /// Der Delta-Typ kommt vom AUFRUF, nicht aus einer Statuspruefung.
+    /// Bis 2026-08-13 gab es nur `retract_for`, und die Engine las am
+    /// Status ab, was gemeint war: tot beim Eintreffen hiess Delete,
+    /// lebendig hiess Update. Das war eine Absprache zwischen Host und
+    /// Engine, keine Schnittstelle -- wer die Reihenfolge vertauschte,
+    /// bekam stillschweigend die andere Semantik.
+    ///
+    /// Der Aufrufer hat den Tombstone bereits gesetzt.
+    pub fn element_deleted(&mut self, g: &mut Graph, removed: &GhostId) {
+        self.deleted.insert(*removed);
+        self.retract_wave(g, removed, true);
+    }
+
+    /// **Der Host hat ein Element GEAENDERT.** Die dritte Tuer.
+    ///
+    /// Zurueckziehen und neu ableiten, aber ohne dass etwas entlang der
+    /// Korrespondenzen faellt: ein Change, der seine Realisierung
+    /// verletzt, zieht sie samt Korrespondenz zurueck, macht daraus
+    /// aber kein Delete der Gegenseite.
+    pub fn element_changed(&mut self, g: &mut Graph, changed: &GhostId) {
+        self.retract_wave(g, changed, false);
+    }
+
+    fn retract_wave(&mut self, g: &mut Graph, id: &GhostId, deleting: bool) {
+        let outer = std::mem::replace(&mut self.deleting, deleting);
+        let mut queue: Vec<GhostId> = vec![*id];
         self.drain_retraction(g, &mut queue);
+        self.deleting = outer;
+    }
+
+    #[deprecated(note = "use element_deleted or element_changed — the delta type \
+                         belongs to the call, not to a status check")]
+    pub fn retract_for(&mut self, g: &mut Graph, removed: &GhostId) {
+        let deleting = !g.node(removed).is_some_and(|n| n.status.is_matchable());
+        if deleting {
+            self.deleted.insert(*removed);
+        }
+        self.retract_wave(g, removed, deleting);
     }
 
     /// A single match loses its justification: invalidate it (dead +
@@ -237,6 +416,19 @@ impl<'r> Engine<'r> {
     /// — if it was applied — follow the provenance edge to its
     /// products (TT + queue). Shared core of `retract_for` and
     /// `link_removed`.
+    /// Retract by ENTRY: find the match that produced it and retract
+    /// that. Reuses `retract_match` so the reclaim bookkeeping
+    /// (`applied`/`by_key`) stays in one place.
+    fn retract_entry(&mut self, g: &mut Graph, eix: u32, queue: &mut Vec<GhostId>) {
+        let key = {
+            let e = &self.cascade[eix as usize];
+            (e.rule_ix, e.refs.clone())
+        };
+        if let Some(&mix) = self.by_key.get(&key) {
+            self.retract_match(g, mix, queue);
+        }
+    }
+
     fn retract_match(&mut self, g: &mut Graph, mix: u32, queue: &mut Vec<GhostId>) {
         let (rule_ix, refs, entry, was_dead) = {
             let m = &self.matches[mix as usize];
@@ -313,9 +505,35 @@ impl<'r> Engine<'r> {
             // maintains the index for every ref element. This covers
             // both applied and suppressed duplicate matches (rename:
             // attach dropped out, create must become applicable again).
+            // Two ways an element can justify further retraction.
+            //
+            // It PARTICIPATES in matches: those lose their ground.
             let mixes: Vec<u32> = self.by_element.get(&id).cloned().unwrap_or_default();
             for mix in mixes {
                 self.retract_match(g, mix, queue);
+            }
+            // It was PRODUCED by entries: those lose their result, and
+            // with them everything else they built — the correspondence
+            // above all. Without this direction a deleted product left
+            // its correspondence standing, because a rule's match does
+            // not contain what the rule creates (measured 2026-08-11).
+            let eixs: Vec<u32> = self.by_product.get(&id).cloned().unwrap_or_default();
+            if !eixs.is_empty() {
+                // Die Ursache folgt dem PFAD, nicht dem Zeitraum. Durch
+                // eine Delete-Welle laufen auch Elemente, die selbst
+                // nicht geloescht wurden -- Erzeugnisse, die fallen,
+                // weil ihr Match den Boden verlor. Deren Eintraege
+                // tragen keine Loeschung weiter. Die Tuer sagt, ob
+                // ueberhaupt geloescht wurde; dieses Element sagt, ob
+                // die Loeschung HIER anliegt.
+                let hier = !g.node(&id).is_some_and(|n| n.status.is_matchable())
+                    && g.connection(&id).is_none();
+                let hier_gilt = self.deleting && hier;
+                let outer = std::mem::replace(&mut self.deleting, hier_gilt);
+                for eix in eixs {
+                    self.retract_entry(g, eix, queue);
+                }
+                self.deleting = outer;
             }
         }
     }
@@ -328,11 +546,15 @@ impl<'r> Engine<'r> {
         // model scan. An element that was RECLAIMED in the meantime is
         // still in the list, but is no longer TT (connect set it to
         // Ghost) ⇒ the status check skips it.
+        let mut fallen: Vec<GhostId> = Vec::new();
         for id in self.pending_tt_nodes.drain(..) {
             if g.node(&id)
                 .is_some_and(|n| n.status == Status::TentativeTombstone)
             {
                 g.set_node_status(&id, Status::Tombstone);
+                if g.node(&id).is_some_and(|n| n.is_corr) {
+                    fallen.push(id);
+                }
             }
         }
         for id in self.pending_tt_edges.drain(..) {
@@ -340,6 +562,88 @@ impl<'r> Engine<'r> {
                 .is_some_and(|c| c.status == Status::TentativeTombstone)
             {
                 g.set_connection_status(&id, Status::Tombstone);
+            }
+        }
+        self.follow_fallen_corrs(g, &mut fallen);
+        // Die Markierung gehoert der Welle, die gerade endete.
+        self.deleted.clear();
+    }
+
+    /// **Deletion along the correspondences** (Sandra 2026-08-11).
+    ///
+    /// A correspondence that survived consolidation as a tombstone
+    /// attests a translation that no longer holds, so the elements it
+    /// connects fall with it. That carries a deletion to the other
+    /// side: deleting the generated Java class deletes the UML class.
+    ///
+    /// Why HERE and not in `drain_retraction`: retraction is also the
+    /// engine's internal means for a change (retract, re-derive,
+    /// reclaim). Mid-retraction a fallen correspondence says nothing —
+    /// it may be reclaimed in the same run. Only consolidation decides
+    /// whether it really fell, which is the same distinction Sandra's
+    /// constraint draws. A change that still carries its realisation
+    /// acts along the same correspondence. A change that VIOLATES its
+    /// realisation retracts it, correspondence included -- but it does
+    /// not turn that into a delete of the far side. Only a delete does
+    /// that, and only through a correspondence that consolidation left
+    /// fallen.
+    ///
+    /// Transitivity comes for free: each fallen endpoint is retracted
+    /// like any other removal, which can fell further correspondences,
+    /// so the loop runs to a fixed point.
+    fn follow_fallen_corrs(&mut self, g: &mut Graph, fallen: &mut Vec<GhostId>) {
+        let mut seen: BTreeSet<GhostId> = BTreeSet::new();
+        while let Some(corr) = fallen.pop() {
+            if !seen.insert(corr) || !g.node(&corr).is_some_and(|n| n.is_corr) {
+                continue;
+            }
+            let ends: Vec<GhostId> = g.parts(&corr).map(|p| p.other).collect();
+            // A fallen correspondence carries a deletion only when an
+            // end was DELETED, not merely retracted. A product that
+            // vanished because its rule stopped applying (a re-typing
+            // drops the Cellar, a removed link drops the NextConstrRel)
+            // is the result of a change. A change may well retract a
+            // correspondence, but it never deletes the far side. Measured on case02, where exactly those
+            // two took a live House and a live NextRel with them.
+            if !ends.iter().any(|e| self.deleted.contains(e)) {
+                continue;
+            }
+            for end in &ends {
+                let end = *end;
+                if !g.node(&end).is_some_and(|n| n.status.is_matchable()) {
+                    continue;
+                }
+                g.set_node_status(&end, Status::Tombstone);
+                // Transitivity: an element felled along a correspondence
+                // is deleted, so it carries the next one in turn.
+                self.deleted.insert(end);
+                self.element_removed(&end);
+                // Transitivitaet: ein entlang einer Korrespondenz
+                // mitgerissenes Element IST geloescht, seine eigene
+                // Welle traegt die Ursache weiter.
+                let outer = std::mem::replace(&mut self.deleting, true);
+                let mut queue: Vec<GhostId> = vec![end];
+                self.drain_retraction(g, &mut queue);
+                self.deleting = outer;
+                // The endpoint's own retraction may have felled further
+                // correspondences; resolve them in the same fixed point.
+                for id in self.pending_tt_nodes.drain(..) {
+                    if g.node(&id)
+                        .is_some_and(|n| n.status == Status::TentativeTombstone)
+                    {
+                        g.set_node_status(&id, Status::Tombstone);
+                        if g.node(&id).is_some_and(|n| n.is_corr) {
+                            fallen.push(id);
+                        }
+                    }
+                }
+                for id in self.pending_tt_edges.drain(..) {
+                    if g.connection(&id)
+                        .is_some_and(|c| c.status == Status::TentativeTombstone)
+                    {
+                        g.set_connection_status(&id, Status::Tombstone);
+                    }
+                }
             }
         }
     }
@@ -356,6 +660,31 @@ impl<'r> Engine<'r> {
     /// identical re-derivation reclaims on the next sync (id-stable).
     /// Symmetric to `element_removed`/`retract_for`; call
     /// `seed`/`step` until saturation and `consolidate` afterward.
+    /// Ein Link ist HINZUGEKOMMEN (Gegenstueck zu [`Self::link_removed`]).
+    ///
+    /// Ein `connect` auf zwei BESTEHENDE Knoten hat bisher nichts
+    /// geweckt: die Anker-Expansion laeuft ueber neue KNOTEN, und
+    /// beide Enden waren ja schon da. Ein reines Add-Kanten-Delta
+    /// (Owner-Wechsel, Generalisierung) blieb damit unsichtbar,
+    /// weshalb der ecore2sql-Ledger auch dafuer den ganzen Knoten
+    /// ersetzt statt die Kante zu ziehen -- mit dem Zwischenzustand
+    /// zweier Traeger, den Sandra am 2026-08-12 ausgeschlossen hat.
+    ///
+    /// Beide Enden neu zu expandieren ist die gleiche
+    /// Ueber-Approximation wie bei `link_removed`: es kann Kandidaten
+    /// wecken, die den neuen Link gar nicht brauchen. Die
+    /// Duplikat-Unterdrueckung faengt sie ab, weil Identitaeten
+    /// ableitbar sind.
+    pub fn link_added(
+        &mut self,
+        g: &Graph,
+        resolver: &dyn ValueResolver,
+        a: &GhostId,
+        b: &GhostId,
+    ) {
+        self.expand_at(g, resolver, &[*a, *b]);
+    }
+
     pub fn link_removed(&mut self, g: &mut Graph, a: &GhostId, b: &GhostId) {
         let Some(in_a) = self.by_element.get(a) else {
             return;
@@ -454,41 +783,26 @@ impl<'r> Engine<'r> {
         resolver: &dyn ValueResolver,
         ceiling: Option<&SelectionBound>,
     ) -> Option<bool> {
-        // `true` in Some = applied; None = todo empty (below the bound).
+        // `true` in Some = applied; None = no admitted todo below the bound.
         loop {
+            let filtered = self.active.is_some() || self.wave_directions.is_some();
             let key = match ceiling {
-                None => self.todo.iter().next().cloned()?,
+                None if !filtered => self.todo.iter().next().cloned(),
+                None => self.todo.iter().find(|k| self.rule_active(k.2)).cloned(),
                 Some(b) => {
                     // Strictly below the bound = in the BTreeSet
                     // strictly AFTER the bound key (reverse order).
                     let bound = todo_key(b.rank, &b.refs, 0);
                     self.todo
                         .range(bound.clone()..)
-                        .find(|k| !(k.0 == bound.0 && k.1 == bound.1))
-                        .cloned()?
+                        .find(|k| {
+                            !(k.0 == bound.0 && k.1 == bound.1)
+                                && (!filtered || self.rule_active(k.2))
+                        })
+                        .cloned()
                 }
             };
-            // Runtime mask: inactive candidates are left alone.
-            //
-            // The mask must INTERSECT with the ceiling, not replace it.
-            // Until 2026-08-10 this searched `self.todo.iter()`, the
-            // whole queue, and overwrote the choice made above — with a
-            // mask set, the ceiling had no effect at all and
-            // backtracking could pick a candidate at or above its own
-            // bound. Found in the review of that day.
-            let key = match &self.active {
-                None => key,
-                Some(active) => match ceiling {
-                    None => self.todo.iter().find(|k| active[k.2]).cloned()?,
-                    Some(b) => {
-                        let bound = todo_key(b.rank, &b.refs, 0);
-                        self.todo
-                            .range(bound.clone()..)
-                            .find(|k| !(k.0 == bound.0 && k.1 == bound.1) && active[k.2])
-                            .cloned()?
-                    }
-                },
-            };
+            let key = key?;
             self.todo.remove(&key);
             let (rule_ix, refs) = (key.2, (key.1).0.clone());
             let rule = &self.rules[rule_ix];
@@ -607,6 +921,14 @@ impl<'r> Engine<'r> {
                 created: created.clone(),
                 created_edges,
             });
+            // Provenance, product side: every node and edge this entry
+            // built points back at it.
+            for id in created
+                .iter()
+                .chain(self.cascade[eix as usize].created_edges.iter())
+            {
+                self.by_product.entry(*id).or_default().push(eix);
+            }
             self.applied.insert((rule_ix, refs.clone()));
             // Materialize the provenance edge: the applied match points
             // at its cascade entry (so `retract_for` needs no scan).
@@ -788,6 +1110,320 @@ mod tests {
     }
 
     #[test]
+    fn admitted_source_delta_holds_forward_direction_for_the_wave() {
+        let (mut g, vs) = seed(2);
+        let rules = father_rule(&mut g);
+        let mut e = Engine::new(&rules);
+
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        assert!(
+            e.matches
+                .iter()
+                .all(|m| e.rules[m.rule_ix].direction == RuleDirection::Forward),
+            "the initial source delta must not even record inverse candidates"
+        );
+        assert_eq!(e.run_remaining(&mut g, &vs), Termination::Duplication);
+        assert_eq!(e.cascade.len(), 2);
+        assert!(e
+            .cascade
+            .iter()
+            .all(|entry| e.rules[entry.rule_ix].direction == RuleDirection::Forward));
+    }
+
+    #[test]
+    fn explicit_delta_domain_disambiguates_equal_anchor_type_names() {
+        let file: RuleFile = serde_json::from_value(serde_json::json!({
+            "format": 3,
+            "name": "same_metamodel",
+            "rules": [{
+                "name": "A_2_A", "rank": 10,
+                "left": {"anchor": "l", "nodes": [{"name": "l", "type": "A"}]},
+                "right": {"anchor": "r", "nodes": [{"name": "r", "type": "A"}]},
+                "corrs": [{"type": "AA", "left": "l", "right": "r",
+                           "role": "establishes"}]
+            }]
+        }))
+        .expect("rule file parses");
+        let mut g = Graph::new();
+        g.add_baseline("source/a", "A");
+        let rules = crate::rules::load_file(&file, &mut g).expect("rule lowers");
+        assert_eq!(rules[0].input_types, rules[1].input_types);
+        let mut e = Engine::new(&rules);
+
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &ValueStore::default());
+        assert!(e
+            .matches
+            .iter()
+            .all(|m| e.rules[m.rule_ix].direction == RuleDirection::Forward));
+    }
+
+    #[test]
+    fn forward_context_created_mid_wave_enables_forward_follow_up() {
+        let file: RuleFile = serde_json::from_value(serde_json::json!({
+            "format": 3,
+            "name": "directional_follow_up",
+            "rules": [
+                {
+                    "name": "Root", "rank": 100,
+                    "left": {"anchor": "a", "nodes": [
+                        {"name": "a", "type": "A"}
+                    ]},
+                    "right": {"anchor": "b", "nodes": [
+                        {"name": "b", "type": "B"}
+                    ]},
+                    "corrs": [{"type": "AB", "left": "a", "right": "b",
+                               "role": "establishes"}]
+                },
+                {
+                    "name": "Child", "rank": 90,
+                    "left": {"anchor": "a", "nodes": [
+                        {"name": "a", "type": "A"},
+                        {"name": "x", "type": "X"}
+                    ], "links": [["a", "x"]]},
+                    "right": {"anchor": "b", "nodes": [
+                        {"name": "b", "type": "B"},
+                        {"name": "y", "type": "Y"}
+                    ], "links": [["b", "y"]]},
+                    "corrs": [
+                        {"type": "AB", "left": "a", "right": "b",
+                         "role": "references"},
+                        {"type": "XY", "left": "x", "right": "y",
+                         "role": "establishes"}
+                    ]
+                }
+            ]
+        }))
+        .expect("rule file parses");
+        let mut g = Graph::new();
+        let a = g.add_baseline("a", "A");
+        let x = g.add_baseline("a/x", "X");
+        g.connect(a, x, Status::Solid);
+        let rules = crate::rules::load_file(&file, &mut g).expect("rules lower");
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        assert_eq!(e.run_remaining(&mut g, &vs), Termination::Duplication);
+
+        let applied: Vec<&str> = e
+            .cascade
+            .iter()
+            .map(|entry| e.rules[entry.rule_ix].name.as_str())
+            .collect();
+        assert_eq!(applied, vec!["Root→", "Child→"]);
+        assert_eq!(
+            g.nodes_of_type(g.types.lookup("Y").expect("Y type"))
+                .filter(|n| n.status.is_matchable())
+                .count(),
+            1,
+            "the second forward rule is enabled only by Root's new AB context"
+        );
+    }
+
+    #[test]
+    fn attribute_change_uses_admitted_domain_not_leaf_type() {
+        let (mut g, mut vs) = seed(1);
+        let rules = father_rule(&mut g);
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        assert_eq!(e.run(&mut g, &vs, 100), Termination::Duplication);
+        e.consolidate(&mut g);
+
+        let source_leaf = g
+            .iter_nodes()
+            .find(|n| g.types.name(n.typ) == "firstName")
+            .expect("source name")
+            .id;
+        vs.insert(source_leaf, "Renamed");
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.element_changed(&mut g, &source_leaf);
+        e.seed(&g, &vs);
+        while e.step(&mut g, &vs).is_some() {}
+        e.consolidate(&mut g);
+
+        let target_name = g
+            .nodes_of_type(g.types.lookup("name").expect("target name type"))
+            .find(|n| n.status.is_matchable())
+            .expect("live target name")
+            .id;
+        assert_eq!(
+            g.resolve_value(&target_name, &vs).as_deref(),
+            Some("Renamed")
+        );
+    }
+
+    #[test]
+    fn attribute_leaf_add_enters_through_the_add_door() {
+        let mut g = Graph::new();
+        let family = g.add_baseline("f", "Family");
+        let father = g.add_baseline("f/father", "Father");
+        let member = g.add_baseline("f/father/member", "Member");
+        g.connect(family, father, Status::Solid);
+        g.connect(father, member, Status::Solid);
+        let rules = father_rule(&mut g);
+        let mut vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        assert!(e.step(&mut g, &vs).is_none(), "ohne Blatt kein Match");
+
+        let leaf = g.add_baseline("f/father/member/first", "firstName");
+        g.connect(member, leaf, Status::Solid);
+        vs.insert(leaf, "John");
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.elements_added(&g, &vs, &[leaf]);
+        while e.step(&mut g, &vs).is_some() {}
+
+        let target_name = g
+            .nodes_of_type(g.types.lookup("name").expect("target name type"))
+            .find(|n| n.status.is_matchable())
+            .expect("attribute add created the target leaf")
+            .id;
+        assert_eq!(g.resolve_value(&target_name, &vs).as_deref(), Some("John"));
+        assert!(e
+            .cascade
+            .iter()
+            .all(|entry| e.rules[entry.rule_ix].direction == RuleDirection::Forward));
+    }
+
+    #[test]
+    fn attribute_leaf_delete_enters_through_the_delete_door() {
+        let (mut g, vs) = seed(1);
+        let rules = father_rule(&mut g);
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        assert_eq!(e.run(&mut g, &vs, 100), Termination::Duplication);
+        e.consolidate(&mut g);
+
+        let source_name = g
+            .nodes_of_type(g.types.lookup("firstName").expect("source name type"))
+            .find(|n| n.status.is_matchable())
+            .expect("source name")
+            .id;
+        let target_name = g
+            .nodes_of_type(g.types.lookup("name").expect("target name type"))
+            .find(|n| n.status.is_matchable())
+            .expect("target name")
+            .id;
+        g.set_node_status(&source_name, Status::Tombstone);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.element_deleted(&mut g, &source_name);
+        e.consolidate(&mut g);
+
+        assert_eq!(
+            g.node(&target_name).map(|n| n.status),
+            Some(Status::Tombstone),
+            "the attribute correspondence carries the delete to the target leaf"
+        );
+        assert_eq!(
+            g.nodes_of_type(g.types.lookup("Member").expect("source carrier type"))
+                .filter(|n| n.status.is_matchable())
+                .count(),
+            1,
+            "the externally supplied source carrier survives"
+        );
+        assert_eq!(
+            g.nodes_of_type(g.types.lookup("Male").expect("target carrier type"))
+                .filter(|n| n.status.is_matchable())
+                .count(),
+            0,
+            "firstName is a match prerequisite, so its deletion invalidates the complete \
+             Father_2_Male realisation"
+        );
+    }
+
+    fn follow_up_rules(g: &mut Graph) -> Vec<DirectedRule> {
+        let file: RuleFile = serde_json::from_value(serde_json::json!({
+            "format": 3,
+            "name": "link_delta",
+            "rules": [
+                {
+                    "name": "Root", "rank": 100,
+                    "left": {"anchor": "a", "nodes": [{"name": "a", "type": "A"}]},
+                    "right": {"anchor": "b", "nodes": [{"name": "b", "type": "B"}]},
+                    "corrs": [{"type": "AB", "left": "a", "right": "b",
+                               "role": "establishes"}]
+                },
+                {
+                    "name": "Child", "rank": 90,
+                    "left": {"anchor": "a", "nodes": [
+                        {"name": "a", "type": "A"}, {"name": "x", "type": "X"}
+                    ], "links": [["a", "x"]]},
+                    "right": {"anchor": "b", "nodes": [
+                        {"name": "b", "type": "B"}, {"name": "y", "type": "Y"}
+                    ], "links": [["b", "y"]]},
+                    "corrs": [
+                        {"type": "AB", "left": "a", "right": "b", "role": "references"},
+                        {"type": "XY", "left": "x", "right": "y", "role": "establishes"}
+                    ]
+                }
+            ]
+        }))
+        .expect("rule file parses");
+        crate::rules::load_file(&file, g).expect("rules lower")
+    }
+
+    #[test]
+    fn link_add_enters_through_the_add_door() {
+        let mut g = Graph::new();
+        let a = g.add_baseline("a", "A");
+        let x = g.add_baseline("x", "X");
+        let rules = follow_up_rules(&mut g);
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        assert_eq!(e.run(&mut g, &vs, 100), Termination::Duplication);
+        assert_eq!(e.cascade.len(), 1, "only Root applies before the link add");
+
+        g.connect(a, x, Status::Solid);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.link_added(&g, &vs, &a, &x);
+        while e.step(&mut g, &vs).is_some() {}
+
+        assert_eq!(
+            e.cascade
+                .iter()
+                .map(|entry| e.rules[entry.rule_ix].name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Root→", "Child→"]
+        );
+    }
+
+    #[test]
+    fn link_delete_enters_through_the_delete_door() {
+        let mut g = Graph::new();
+        let a = g.add_baseline("a", "A");
+        let x = g.add_baseline("x", "X");
+        let link = g.connect(a, x, Status::Solid).expect("link");
+        let rules = follow_up_rules(&mut g);
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        assert_eq!(e.run(&mut g, &vs, 100), Termination::Duplication);
+        let y = g
+            .nodes_of_type(g.types.lookup("Y").expect("Y type"))
+            .find(|n| n.status.is_matchable())
+            .expect("Child product")
+            .id;
+
+        g.set_connection_status(&link, Status::Tombstone);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.link_removed(&mut g, &a, &x);
+        e.seed(&g, &vs);
+        while e.step(&mut g, &vs).is_some() {}
+        e.consolidate(&mut g);
+
+        assert_eq!(g.node(&y).map(|n| n.status), Some(Status::Tombstone));
+        for id in [a, x] {
+            assert!(g.node(&id).is_some_and(|n| n.status.is_matchable()));
+        }
+    }
+
+    #[test]
     fn delete_kills_eagerly_via_by_element() {
         let (mut g, vs) = seed(2);
         let fwd = father_rule(&mut g).remove(0);
@@ -837,7 +1473,7 @@ mod tests {
         // f0's Member drops out → retraction walk + consolidation.
         let member = e.cascade[0].refs[2];
         g.set_node_status(&member, Status::Tombstone);
-        e.retract_for(&mut g, &member);
+        e.element_deleted(&mut g, &member);
         e.consolidate(&mut g);
         for c in &created_f0 {
             assert_eq!(
@@ -864,7 +1500,7 @@ mod tests {
         // Retraction WITHOUT a real drop-out (Member lives) — then a
         // reapplication reclaims the same identities BEFORE
         // consolidation: resurrection instead of tombstone.
-        e.retract_for(&mut g, &member);
+        e.element_changed(&mut g, &member);
         for c in &created {
             assert_eq!(g.node(c).unwrap().status, Status::TentativeTombstone);
         }
@@ -889,7 +1525,7 @@ mod tests {
         let _ = e.run(&mut g, &vs, 100);
         let member = e.cascade[0].refs[2];
         g.set_node_status(&member, Status::Tombstone);
-        e.retract_for(&mut g, &member);
+        e.element_deleted(&mut g, &member);
         e.consolidate(&mut g);
         let folded = g.materialize();
         assert!(folded.node(&member).is_none(), "the tombstone drops out");
@@ -966,6 +1602,46 @@ mod tests {
                 e.cascade.len(),
                 ms * 1000.0 / n as f64
             );
+        }
+    }
+
+    #[test]
+    #[ignore = "manual perf measurement: un-routed versus source-directed wave"]
+    fn bench_v2_f2p_directional_wave() {
+        for n in [1_000usize, 10_000, 50_000] {
+            for (label, routed) in [("initial", false), ("source", true)] {
+                let (mut g, vs) = seed(n);
+                let mut lowered = father_rule(&mut g);
+                let fwd = lowered.remove(0);
+                let bwd = lowered.remove(0);
+                let rules = vec![fwd, bwd];
+                let mut e = Engine::new(&rules);
+                if routed {
+                    e.admit_delta(&[DeltaDomain::Source]);
+                }
+
+                let t0 = std::time::Instant::now();
+                let t = e.run(&mut g, &vs, 10_000_000);
+                let ms = t0.elapsed().as_secs_f64() * 1000.0;
+                assert_eq!(t, Termination::Duplication);
+                assert_eq!(e.cascade.len(), n);
+
+                let forward = e
+                    .matches
+                    .iter()
+                    .filter(|m| e.rules[m.rule_ix].direction == RuleDirection::Forward)
+                    .count();
+                let backward = e
+                    .matches
+                    .iter()
+                    .filter(|m| e.rules[m.rule_ix].direction == RuleDirection::Backward)
+                    .count();
+                eprintln!(
+                    "V2-DIRECTION n={n:<7} route={label:<7} matches={}/{forward}/{backward} steps={} ms={ms:>9.1}",
+                    e.matches.len(),
+                    e.cascade.len()
+                );
+            }
         }
     }
 

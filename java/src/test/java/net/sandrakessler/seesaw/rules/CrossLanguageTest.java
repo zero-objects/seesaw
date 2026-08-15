@@ -14,6 +14,7 @@ import net.sandrakessler.seesaw.graph.Graph;
 import net.sandrakessler.seesaw.ident.Id;
 import net.sandrakessler.seesaw.ident.St;
 import net.sandrakessler.seesaw.plan.Rule;
+import net.sandrakessler.seesaw.session.Fixtures;
 
 import org.junit.jupiter.api.Test;
 
@@ -46,12 +47,12 @@ class CrossLanguageTest {
      */
     @Test
     void stufe1_gelowerterPlanIstGleich() throws Exception {
-        String rules = Resources.read("/fixtures/uml_java_min.json").toString();
+        String rules = Fixtures.resource("/fixtures/uml_java_min.json").toString();
         Graph g = new Graph();
         List<Rule> lowered = Rules.load(rules, g);
 
         JsonNode ausJava = M.readTree(Export.plansToJson(lowered, g));
-        JsonNode ausRust = Resources.read("/fixtures/uml_java_min.plans.json");
+        JsonNode ausRust = Fixtures.resource("/fixtures/uml_java_min.plans.json");
 
         assertEquals(ausRust, ausJava,
                 "Java und Rust senken dieselbe Regeldatei verschieden");
@@ -68,7 +69,7 @@ class CrossLanguageTest {
      */
     @Test
     void stufe2_praedikateEntscheidenGleich() throws Exception {
-        JsonNode table = Resources.read("/fixtures/predicate_table.json");
+        JsonNode table = Fixtures.resource("/fixtures/predicate_table.json");
         int n = 0;
         for (JsonNode c : table.get("accepted")) {
             JsonNode decl = c.get("predicate");
@@ -95,14 +96,14 @@ class CrossLanguageTest {
     // ── Stufe 3: Kaskade ──
 
     /**
-     * Identischer Eingangsgraph, identischer Endzustand. Verglichen
-     * wird der Zustand selbst, nicht ein Hash darüber: lebende Knoten
-     * mit Typ, Wert und ausgehenden Verbindungen. Ein Unterschied ist
-     * damit lesbar statt nur ungleich.
+     * Identischer Eingangsgraph, identische operationelle Folge und
+     * identischer Endzustand. Verglichen werden Regel, Rang, Referenzen
+     * und erzeugte Knoten/Kanten jedes Kaskadeneintrags, anschließend
+     * der Zustand selbst statt nur eines Hashs.
      */
     @Test
     void stufe3_kaskadeEndetGleich() throws Exception {
-        String rules = Resources.read("/fixtures/uml_java_min.json").toString();
+        String rules = Fixtures.resource("/fixtures/uml_java_min.json").toString();
         Graph g = new Graph();
         List<Rule> lowered = Rules.load(rules, g);
 
@@ -114,11 +115,13 @@ class CrossLanguageTest {
         Map<Id, String> vals = new HashMap<>();
         vals.put(cname, "Person");
 
-        new Engine(lowered).run(g, vals, 1000);
+        Engine engine = new Engine(lowered);
+        engine.admitDelta(List.of(Engine.DeltaDomain.SOURCE));
+        engine.run(g, vals, 1000);
 
-        JsonNode erwartet = Resources.read("/fixtures/uml_java_min.cascade.json");
-        assertEquals(erwartet, cascadeState(g, vals),
-                "der Endzustand der Kaskade weicht von der Rust-Seite ab");
+        JsonNode erwartet = Fixtures.resource("/fixtures/uml_java_min.cascade.json");
+        assertEquals(erwartet, cascadeState(g, vals, engine, lowered),
+                "Kaskadenfolge oder Endzustand weicht von Rust ab");
     }
 
     /**
@@ -126,7 +129,8 @@ class CrossLanguageTest {
      * {@code tests/format.rs}: lebende Knoten mit Typ, Wert und
      * ausgehenden Verbindungen, nach Id sortiert.
      */
-    private static JsonNode cascadeState(Graph g, Map<Id, String> vals) {
+    private static JsonNode cascadeState(Graph g, Map<Id, String> vals,
+            Engine engine, List<Rule> rules) {
         List<ObjectNode> nodes = new ArrayList<>();
         for (Graph.Slot s : g.map.values()) {
             if (s.node == null || !s.node.status.matchable()) {
@@ -161,6 +165,18 @@ class CrossLanguageTest {
         ArrayNode arr = root.putArray("nodes");
         for (ObjectNode o : nodes) {
             arr.add(o);
+        }
+        ArrayNode cascade = root.putArray("cascade");
+        for (Engine.Entry entry : engine.cascade) {
+            ObjectNode e = cascade.addObject();
+            e.put("rule", rules.get(entry.ruleIx).name);
+            e.put("rank", Math.toIntExact(entry.rank));
+            ArrayNode refs = e.putArray("refs");
+            for (Id id : entry.refs) refs.add(hex(id));
+            ArrayNode created = e.putArray("created");
+            for (Id id : entry.created) created.add(hex(id));
+            ArrayNode edges = e.putArray("created_edges");
+            for (Id id : entry.createdEdges) edges.add(hex(id));
         }
         return root;
     }

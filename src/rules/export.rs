@@ -75,6 +75,7 @@ fn rule_to_json(r: &DirectedRule, types: &TypeTable) -> Value {
     json!({
         "name": r.name,
         "rank": r.rank,
+        "direction": r.direction.as_str(),
         "pattern_nodes": pattern_nodes,
         "pattern_links": pattern_links,
         "create_nodes": create_nodes,
@@ -178,9 +179,17 @@ mod tests {
     /// `include_str!` resolves at compile time relative to this file,
     /// while `std::fs::write`/`read_to_string` need a path valid at
     /// runtime; `CARGO_MANIFEST_DIR` is the stable anchor for that.
+    // EINE Datei, im Java-Baum, wie CASCADE_FIXTURE. Solange sie
+    // doppelt lag, erneuerte `write_plans_fixture` nur die Rust-Kopie
+    // und der Java-Test verglich weiter gegen den alten Stand
+    // (2026-08-12 passiert).
+    // Der Java-Baum liegt hier unter `java/`, nicht als
+    // Geschwister-Crate `../../seesaw-java` wie im Entwicklungsbaum.
+    // Mit dem Entwicklungspfad zeigte die Konstante ins Leere, und der
+    // Aktualitaetstest verglich gegen eine Datei, die es nicht gibt.
     const PLANS_FIXTURE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/tests/fixtures/rules/uml_java_min.plans.json"
+        "/java/src/test/resources/fixtures/uml_java_min.plans.json"
     );
 
     fn compute_min_export() -> String {
@@ -209,6 +218,7 @@ mod tests {
             for key in [
                 "name",
                 "rank",
+                "direction",
                 "pattern_nodes",
                 "pattern_links",
                 "create_nodes",

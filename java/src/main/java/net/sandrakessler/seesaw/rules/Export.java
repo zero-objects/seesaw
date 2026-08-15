@@ -44,6 +44,7 @@ public final class Export {
         ObjectNode o = M.createObjectNode();
         o.put("name", r.name);
         o.put("rank", r.rank);
+        o.put("direction", r.direction.wire);
         ArrayNode pn = o.putArray("pattern_nodes");
         for (PatNode n : r.patNodes) {
             pn.add(patternNodeToJson(n, g));

@@ -404,11 +404,28 @@ on read.
 
 **Retraction** is what happens when a reason disappears. If a matched
 element is gone, every applied rule application whose match contained it has
-lost its justification. `Engine::retract_for` follows the provenance edge
-from the match to its cascade entry, marks the elements that entry created
-as tentative tombstones, and walks on recursively through entries anchored
-on those elements. It also forgets the application record, so an identical
-re-derivation can apply again and reclaim.
+lost its justification. `Engine::element_deleted` and
+`Engine::element_changed` follow the provenance edge from the match to its
+cascade entry, mark the elements that entry created as tentative tombstones,
+and walk on recursively through entries anchored on those elements. They also
+forget the application record, so an identical re-derivation can apply again
+and reclaim.
+
+The two doors differ in what the caller knows: a deletion removes the
+element, a change leaves it in place with a new value. The engine cannot
+read that from the graph alone, which is why `retract_for` — which had to
+guess from the element's status — is deprecated in favour of the two.
+
+A host delta is admitted as a whole before its doors are invoked:
+
+```rust
+engine.admit_delta(&[DeltaDomain::Source]);   // or Target, or both
+```
+
+The union of the named domains fixes which directed operationalisations may
+run, for the complete realisation wave — retraction, re-derivation and
+consolidation included. `admit_initial()` selects the un-routed batch
+semantics a fresh engine starts in.
 
 `Engine::consolidate` then decides, for each tentative tombstone only, and
 therefore in the size of the delta rather than the model. If a new

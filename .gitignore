@@ -11,3 +11,6 @@ Cargo.lock.bak
 .vscode/
 *.swp
 *~
+
+# Skalen-Korpora gehoeren nicht ins Release-Repo (274 MB, GitHub-Limit 100 MB)
+java/src/test/resources/fixtures/seed_paper.json

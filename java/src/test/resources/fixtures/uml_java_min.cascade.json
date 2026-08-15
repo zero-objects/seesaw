@@ -1,5 +1,30 @@
 {
-  "alive": 6,
+  "alive": 7,
+  "cascade": [
+    {
+      "created": [
+        "c5c43596f8d432dd06956c25fb1add700fb82d7222c9adc80b397d4660a725c2",
+        "12a12c7b1df1a03c77522ea953a1f1684942002ede1dcb884e49ebe3419cf68d",
+        "f182f8f853973367cd8e4c9be53b7d4e26290c520ee4ee7e9b9d2a92e586b1d0",
+        "ddfa2e05757747205aa17efbeed8306eecd6c611204d43ebd5b1bbba7038d39a"
+      ],
+      "created_edges": [
+        "a7ecbeb842fa8e21031c19b7038c8cabc30c603184b8d29e0af6b45642c86585",
+        "bf117a30027763c5028945d6dbdf54ac0fac9508821cc0ec6f011914a417d741",
+        "a436cef1ec439543fd2966b3117df0771b72a52f920cd090386c9e216ea38c6b",
+        "40563d2ff31036a06ce2826a87d2874ec11c6e7c4fa58a1ed3a86f33083fcfec",
+        "71ecaa0a53ff4cef3a666b3a53e6347324a2788d96c9129ec2b8a4004280400e",
+        "0c05d2a939243148ce503d87a100f42708cdca99accea266a5e68efbecc35b05"
+      ],
+      "rank": 40,
+      "refs": [
+        "85fe2a54672ab100a0c4fdff87517593c3c43f252b8a8d61b4467138fd491c31",
+        "2577187adaaf4b341af1ad407bef43fcb7735b3854afc2547df94d8f43e06fc7",
+        "79faaed4a83b0b36774b575c544c5cd1c2372f895523385920825002dd8a613f"
+      ],
+      "rule": "R_Class→"
+    }
+  ],
   "nodes": [
     {
       "id": "12a12c7b1df1a03c77522ea953a1f1684942002ede1dcb884e49ebe3419cf68d",
@@ -39,6 +64,15 @@
         "12a12c7b1df1a03c77522ea953a1f1684942002ede1dcb884e49ebe3419cf68d"
       ],
       "typ": "CorrClass",
+      "value": null
+    },
+    {
+      "id": "ddfa2e05757747205aa17efbeed8306eecd6c611204d43ebd5b1bbba7038d39a",
+      "out": [
+        "79faaed4a83b0b36774b575c544c5cd1c2372f895523385920825002dd8a613f",
+        "f182f8f853973367cd8e4c9be53b7d4e26290c520ee4ee7e9b9d2a92e586b1d0"
+      ],
+      "typ": "CorrClass_name",
       "value": null
     },
     {

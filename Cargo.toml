@@ -1,7 +1,7 @@
 [package]
 name = "seesaw-tgg"
 description = "Bidirectional graph transformation with a declarative rule format: value-free structural identity, delta-local cascade, no negative application conditions."
-version = "2.0.1"
+version = "2.0.2"
 edition = "2021"
 authors = ["Zero Principle <hello@zero-principle.org>"]
 license = "Apache-2.0"
@@ -13,7 +13,7 @@ keywords = ["tgg", "graph", "model-transformation", "bidirectional", "cascade"]
 categories = ["data-structures", "algorithms", "science"]
 # The Java implementation lives in the repository, not in the crate:
 # it reads the same rule files but is built and released separately.
-exclude = ["java/", ".github/"]
+exclude = ["java/", ".github/", "proofs/"]
 
 [dependencies]
 # blake3 rather than SHA-256 for identities: collision resistant, so the

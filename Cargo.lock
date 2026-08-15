@@ -424,7 +424,7 @@ dependencies = [
 
 [[package]]
 name = "seesaw-tgg"
-version = "2.0.1"
+version = "2.0.2"
 dependencies = [
  "blake3",
  "proptest",

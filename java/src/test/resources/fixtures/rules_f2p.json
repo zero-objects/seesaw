@@ -2,43 +2,35 @@
   "rules": [
     {
       "corr_recognition": [
-        {
-          "anchor": 1,
-          "corr_type": "CorrClass",
-          "endpoint_type": "JavaClass"
-        }
+        [
+          "PersonCorr",
+          2,
+          "Male"
+        ]
       ],
       "create_links": [
         [
           {
-            "matched": 1
+            "m": 2
           },
           {
-            "new": 0
+            "n": 0
           }
         ],
         [
           {
-            "matched": 0
+            "n": 1
           },
           {
-            "new": 1
+            "n": 2
           }
         ],
         [
           {
-            "new": 1
+            "n": 0
           },
           {
-            "new": 2
-          }
-        ],
-        [
-          {
-            "new": 0
-          },
-          {
-            "new": 1
+            "n": 1
           }
         ]
       ],
@@ -49,9 +41,9 @@
           "derived_dyn": null,
           "konst": null,
           "parent": {
-            "matched": 1
+            "m": 2
           },
-          "typ": "CorrClass"
+          "typ": "PersonCorr"
         },
         {
           "corr_full_match": false,
@@ -59,98 +51,117 @@
           "derived_dyn": null,
           "konst": null,
           "parent": {
-            "new": 0
+            "n": 0
           },
-          "typ": "JavaClass"
+          "typ": "Male"
         },
         {
           "corr_full_match": false,
           "derived": {
-            "source": 2,
+            "leaf": 3,
             "transform": []
           },
           "derived_dyn": null,
           "konst": null,
           "parent": {
-            "new": 1
+            "n": 1
           },
           "typ": "name"
         }
       ],
       "input_types": [
-        "Class",
-        "CorrClass",
-        "Model",
-        "name"
+        "Family",
+        "Father",
+        "Member",
+        "PersonCorr",
+        "firstName"
       ],
-      "name": "R_Class→",
+      "nacs": [],
+      "name": "Father_2_Male→",
       "pattern_links": [
         {
+          "context": false,
           "from": 0,
-          "kind": "directed",
           "to": 1
         },
         {
+          "context": false,
           "from": 1,
-          "kind": "directed",
           "to": 2
+        },
+        {
+          "context": false,
+          "from": 2,
+          "to": 3
         }
       ],
       "pattern_nodes": [
         {
-          "typ": "Model",
+          "typ": "Family",
           "value": null
         },
         {
-          "typ": "Class",
+          "typ": "Father",
           "value": null
         },
         {
-          "typ": "name",
+          "typ": "Member",
+          "value": null
+        },
+        {
+          "typ": "firstName",
           "value": null
         }
       ],
-      "rank": 40
+      "rank": 850
     },
     {
       "corr_recognition": [
-        {
-          "anchor": 1,
-          "corr_type": "CorrClass",
-          "endpoint_type": "Class"
-        }
+        [
+          "PersonCorr",
+          0,
+          "Member"
+        ]
       ],
       "create_links": [
         [
           {
-            "matched": 1
+            "m": 0
           },
           {
-            "new": 0
+            "n": 0
           }
         ],
         [
           {
-            "matched": 0
+            "n": 1
           },
           {
-            "new": 1
+            "n": 2
           }
         ],
         [
           {
-            "new": 1
+            "n": 2
           },
           {
-            "new": 2
+            "n": 3
           }
         ],
         [
           {
-            "new": 0
+            "n": 3
           },
           {
-            "new": 1
+            "n": 4
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 3
           }
         ]
       ],
@@ -161,9 +172,9 @@
           "derived_dyn": null,
           "konst": null,
           "parent": {
-            "matched": 1
+            "m": 0
           },
-          "typ": "CorrClass"
+          "typ": "PersonCorr"
         },
         {
           "corr_full_match": false,
@@ -171,50 +182,61 @@
           "derived_dyn": null,
           "konst": null,
           "parent": {
-            "new": 0
+            "n": 0
           },
-          "typ": "Class"
+          "typ": "Family"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "Father"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "Member"
         },
         {
           "corr_full_match": false,
           "derived": {
-            "source": 2,
+            "leaf": 1,
             "transform": []
           },
           "derived_dyn": null,
           "konst": null,
           "parent": {
-            "new": 1
+            "n": 3
           },
-          "typ": "name"
+          "typ": "firstName"
         }
       ],
       "input_types": [
-        "CorrClass",
-        "JavaClass",
-        "Model",
+        "Male",
+        "PersonCorr",
         "name"
       ],
-      "name": "R_Class←",
+      "nacs": [],
+      "name": "Father_2_Male←",
       "pattern_links": [
         {
+          "context": false,
           "from": 0,
-          "kind": "directed",
           "to": 1
-        },
-        {
-          "from": 1,
-          "kind": "directed",
-          "to": 2
         }
       ],
       "pattern_nodes": [
         {
-          "typ": "Model",
-          "value": null
-        },
-        {
-          "typ": "JavaClass",
+          "typ": "Male",
           "value": null
         },
         {
@@ -222,7 +244,7 @@
           "value": null
         }
       ],
-      "rank": 40
+      "rank": 850
     }
   ]
 }

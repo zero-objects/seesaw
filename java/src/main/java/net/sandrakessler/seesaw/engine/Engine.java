@@ -15,11 +15,15 @@ import net.sandrakessler.seesaw.graph.Part;
 import net.sandrakessler.seesaw.ident.Id;
 import net.sandrakessler.seesaw.ident.St;
 import net.sandrakessler.seesaw.plan.CreateNode;
+import net.sandrakessler.seesaw.plan.PatLink;
 import net.sandrakessler.seesaw.plan.Rule;
 
 // ── Engine (Spiegel von engine.rs, Minimal-Pfad) ──
 public final class Engine {
     public final List<Rule> rules;
+
+    /** Domäne, in der ein vollständiges Host-Delta entstanden ist. */
+    public enum DeltaDomain { SOURCE, TARGET }
 
     static final class TodoKey implements Comparable<TodoKey> {
         final long rank;
@@ -98,10 +102,71 @@ public final class Engine {
     public int cascadeLen = 0;
     public boolean sawContradiction = false;
     /** Von der Retraktion gesammelte TT — consolidate arbeitet NUR diese ab (O(Δ)). */
+    /**
+     * Element → die Kaskaden-Eintraege, die es ERZEUGT haben.
+     * Gegenstueck zu {@link #byElement}, das beantwortet, welche
+     * Matches ein Element ENTHALTEN.
+     *
+     * <p>Ohne ihn kommt die Retraktion vom gefallenen Erzeugnis nicht
+     * zu dem Eintrag, der es gebaut hat: der Match einer Regel enthaelt
+     * nicht, was die Regel erzeugt. Die Korrespondenz desselben
+     * Eintrags war damit unerreichbar (gemessen 2026-08-11).
+     */
+    final HashMap<Id, ArrayList<Integer>> byProduct = new HashMap<>();
+    /** Null = absichtlich ungerichteter Initial-/Batchlauf. */
+    boolean[] waveDirections;
+    /**
+     * Elemente, die der HOST geloescht hat, im Unterschied zu solchen,
+     * die die Engine selbst zurueckgezogen hat.
+     *
+     * <p>WELLENLOKAL: gefuellt von {@link #elementDeleted} und von der
+     * Transitivitaet, geleert von {@link #consolidate}. Die Markierung
+     * gehoert der Welle, nicht der Identitaet -- als dauerhafte Menge
+     * waere sie bei Undo oder einem Baseline-Wechsel falsch (Review
+     * 2026-08-11, Punkt 3).
+     */
+    final TreeSet<Id> hostDeleted = new TreeSet<>();
     final ArrayList<Id> pendingTtNodes = new ArrayList<>();
     final ArrayList<Id> pendingTtEdges = new ArrayList<>();
 
     public Engine(List<Rule> rules) { this.rules = rules; }
+
+    /** Ein vollständiges externes Delta vor seinen Add-/Change-/Delete-
+     *  Tueren zulassen. Die Domänenvereinigung bleibt für die ganze
+     *  Realisationswelle unverändert. */
+    public void admitDelta(List<DeltaDomain> domains) {
+        boolean forward = domains.contains(DeltaDomain.SOURCE);
+        boolean backward = domains.contains(DeltaDomain.TARGET);
+        waveDirections = new boolean[] { forward, backward };
+    }
+
+    /** Nach einer gerichteten Welle wieder Initial-/Batchsemantik. */
+    public void admitInitial() {
+        waveDirections = null;
+    }
+
+    private void admitDeltaTypes(List<String> deltaTypes) {
+        boolean forward = false;
+        boolean backward = false;
+        for (Rule r : rules) {
+            boolean hit = false;
+            for (String t : r.inputTypes) {
+                if (deltaTypes.contains(t)) { hit = true; break; }
+            }
+            if (!hit) continue;
+            if (r.direction == Rule.Direction.FORWARD) forward = true;
+            if (r.direction == Rule.Direction.BACKWARD) backward = true;
+        }
+        waveDirections = new boolean[] { forward, backward };
+    }
+
+    private boolean ruleActive(int ri) {
+        if (waveDirections == null) return true;
+        Rule.Direction d = rules.get(ri).direction;
+        return d == Rule.Direction.UNDIRECTED
+                || (d == Rule.Direction.FORWARD && waveDirections[0])
+                || (d == Rule.Direction.BACKWARD && waveDirections[1]);
+    }
 
     /**
      * Schluessel eines Matches: Regelindex plus Referenzfolge.
@@ -133,6 +198,22 @@ public final class Engine {
         if (byKey.containsKey(k)) return;
         int ix = matches.size();
         for (Id id : refs) byElement.computeIfAbsent(id, x -> new ArrayList<>()).add(ix);
+        // Die KANTEN des Matches gehoeren ebenso in die Registratur, nicht
+        // nur seine Knoten. Ein Match ruht auf den Kanten, die sein Muster
+        // verlangt, also muss ihr Wegfall ihn ebenso toeten wie der eines
+        // Knotens. Bis hierher toetete ein reines Kanten-Delta (Owner- oder
+        // Super-Wechsel) keinen einzigen Match. Spiegel von record in
+        // seesaw-core/src/engine/mod.rs.
+        //
+        // SAME_VALUE ist ein Wert-Join ueber zwei Blaetter, keine Kante --
+        // im Graphen gibt es dazu keine Verbindung zu indizieren.
+        for (PatLink l : rules.get(ruleIx).patLinks) {
+            if (l.kind == PatLink.Kind.SAME_VALUE) continue;
+            if (l.from < refs.length && l.to < refs.length) {
+                Id e = Ident.identConnection(refs[l.from], refs[l.to]);
+                byElement.computeIfAbsent(e, x -> new ArrayList<>()).add(ix);
+            }
+        }
         byKey.put(k, ix);
         matches.add(new MatchRec(ruleIx, refs));
         todo.add(new TodoKey(rules.get(ruleIx).rank, refs, ruleIx));
@@ -211,14 +292,81 @@ public final class Engine {
         while (!queue.isEmpty()) {
             Id id = queue.remove(queue.size() - 1);
             if (!seen.add(id)) continue;
+            // Zwei Wege, auf denen ein Element weitere Retraktion
+            // begruendet.
+            //
+            // Es NIMMT TEIL an Matches: die verlieren ihren Boden.
             ArrayList<Integer> mixes = byElement.get(id);
-            if (mixes == null) continue;
-            for (int mix : new ArrayList<>(mixes)) retractMatch(g, mix, queue);
+            if (mixes != null) {
+                for (int mix : new ArrayList<>(mixes)) retractMatch(g, mix, queue);
+            }
+            // Es wurde von Eintraegen ERZEUGT: die verlieren ihr
+            // Ergebnis, und mit ihnen faellt alles Weitere, das sie
+            // gebaut haben -- die Korrespondenz vor allem.
+            ArrayList<Integer> eixs = byProduct.get(id);
+            if (eixs != null) {
+                for (int eix : new ArrayList<>(eixs)) retractEntry(g, eix, queue);
+            }
         }
     }
 
-    /** Retraction (M5.3/M5.5): ein Element ist weggefallen. */
+    /**
+     * Retraktion ueber den EINTRAG: den Match finden, der ihn erzeugt
+     * hat, und diesen zurueckziehen. Nutzt {@link #retractMatch}, damit
+     * die Reclaim-Buchhaltung (applied/byKey) an einer Stelle bleibt.
+     */
+    void retractEntry(Graph g, int eix, ArrayList<Id> queue) {
+        Entry e = cascade.get(eix);
+        Integer mix = byKey.get(key(e.ruleIx, e.refs));
+        if (mix != null) retractMatch(g, mix, queue);
+    }
+
+    /**
+     * <b>Der Host hat ein Element GELOESCHT.</b> Eine der drei Tueren
+     * des Interfaces zwischen Host und Engine (add / delete / update).
+     *
+     * <p>Der Delta-Typ kommt vom AUFRUF, nicht aus einer
+     * Statuspruefung. Bis 2026-08-13 gab es nur {@code retractFor}, und
+     * die Engine las am Status ab, was gemeint war: tot beim Eintreffen
+     * hiess Delete, lebendig hiess Update. Das war eine Absprache
+     * zwischen Host und Engine, keine Schnittstelle.
+     *
+     * <p>Der Aufrufer hat den Tombstone bereits gesetzt. Spiegel von
+     * {@code element_deleted}.
+     */
+    public void elementDeleted(Graph g, Id removed) {
+        hostDeleted.add(removed);
+        ArrayList<Id> queue = new ArrayList<>();
+        queue.add(removed);
+        drainRetraction(g, queue);
+    }
+
+    /**
+     * <b>Der Host hat ein Element GEAENDERT.</b> Die dritte Tuer.
+     *
+     * <p>Zurueckziehen und neu ableiten, ohne dass etwas entlang der
+     * Korrespondenzen faellt: ein Change, der seine Realisierung
+     * verletzt, zieht sie samt Korrespondenz zurueck, macht daraus aber
+     * kein Delete der Gegenseite.
+     */
+    public void elementChanged(Graph g, Id changed) {
+        ArrayList<Id> queue = new ArrayList<>();
+        queue.add(changed);
+        drainRetraction(g, queue);
+    }
+
+    /**
+     * @deprecated {@link #elementDeleted} oder {@link #elementChanged}
+     *     benutzen -- der Delta-Typ gehoert zum Aufruf, nicht zu einer
+     *     Statuspruefung.
+     */
+    @Deprecated
     public void retractFor(Graph g, Id removed) {
+        // Beim Eintreffen tot = der Host hat geloescht. Lebendig = die
+        // Engine bewertet neu (ein Change), und entlang der
+        // Korrespondenzen darf nichts fallen.
+        Node rn = g.node(removed);
+        if (rn == null || !rn.status.matchable()) hostDeleted.add(removed);
         ArrayList<Id> queue = new ArrayList<>();
         queue.add(removed);
         drainRetraction(g, queue);
@@ -243,10 +391,12 @@ public final class Engine {
      *  fold-Report. */
     public int consolidate(Graph g) {
         int eliminated = 0;
+        ArrayList<Id> fallen = new ArrayList<>();
         for (Id id : pendingTtNodes) {
             Node n = g.node(id);
             if (n != null && n.status == St.TENTATIVE_TOMBSTONE) {
                 g.setNodeStatus(id, St.TOMBSTONE);
+                if (n.isCorr) fallen.add(id);
                 eliminated++;
             }
         }
@@ -259,6 +409,80 @@ public final class Engine {
         }
         pendingTtNodes.clear();
         pendingTtEdges.clear();
+        int e2 = eliminated + followFallenCorrs(g, fallen);
+        // Die Markierung gehoert der Welle, die gerade endete.
+        hostDeleted.clear();
+        return e2;
+    }
+
+    /**
+     * <b>Loeschen entlang der Korrespondenzen</b> (Sandra 2026-08-11).
+     *
+     * <p>Eine Korrespondenz, die die Konsolidierung als Tombstone
+     * ueberstanden hat, bezeugt eine Uebersetzung, die nicht mehr gilt.
+     * Die Elemente, die sie verbindet, fallen mit ihr. Das traegt eine
+     * Loeschung auf die andere Seite: wer die erzeugte Java-Klasse
+     * loescht, loescht die UML-Klasse.
+     *
+     * <p>Warum HIER und nicht in {@link #drainRetraction}: Retraktion
+     * ist auch das interne Mittel fuer einen Change (zurueckziehen, neu
+     * ableiten, reklamieren). Mitten im Lauf sagt eine gefallene
+     * Korrespondenz nichts aus. Erst die Konsolidierung entscheidet.
+     *
+     * <p>Das Kriterium ist der Delta-Typ, nicht der Status. Ein Change,
+     * der seine Realisierung haelt, wirkt entlang derselben
+     * Korrespondenz. Ein Change, der sie VERLETZT, zieht sie samt
+     * Korrespondenz zurueck -- aber daraus wird kein Delete der
+     * Gegenseite. Nur ein Delete traegt weiter, und nur ueber eine
+     * Korrespondenz, die die Konsolidierung gefallen liess.
+     *
+     * <p>Spiegel von {@code follow_fallen_corrs} in
+     * {@code seesaw-core/src/engine/mod.rs}.
+     */
+    int followFallenCorrs(Graph g, ArrayList<Id> fallen) {
+        int eliminated = 0;
+        TreeSet<Id> seen = new TreeSet<>();
+        while (!fallen.isEmpty()) {
+            Id corr = fallen.remove(fallen.size() - 1);
+            Node cn = g.node(corr);
+            if (!seen.add(corr) || cn == null || !cn.isCorr) continue;
+            ArrayList<Id> ends = new ArrayList<>();
+            for (Part p : g.parts(corr)) ends.add(p.other);
+            boolean geloescht = false;
+            for (Id e : ends) if (hostDeleted.contains(e)) geloescht = true;
+            if (!geloescht) continue;
+            for (Id end : ends) {
+                Node en = g.node(end);
+                if (en == null || !en.status.matchable()) continue;
+                g.setNodeStatus(end, St.TOMBSTONE);
+                // Transitivitaet: ein entlang einer Korrespondenz
+                // mitgerissenes Element ist geloescht und traegt das
+                // naechste weiter.
+                hostDeleted.add(end);
+                elementRemoved(end);
+                eliminated++;
+                ArrayList<Id> queue = new ArrayList<>();
+                queue.add(end);
+                drainRetraction(g, queue);
+                for (Id id : pendingTtNodes) {
+                    Node n = g.node(id);
+                    if (n != null && n.status == St.TENTATIVE_TOMBSTONE) {
+                        g.setNodeStatus(id, St.TOMBSTONE);
+                        if (n.isCorr) fallen.add(id);
+                        eliminated++;
+                    }
+                }
+                for (Id id : pendingTtEdges) {
+                    Conn c = g.conn(id);
+                    if (c != null && c.status == St.TENTATIVE_TOMBSTONE) {
+                        g.setConnectionStatus(id, St.TOMBSTONE);
+                        eliminated++;
+                    }
+                }
+                pendingTtNodes.clear();
+                pendingTtEdges.clear();
+            }
+        }
         return eliminated;
     }
 
@@ -269,17 +493,18 @@ public final class Engine {
     }
 
     public void seed(Graph g, Map<Id, String> vals) {
-        for (int ri = 0; ri < rules.size(); ri++) seedRule(g, vals, ri);
+        for (int ri = 0; ri < rules.size(); ri++) {
+            if (ruleActive(ri)) seedRule(g, vals, ri);
+        }
     }
 
-    /** Δ-Routing (Spiegel von seed_routed): Regel aktiv, wenn das Delta
-     *  einen ihrer Eingangs-Typen berührt. Richtung wohnt im Delta. */
+    /** Kompatibilitätsroute für Hosts mit berührten Typnamen. Die
+     *  Typen wählen eine RICHTUNG; alle Regeln dieser Richtung bleiben
+     *  für gleichgerichtete Folgerealisierungen aktiv. */
     public void seedRouted(Graph g, Map<Id, String> vals, List<String> deltaTypes) {
+        admitDeltaTypes(deltaTypes);
         for (int ri = 0; ri < rules.size(); ri++) {
-            boolean hit = false;
-            for (String t : rules.get(ri).inputTypes)
-                if (deltaTypes.contains(t)) { hit = true; break; }
-            if (hit) seedRule(g, vals, ri);
+            if (ruleActive(ri)) seedRule(g, vals, ri);
         }
     }
 
@@ -289,8 +514,27 @@ public final class Engine {
         expandAt(g, vals, newNodes);
     }
 
+    /**
+     * Ein Link ist HINZUGEKOMMEN (Gegenstueck zu
+     * {@link #linkRemoved}). Spiegel von {@code link_added}.
+     *
+     * <p>Ein {@code connect} auf zwei BESTEHENDE Knoten weckt nichts:
+     * die Anker-Expansion laeuft ueber neue KNOTEN, und beide Enden
+     * waren schon da. Ein reines Add-Kanten-Delta (Owner-Wechsel,
+     * Generalisierung) bliebe damit unsichtbar.
+     *
+     * <p>Beide Enden neu zu expandieren ist dieselbe
+     * Ueber-Approximation wie bei {@code linkRemoved}. Die
+     * Duplikat-Unterdrueckung faengt ueberfluessige Kandidaten ab, weil
+     * Identitaeten ableitbar sind.
+     */
+    public void linkAdded(Graph g, Map<Id, String> vals, Id a, Id b) {
+        expandAt(g, vals, List.of(a, b));
+    }
+
     public void expandAt(Graph g, Map<Id, String> vals, List<Id> newNodes) {
         for (int ri = 0; ri < rules.size(); ri++) {
+            if (!ruleActive(ri)) continue;
             Rule r = rules.get(ri);
             for (Id id : newNodes) {
                 Node n = g.node(id);
@@ -348,6 +592,7 @@ public final class Engine {
         // Plan-indiziert; null-Slot = dyn-Blatt ohne Quelle.
         List<Id> slots = new ArrayList<>();
         List<Id> created = new ArrayList<>();
+        List<Id[]> dynCorrs = new ArrayList<>();
         for (int planIx = 0; planIx < r.createNodes.size(); planIx++) {
             CreateNode cn = r.createNodes.get(planIx);
             Id parent;
@@ -364,6 +609,15 @@ public final class Engine {
                 Id src = g.childLeafOfType(refs[cn.dynAnchor], cn.dynAttr);
                 if (src == null) { slots.add(null); continue; }
                 id = g.addDerivedLeaf(parent, cn.typ, src, cn.dynTransform);
+                // Die Attribut-Korrespondenz des dynamischen Falls.
+                // Fehlt die Quelle, entsteht kein Blatt und folglich
+                // auch keine Korrespondenz -- apply-if-present gilt
+                // fuer beide. Spiegel von apply_creation in plan.rs.
+                if (cn.attrCorr != null) {
+                    Id ac = g.addCorr(src, cn.attrCorr + "_" + cn.typ, refs);
+                    g.markCorr(ac);
+                    dynCorrs.add(new Id[] {ac, src, id});
+                }
             } else if (cn.konst != null) {
                 id = g.addKonstLeaf(parent, cn.typ, r.name, planIx, cn.konst);
             } else if (cn.derivedLeaf < 0) {
@@ -371,6 +625,7 @@ public final class Engine {
             } else {
                 id = g.addDerivedLeaf(parent, cn.typ, refs[cn.derivedLeaf], cn.derivedTransform);
             }
+            if (cn.isCorr) g.markCorr(id);
             slots.add(id);
             created.add(id);
         }
@@ -385,6 +640,15 @@ public final class Engine {
                 if (cr != null && cr.fresh) edges.add(cr.id);
             }
         }
+        // Attribut-Korrespondenzen des dynamischen Falls: erst hier
+        // bekannt, weil ihre Quelle beim Anwenden gefunden wurde.
+        for (Id[] dc : dynCorrs) {
+            created.add(dc[0]);
+            for (int k = 1; k <= 2; k++) {
+                Id e = g.connect(dc[0], dc[k], St.GHOST);
+                if (e != null) edges.add(e);
+            }
+        }
         return new Created(created, edges);
     }
 
@@ -396,19 +660,26 @@ public final class Engine {
     /** Schritt mit Backtracking-Schranke (strikt UNTER der Schranke). */
     public Boolean stepWithLimit(Graph g, Map<Id, String> vals, SelectionBound ceiling) {
         while (true) {
-            TodoKey k;
+            TodoKey k = null;
             if (ceiling == null) {
-                if (todo.isEmpty()) return null;
-                k = todo.first();
+                if (waveDirections == null) {
+                    if (!todo.isEmpty()) k = todo.first();
+                } else {
+                    for (TodoKey c : todo) {
+                        if (ruleActive(c.ruleIx)) { k = c; break; }
+                    }
+                }
             } else {
                 TodoKey bound = new TodoKey(ceiling.rank, ceiling.refs, 0);
-                k = null;
                 for (TodoKey c : todo.tailSet(bound, true)) {
                     if (c.rank == bound.rank && Matcher.compareBindings(c.refs, bound.refs) == 0) continue;
+                    if (waveDirections != null && !ruleActive(c.ruleIx)) continue;
                     k = c;
                     break;
                 }
-                if (k == null) return null;
+            }
+            if (k == null) {
+                return null;
             }
             todo.remove(k);
             Rule rule = rules.get(k.ruleIx);
@@ -470,6 +741,10 @@ public final class Engine {
             int eix = cascade.size();
             cascade.add(new Entry(k.ruleIx, rule.rank, k.refs, cr.nodes, cr.edges));
             cascadeLen++;
+            // Provenienz, Produktseite: jeder Knoten und jede Kante,
+            // die dieser Eintrag gebaut hat, zeigt auf ihn zurueck.
+            for (Id pid : cr.nodes) byProduct.computeIfAbsent(pid, x -> new ArrayList<>()).add(eix);
+            for (Id pid : cr.edges) byProduct.computeIfAbsent(pid, x -> new ArrayList<>()).add(eix);
             applied.add(ak);
             // Provenienz-Kante materialisieren (für retractFor ohne Scan).
             Integer mix = byKey.get(key(k.ruleIx, k.refs));

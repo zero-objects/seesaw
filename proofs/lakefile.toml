@@ -1,0 +1,10 @@
+name = "seesaw"
+defaultTargets = ["Seesaw"]
+
+# Lean core only — no Mathlib dependency. The basic core lemmas
+# (rank injectivity, ghost-id rename stability, contractivity termination
+# bound) are provable in Lean 4 core, which keeps the toolchain lightweight
+# and the trusted base small.
+
+[[lean_lib]]
+name = "Seesaw"

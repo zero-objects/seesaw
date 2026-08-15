@@ -1,0 +1,48 @@
+{
+  "forward_run": {
+    "alive_nodes": 21,
+    "cascade": 3,
+    "fingerprint": "89c2157d732df6de",
+    "termination": "Duplication"
+  },
+  "incremental_add": {
+    "alive_nodes": 21,
+    "cascade": 3,
+    "cascade_before": 2,
+    "fingerprint": "89c2157d732df6de"
+  },
+  "link_retract": {
+    "alive_nodes": 11,
+    "cascade": 2,
+    "fingerprint": "284d5a2f45697055",
+    "tombstoned": 3
+  },
+  "resurrection": {
+    "alive_nodes": 7,
+    "cascade": 2,
+    "fingerprint": "30461373e48fee8b",
+    "tombstoned": 0
+  },
+  "routed_backward": {
+    "alive_nodes": 14,
+    "cascade": 2,
+    "delta_types": [
+      "Male",
+      "PersonCorr",
+      "name"
+    ],
+    "fingerprint": "6430b8fa91ab3437"
+  },
+  "routed_forward": {
+    "alive_nodes": 14,
+    "cascade": 2,
+    "delta_types": [
+      "Family",
+      "Father",
+      "Member",
+      "PersonCorr",
+      "firstName"
+    ],
+    "fingerprint": "51ece6dfd3eec258"
+  }
+}

@@ -6,6 +6,68 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0 release candidates are tagged `1.0.0-rcN`.
 
+## [2.0.2] — 2026-08-15
+
+The direction of a synchronisation now holds for a whole realisation
+wave, and the Lean proofs ship with the crate.
+
+### Direction lives in the delta, for the whole wave
+
+A declarative rule is lowered into a forward and a backward
+operationalisation, and the paper states that an incoming delta selects
+which of them may run: "a source-domain delta activates only forward
+rules, a target-domain delta only backward ones". The engine routed
+only the *first* enumeration that way. Once a forward rule had produced
+target-side nodes, delta-local expansion offered the backward rules
+again, and what stopped them from firing was the correspondence gate —
+after the candidates had been enumerated and matched.
+
+An incoming delta is now admitted as a whole:
+
+```rust
+engine.admit_delta(&[DeltaDomain::Source]);   // or Target, or both
+```
+
+The union of its domains fixes the admissible directions for the
+complete wave — retraction, re-derivation and consolidation included.
+Products created during that wave cannot change it, and correspondences
+created during it activate further rules of the *same* direction, so a
+legitimate continuation is never cut off. `admit_initial()` selects the
+un-routed batch semantics that a fresh engine starts in.
+
+Only the anchors of *establishing* correspondence links determine a
+rule's input domain; referencing links stay context and activate
+nothing.
+
+Measured on 50,000 F2P families: a directed wave enumerates 50,000
+candidates where the un-routed run enumerated 100,000, the 50,000
+backward candidates drop to zero, the 50,000 forward applications are
+unchanged, and the run takes 645–664 ms instead of 888–931 ms. The
+un-routed path is untouched — dry-cleaner, Hermann/ASTRA and AADL each
+reach an identical final state within measurement noise.
+
+### The three doors, everywhere
+
+`retract_for` never distinguished a deletion from a change; the caller
+knew, the engine had to guess from the element's status. `element_deleted`
+and `element_changed` have been the documented entry points since 2.0.0,
+and every internal caller in both languages now uses them. `retract_for`
+and `retractFor` remain, deprecated, for external callers.
+
+### Rust and Java compare their cascades, not their results
+
+The parity test compared final graphs. It now compares the complete
+cascade sequence — rules, ranks, references, created nodes and edges —
+so a divergence in *how* a result is reached fails there rather than
+in a later model.
+
+### Proofs in the repository
+
+`proofs/` now ships with the crate: the Lean 4 development of the core
+mechanism (identity, consolidation, projection, retraction, rank,
+termination, delta, DPO, fold, decidability). `lake build` completes
+without `sorry`.
+
 ## [2.0.1] — 2026-08-10
 
 Three defects found in a review of the 2.0.0 release, all in the code

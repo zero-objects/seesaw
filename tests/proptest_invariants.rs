@@ -22,7 +22,7 @@ use seesaw_tgg::engine::{Engine, Termination};
 use seesaw_tgg::graph::{Graph, ValueStore};
 use seesaw_tgg::ident::{GhostId, Status};
 use seesaw_tgg::plan::DirectedRule;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 // ══ Regelsatz ════════════════════════════════════════════════════════════
 
@@ -291,7 +291,7 @@ fn delta_anwenden(e: &mut Engine<'_>, g: &mut Graph, vs: &ValueStore, art: Art, 
                 let opfer = kandidaten[ix % kandidaten.len()];
                 g.set_node_status(&opfer, Status::Tombstone);
                 e.element_removed(&opfer);
-                e.retract_for(g, &opfer);
+                e.element_deleted(g, &opfer);
                 true
             }
         }
@@ -667,4 +667,134 @@ fn regelsatz_erzeugt_kaskade() {
     let t = e.run(&mut g, &vs, 10_000);
     assert_eq!(t, Termination::Duplication);
     assert_eq!(e.cascade.len(), 3, "2 Väter + 1 Mutter übersetzt");
+}
+
+// ═══════════ Korrespondenz-Stabilität unter Add und Change ═══════════
+//
+// Die Einschränkung, auf der alles andere ruht (Sandra, 2026-08-11):
+// ein additives oder änderndes Event darf keine Korrespondenz
+// zerstören. Nur ein Delete räumt ab, und zwar entlang der
+// Korrespondenzen.
+//
+// Formuliert als Eigenschaft über den Schritt, nicht über den Zustand:
+// nach jedem Add und jedem Change muss jede vorher bestehende
+// Korrespondenz noch bestehen UND noch dieselben zwei Endpunkte haben.
+// Die zweite Hälfte zählt: eine Korrespondenz, die an einen fremden
+// Anker wandert, ist nicht zerstört, verletzt die Zusage aber genauso.
+
+/// Alle lebenden Korrespondenzen mit ihren Endpunkten, kanonisch.
+fn korrespondenzen(g: &Graph) -> BTreeMap<GhostId, (String, Vec<GhostId>)> {
+    let mut out = BTreeMap::new();
+    for n in g.nodes().filter(|n| n.status.is_matchable()) {
+        let typ = g.types.name(n.typ).to_string();
+        if !typ.ends_with("Corr") {
+            continue;
+        }
+        let mut enden: Vec<GhostId> = g
+            .parts(&n.id)
+            .filter(|p| p.outgoing)
+            .map(|p| p.other)
+            .collect();
+        enden.sort();
+        out.insert(n.id, (typ, enden));
+    }
+    out
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    /// Ein ADD zerstört keine Korrespondenz und hängt keine um.
+    #[test]
+    fn add_erhaelt_korrespondenzen(spec in arb_modell(), extra in 1usize..4) {
+        let (mut g, vs) = baue(&spec);
+        let regeln = regelsatz(&mut g);
+        let rules: &[DirectedRule] = &regeln;
+        let mut e = Engine::new(rules);
+        e.seed(&g, &vs);
+        bis_saettigung(&mut e, &mut g, &vs);
+
+        let vorher = korrespondenzen(&g);
+
+        // Additives Delta: neue Familien samt Rollen, wie sie ein Host
+        // anlegen würde.
+        let mut neu = Vec::new();
+        for k in 0..extra {
+            let fam = g.add_baseline(&format!("neu{k}"), "Family");
+            let r = g.add_baseline(&format!("neu{k}/Father"), "Father");
+            let m = g.add_baseline(&format!("neu{k}/Father/m"), "Member");
+            g.connect(fam, r, Status::Solid);
+            g.connect(r, m, Status::Solid);
+            neu.extend([fam, r, m]);
+        }
+        e.elements_added(&g, &vs, &neu);
+        bis_saettigung(&mut e, &mut g, &vs);
+
+        let nachher = korrespondenzen(&g);
+        for (id, vor) in &vorher {
+            let nach = nachher.get(id);
+            prop_assert!(
+                nach.is_some(),
+                "ein Add hat die Korrespondenz {} zerstoert", id.short()
+            );
+            prop_assert_eq!(
+                nach.unwrap(), vor,
+                "ein Add hat die Korrespondenz {} umgehaengt", id.short()
+            );
+        }
+    }
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(128))]
+
+    /// Ein CHANGE zerstört keine Korrespondenz und hängt keine um.
+    ///
+    /// Der heiklere Fall: ein Wertwechsel läuft in der Engine über
+    /// denselben Pfad wie eine Löschung (`element_removed` +
+    /// `retract_for`), damit die abhängigen Matches neu bewertet
+    /// werden. Wenn die Invariante irgendwo bricht, dann hier.
+    #[test]
+    fn change_erhaelt_korrespondenzen(spec in arb_modell(), ix in 0usize..8) {
+        let (mut g, vs0) = baue(&spec);
+        let regeln = regelsatz(&mut g);
+        let rules: &[DirectedRule] = &regeln;
+        let mut e = Engine::new(rules);
+        let mut vs = vs0;
+        e.seed(&g, &vs);
+        bis_saettigung(&mut e, &mut g, &vs);
+
+        let vorher = korrespondenzen(&g);
+
+        // Change: einen Blattwert umschreiben.
+        let blaetter: Vec<GhostId> = g
+            .nodes()
+            .filter(|n| n.status.is_matchable()
+                && g.types.name(n.typ) == "firstName")
+            .map(|n| n.id)
+            .collect();
+        if blaetter.is_empty() {
+            return Ok(());
+        }
+        let ziel = blaetter[ix % blaetter.len()];
+        vs.insert(ziel, "umbenannt");
+        e.element_removed(&ziel);
+        e.element_changed(&mut g, &ziel);
+        e.seed(&g, &vs);
+        bis_saettigung(&mut e, &mut g, &vs);
+        e.consolidate(&mut g);
+
+        let nachher = korrespondenzen(&g);
+        for (id, vor) in &vorher {
+            let nach = nachher.get(id);
+            prop_assert!(
+                nach.is_some(),
+                "ein Change hat die Korrespondenz {} zerstoert", id.short()
+            );
+            prop_assert_eq!(
+                nach.unwrap(), vor,
+                "ein Change hat die Korrespondenz {} umgehaengt", id.short()
+            );
+        }
+    }
 }

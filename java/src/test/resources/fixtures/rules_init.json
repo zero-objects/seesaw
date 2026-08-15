@@ -1,0 +1,253 @@
+{
+  "rules": [
+    {
+      "corr_recognition": [
+        [
+          "SendVerifyMark",
+          2,
+          "SEND_verify_LST_Elem"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 2
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "m": 2
+          },
+          {
+            "n": 1
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "n": 1
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 2
+          },
+          "typ": "SendVerifyMark"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "SEND_verify_LST_Elem"
+        }
+      ],
+      "input_types": [
+        "CheckTM",
+        "CheckTM_List",
+        "HeadMark",
+        "SendVerifyMark",
+        "Send_PIL",
+        "TMCond"
+      ],
+      "name": "Init_Mark_SEND_verify_Fst→",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        },
+        {
+          "context": false,
+          "from": 1,
+          "to": 2
+        },
+        {
+          "context": false,
+          "from": 2,
+          "to": 4
+        },
+        {
+          "context": false,
+          "from": 2,
+          "to": 3
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "Send_PIL",
+          "value": null
+        },
+        {
+          "typ": "CheckTM_List",
+          "value": null
+        },
+        {
+          "typ": "CheckTM",
+          "value": null
+        },
+        {
+          "typ": "TMCond",
+          "value": null
+        },
+        {
+          "typ": "HeadMark",
+          "value": null
+        }
+      ],
+      "rank": 1000
+    },
+    {
+      "corr_recognition": [
+        [
+          "SendVerifyMark",
+          1,
+          "CheckTM"
+        ]
+      ],
+      "create_links": [
+        [
+          {
+            "m": 1
+          },
+          {
+            "n": 0
+          }
+        ],
+        [
+          {
+            "n": 1
+          },
+          {
+            "n": 2
+          }
+        ],
+        [
+          {
+            "n": 2
+          },
+          {
+            "m": 0
+          }
+        ],
+        [
+          {
+            "m": 0
+          },
+          {
+            "n": 4
+          }
+        ],
+        [
+          {
+            "m": 0
+          },
+          {
+            "n": 3
+          }
+        ],
+        [
+          {
+            "n": 0
+          },
+          {
+            "m": 0
+          }
+        ]
+      ],
+      "create_nodes": [
+        {
+          "corr_full_match": false,
+          "derived": {
+            "leaf": 0,
+            "transform": []
+          },
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "m": 1
+          },
+          "typ": "SendVerifyMark"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "Send_PIL"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 1
+          },
+          "typ": "CheckTM_List"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "TMCond"
+        },
+        {
+          "corr_full_match": false,
+          "derived": null,
+          "derived_dyn": null,
+          "konst": null,
+          "parent": {
+            "n": 0
+          },
+          "typ": "HeadMark"
+        }
+      ],
+      "input_types": [
+        "CheckTM",
+        "SEND_verify_LST_Elem",
+        "SendVerifyMark"
+      ],
+      "name": "Init_Mark_SEND_verify_Fst←",
+      "pattern_links": [
+        {
+          "context": false,
+          "from": 0,
+          "to": 1
+        }
+      ],
+      "pattern_nodes": [
+        {
+          "typ": "CheckTM",
+          "value": null
+        },
+        {
+          "typ": "SEND_verify_LST_Elem",
+          "value": null
+        }
+      ],
+      "rank": 1000
+    }
+  ]
+}

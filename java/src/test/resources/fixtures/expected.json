@@ -1,0 +1,44 @@
+{
+  "astra": [
+    {
+      "alive_nodes": 3498,
+      "fingerprint": "aa9ebaa502b60194",
+      "phase": "init",
+      "steps": 22
+    },
+    {
+      "alive_nodes": 8353,
+      "fingerprint": "c242ef362cdbbb2b",
+      "phase": "translation",
+      "steps": 1538
+    }
+  ],
+  "mini": [
+    {
+      "alive_nodes": 203,
+      "fingerprint": "4c1c3bca99e37032",
+      "phase": "init",
+      "steps": 2
+    },
+    {
+      "alive_nodes": 467,
+      "fingerprint": "71b57fef5e876ce4",
+      "phase": "translation",
+      "steps": 84
+    }
+  ],
+  "paper": [
+    {
+      "alive_nodes": 1128148,
+      "fingerprint": "e3f7b22a7e019173",
+      "phase": "init",
+      "steps": 11512
+    },
+    {
+      "alive_nodes": 2615691,
+      "fingerprint": "96eccc0b937d2bfc",
+      "phase": "translation",
+      "steps": 492377
+    }
+  ]
+}

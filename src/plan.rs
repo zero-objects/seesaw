@@ -49,6 +49,46 @@ pub struct CreateNode {
     pub derived_dyn: Option<(usize, String, PlanTransform)>,
     /// Corr node: identity = anchor + type + match digest (§1.4).
     pub corr_full_match: bool,
+    /// Is this created node the correspondence of its rule?
+    ///
+    /// Set by lowering from the rule file's `corrs`. The engine follows
+    /// it when deleting: a fallen correspondence takes the elements it
+    /// connects with it.
+    pub is_corr: bool,
+    /// Typ der Attribut-Korrespondenz dieses Blattes, wenn es aus einem
+    /// DYNAMISCHEN Constraint stammt (`left_type`/`right_type`).
+    ///
+    /// Im statischen Fall legt das Lowering die Blatt-Korrespondenz
+    /// selbst an, weil dort beide Blaetter als Musterposition
+    /// feststehen. Im dynamischen Fall wird die Quelle erst beim
+    /// Anwenden ueber `child_leaf_of_type` gefunden, also muss die
+    /// Korrespondenz dort entstehen -- anderer Ort, gleiche Sache.
+    pub attr_corr: Option<String>,
+}
+
+/// Operational direction produced by lowering a declarative rule.
+///
+/// This is not a pass switch. It is immutable plan metadata; an
+/// incoming delta selects one or both directed families for its
+/// realisation wave.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuleDirection {
+    Forward,
+    Backward,
+    /// A rule without an establishing correspondence has no side from
+    /// which a direction could be derived. Such rules remain available
+    /// in every routed wave, preserving the legacy un-routed meaning.
+    Undirected,
+}
+
+impl RuleDirection {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Forward => "forward",
+            Self::Backward => "backward",
+            Self::Undirected => "undirected",
+        }
+    }
 }
 
 /// Directed rule: pattern (input side + context corrs) and creation
@@ -57,6 +97,7 @@ pub struct CreateNode {
 pub struct DirectedRule {
     pub name: String,
     pub rank: u64,
+    pub direction: RuleDirection,
     pub pattern: Pattern,
     pub create_nodes: Vec<CreateNode>,
     pub create_links: Vec<(Ref, Ref)>,
@@ -90,6 +131,8 @@ pub fn apply_creation(
 ) -> (Vec<GhostId>, Vec<GhostId>) {
     // Plan-indexed; None = a dynamic leaf without a source (dropped).
     let mut slots: Vec<Option<GhostId>> = Vec::with_capacity(rule.create_nodes.len());
+    let mut dyn_corrs: Vec<(GhostId, GhostId, GhostId)> = Vec::new();
+    let mut dyn_edges: Vec<GhostId> = Vec::new();
     for (plan_ix, cn) in rule.create_nodes.iter().enumerate() {
         let parent = match cn.parent {
             Ref::Matched(p) => bindings[p],
@@ -108,8 +151,19 @@ pub fn apply_creation(
             };
             Some(g.add_corr(&anchor, &cn.typ, bindings))
         } else if let Some((anchor, ref attr, ref t)) = cn.derived_dyn {
-            g.child_leaf_of_type(&bindings[anchor], attr)
-                .map(|src| g.add_derived_leaf(&parent, &cn.typ, src, t))
+            g.child_leaf_of_type(&bindings[anchor], attr).map(|src| {
+                let leaf = g.add_derived_leaf(&parent, &cn.typ, src, t);
+                // Die Attribut-Korrespondenz des dynamischen Falls.
+                // Fehlt die Quelle, entsteht kein Blatt und folglich
+                // auch keine Korrespondenz -- apply-if-present gilt
+                // fuer beide.
+                if let Some(ct) = &cn.attr_corr {
+                    let ac = g.add_corr(&src, &format!("{ct}_{}", cn.typ), bindings);
+                    g.mark_corr(&ac);
+                    dyn_corrs.push((ac, src, leaf));
+                }
+                leaf
+            })
         } else {
             Some(match (&cn.konst, &cn.derived) {
                 (Some(v), _) => g.add_konst_leaf(&parent, &cn.typ, &rule.name, plan_ix as u32, v),
@@ -119,7 +173,23 @@ pub fn apply_creation(
                 (None, None) => g.add_ghost(&parent, &cn.typ),
             })
         };
+        if cn.is_corr {
+            if let Some(id) = id {
+                g.mark_corr(&id);
+            }
+        }
         slots.push(id);
+    }
+    // Attribut-Korrespondenzen des dynamischen Falls: erst hier
+    // bekannt, weil ihre Quelle beim Anwenden gefunden wurde.
+    let mut dyn_nodes: Vec<GhostId> = Vec::new();
+    for (ac, src, leaf) in dyn_corrs {
+        dyn_nodes.push(ac);
+        for (a, b) in [(ac, src), (ac, leaf)] {
+            if let Some(e) = g.connect(a, b, crate::ident::Status::Ghost) {
+                dyn_edges.push(e);
+            }
+        }
     }
     let mut edges = Vec::new();
     for &(a, b) in &rule.create_links {
@@ -146,7 +216,10 @@ pub fn apply_creation(
             }
         }
     }
-    (slots.into_iter().flatten().collect(), edges)
+    let mut nodes: Vec<GhostId> = slots.into_iter().flatten().collect();
+    nodes.extend(dyn_nodes);
+    edges.extend(dyn_edges);
+    (nodes, edges)
 }
 
 // ══ Tests (stage 3) ═══════════════════════════════════════════════════════
@@ -224,8 +297,11 @@ mod tests {
         assert_eq!(matches.len(), 3);
 
         let (created, _edges) = apply_creation(&mut g, &fwd, &matches[0]);
-        // Corr + Male + Namensblatt.
-        assert_eq!(created.len(), 3);
+        // Corr + Male + Namensblatt + die Attribut-Korrespondenz des
+        // Namensblatts. Was das Regelformat `bindings` nennt, ist eine
+        // Korrespondenz auf Blatt-Ebene und traegt seit 2026-08-12
+        // einen eigenen Knoten.
+        assert_eq!(created.len(), 4);
         let corr = created[0];
         let male = created[1];
         let name_leaf = created[2];

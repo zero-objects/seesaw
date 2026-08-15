@@ -31,7 +31,7 @@
 
 mod common;
 
-use seesaw_tgg::engine::Engine;
+use seesaw_tgg::engine::{DeltaDomain, Engine};
 use seesaw_tgg::graph::{Graph, ValueStore};
 use seesaw_tgg::ident::Status;
 use seesaw_tgg::plan::DirectedRule;
@@ -200,6 +200,7 @@ impl World {
         w.vs.insert(t1, "Nook");
         w.vs.insert(t2, "Villa");
         w.vs.insert(t3, "Cube");
+        w.engine.admit_delta(&[DeltaDomain::Source]);
         w
     }
 
@@ -298,7 +299,7 @@ impl World {
     fn remove_node(&mut self, id: Id) {
         self.g.set_node_status(&id, Status::Tombstone);
         self.engine.element_removed(&id);
-        self.engine.retract_for(&mut self.g, &id);
+        self.engine.element_deleted(&mut self.g, &id);
     }
 
     /// SetAttr auf einem Blatt: Wert ändern + Match-Neubewertung
@@ -308,7 +309,7 @@ impl World {
     fn set_type(&mut self, type_leaf: Id, value: &str) {
         self.vs.insert(type_leaf, value);
         self.engine.element_removed(&type_leaf);
-        self.engine.retract_for(&mut self.g, &type_leaf);
+        self.engine.element_changed(&mut self.g, &type_leaf);
     }
 
     /// Manuelle Ziel-Ergänzung (Informationsverlust-Test).
@@ -382,6 +383,7 @@ fn higher_order_edit_is_least_changing() {
     w.remove_node(w.next12); //  next h1→h2 weg
     w.remove_node(w.next23); //  next h2→h3 weg
     let h2 = w.h2;
+    w.engine.admit_delta(&[DeltaDomain::Source]);
     w.remove_node(h2); //        h2 gelöscht
     w.set_type(w.h3_type, "Villa"); // h3 Cube→Villa
     let new_next = w.g.add_baseline("next/h1/h3", "NextRel"); // h1→h3 neu

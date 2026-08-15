@@ -37,7 +37,7 @@
 
 mod common;
 
-use seesaw_tgg::engine::Engine;
+use seesaw_tgg::engine::{DeltaDomain, Engine};
 use seesaw_tgg::graph::{Graph, ValueStore};
 use seesaw_tgg::ident::Status;
 use seesaw_tgg::plan::DirectedRule;
@@ -194,6 +194,7 @@ impl World {
         w.vs.insert(q_n, "q");
         w.vs.insert(p_n, "p");
         w.vs.insert(c_n, "c");
+        w.engine.admit_delta(&[DeltaDomain::Source]);
         w
     }
 
@@ -293,11 +294,12 @@ impl World {
     /// MOVE p von rootP nach q: alten Contains-Knoten tombstonen, neuen
     /// hinzufügen. Beides Knoten-Deltas (aus dem Problem geschnitten).
     fn move_p_to_q(&mut self) {
+        self.engine.admit_delta(&[DeltaDomain::Source]);
         // alten Contains(rootP→p) entfernen.
         let old = self.cont_root_p;
         self.g.set_node_status(&old, Status::Tombstone);
         self.engine.element_removed(&old);
-        self.engine.retract_for(&mut self.g, &old);
+        self.engine.element_deleted(&mut self.g, &old);
         // neuen Contains(q→p) hinzufügen.
         let cont = self.g.add_baseline("cont/q/p", "Contains");
         self.g.connect(self.q, cont, Status::Solid);

@@ -49,7 +49,7 @@ mod common;
 
 use std::collections::BTreeMap;
 
-use seesaw_tgg::engine::Engine;
+use seesaw_tgg::engine::{DeltaDomain, Engine};
 use seesaw_tgg::graph::{Graph, ValueStore};
 use seesaw_tgg::ident::Status;
 use seesaw_tgg::plan::DirectedRule;
@@ -204,11 +204,13 @@ impl Sync {
             common::load("case18_pull_up_method", specs.to_vec(), &mut g)
         };
         let leaked: &'static [DirectedRule] = Box::leak(dr.into_boxed_slice());
-        Sync {
+        let mut sync = Sync {
             g,
             vs,
             engine: Engine::new(leaked),
-        }
+        };
+        sync.engine.admit_delta(&[DeltaDomain::Source]);
+        sync
     }
 
     fn sync(&mut self) {
@@ -324,7 +326,7 @@ impl Sync {
     fn remove_node(&mut self, id: Id) {
         self.g.set_node_status(&id, Status::Tombstone);
         self.engine.element_removed(&id);
-        self.engine.retract_for(&mut self.g, &id);
+        self.engine.element_deleted(&mut self.g, &id);
     }
 
     /// Manuelle Ziel-Ergänzung: Notiz an einem MethodDoc — muss den
@@ -419,6 +421,7 @@ fn build_pullup(g: &mut Graph, vs: &mut ValueStore) -> PullUpScene {
 /// tombstonen, Contains(Super→mA) hinzufügen) + die redundante
 /// Zwillings-Methode mB samt Containment löschen.
 fn pull_up_foo(w: &mut Sync, sc: &PullUpScene) {
+    w.engine.admit_delta(&[DeltaDomain::Source]);
     let sup = sc.handles["Super"];
     let m_a = sc.handles["mA"];
     let m_b = sc.handles["mB"];
@@ -578,6 +581,7 @@ fn create_superclass_pulls_method_up() {
 
     // Refactoring: neue Superklasse S; C1, C2 extends S; m1 nach S
     // hochziehen; Zwilling m2 löschen.
+    w.engine.admit_delta(&[DeltaDomain::Source]);
     let s = add_class(&mut w.g, &mut w.vs, "S", "S");
     add_extends(&mut w.g, sc.handles["C1"], s, "ext/C1");
     add_extends(&mut w.g, sc.handles["C2"], s, "ext/C2");

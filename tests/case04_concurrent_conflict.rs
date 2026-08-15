@@ -25,7 +25,7 @@
 
 mod common;
 
-use seesaw_tgg::engine::Engine;
+use seesaw_tgg::engine::{DeltaDomain, Engine};
 use seesaw_tgg::graph::{Graph, ValueStore};
 use seesaw_tgg::ident::Status;
 use seesaw_tgg::plan::DirectedRule;
@@ -138,6 +138,7 @@ impl World {
         w.vs.insert(m1n, "M1");
         w.vs.insert(c2n, "C2");
         w.vs.insert(m2n, "M2");
+        w.engine.admit_delta(&[DeltaDomain::Source]);
         w
     }
 
@@ -238,7 +239,7 @@ impl World {
     fn remove_node(&mut self, id: Id) {
         self.g.set_node_status(&id, Status::Tombstone);
         self.engine.element_removed(&id);
-        self.engine.retract_for(&mut self.g, &id);
+        self.engine.element_deleted(&mut self.g, &id);
     }
 }
 
@@ -268,6 +269,8 @@ fn concurrent_conflict_is_made_visible() {
     // Concurrent-Delta (EIN logischer Edit-Schritt):
     //  - Source: DelNode(C1)
     //  - Target: AddNode(E_extra unter D1)  ← manuelle Ziel-Ergänzung
+    w.engine
+        .admit_delta(&[DeltaDomain::Source, DeltaDomain::Target]);
     let e_extra = w.g.add_baseline("E_extra", "Entry");
     let ex_n = w.g.add_baseline("E_extra/name", "entryName");
     w.g.connect(e_extra, ex_n, Status::Solid);
@@ -313,6 +316,8 @@ fn conflict_representation_is_deterministic() {
         let mut w = World::new();
         w.sync();
         let d1 = w.doc_of(&w.c1).unwrap();
+        w.engine
+            .admit_delta(&[DeltaDomain::Source, DeltaDomain::Target]);
         let e_extra = w.g.add_baseline("E_extra", "Entry");
         w.g.connect(d1, e_extra, Status::Solid);
         w.remove_node(w.c1);

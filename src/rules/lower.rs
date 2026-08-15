@@ -27,7 +27,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::engine::matcher::{Link, Pattern, PatternNode};
 use crate::graph::{Graph, PlanTransform};
-use crate::plan::{CreateNode, DirectedRule, Ref};
+use crate::plan::{CreateNode, DirectedRule, Ref, RuleDirection};
 use crate::rules::format::Role;
 use crate::rules::transform::{Chain, ChainTable};
 use crate::rules::validate::{
@@ -248,6 +248,8 @@ fn lower_directed_v3(
             konst: None,
             derived_dyn: None,
             corr_full_match: false,
+            is_corr: true,
+            attr_corr: None,
         });
         create_links.push((Ref::Matched(in_anchor), Ref::New(ix)));
         est_corrs.push((in_anchor, est_out, ix));
@@ -270,12 +272,20 @@ fn lower_directed_v3(
         }
         // Leaf bindings: created as a derived leaf from the input leaf
         // (invertible chain) — searched over ALL establishes corrs.
-        let hit = establishes.iter().find_map(|c| {
-            c.bindings.iter().find(|b| {
-                let (_, dst) = binding_ends(b, forward);
-                matches!(dst, BindingSource::Node(p) if *p == i)
-            })
+        // Welche Korrespondenz stellt dieses Ausgabe-Blatt einem
+        // Eingabe-Blatt gegenueber? Der Index wird gebraucht, weil das
+        // Paar seine EIGENE Korrespondenz bekommt (siehe unten).
+        let hit = establishes.iter().enumerate().find_map(|(ci, c)| {
+            c.bindings
+                .iter()
+                .find(|b| {
+                    let (_, dst) = binding_ends(b, forward);
+                    matches!(dst, BindingSource::Node(p) if *p == i)
+                })
+                .map(|b| (ci, b))
         });
+        let attr_corr_of = hit.map(|(ci, _)| establishes[ci].typ.clone());
+        let hit = hit.map(|(_, b)| b);
         let derived = match hit {
             None => None,
             Some(b) => {
@@ -322,6 +332,8 @@ fn lower_directed_v3(
                 },
             },
         };
+        let leaf_ix = create_nodes.len();
+        let src_leaf = derived.as_ref().map(|(in_leaf, _)| *in_leaf);
         create_nodes.push(CreateNode {
             typ: ns.typ.clone(),
             parent,
@@ -329,7 +341,34 @@ fn lower_directed_v3(
             konst,
             derived_dyn: None,
             corr_full_match: false,
+            is_corr: false,
+            attr_corr: None,
         });
+        // Attribut-Korrespondenz: das Blattpaar bekommt eine EIGENE
+        // Korrespondenz, nicht eine Kante an die Knoten-Korrespondenz.
+        //
+        // Was das Regelformat `bindings` nennt, ist im TGG-Sinn ein
+        // Attribut-Constraint zwischen zwei Blaettern -- also selbst
+        // eine Korrespondenz, nur auf Blatt-Ebene (Sandra 2026-08-12).
+        // Sie traegt dieselbe Identitaetsableitung wie jede andere
+        // Korrespondenz und faellt fuer sich. Deshalb reisst ein Blatt,
+        // das in mehreren Attribut-Korrespondenzen steht, keine davon
+        // mit: es gibt keine geteilte Traegerschaft.
+        if let (Some(ct), Some(src)) = (attr_corr_of, src_leaf) {
+            let cix = create_nodes.len();
+            create_nodes.push(CreateNode {
+                typ: format!("{ct}_{}", ns.typ),
+                attr_corr: None,
+                parent: Ref::Matched(src),
+                derived: None,
+                konst: None,
+                derived_dyn: None,
+                corr_full_match: false,
+                is_corr: true,
+            });
+            create_links.push((Ref::New(cix), Ref::Matched(src)));
+            create_links.push((Ref::New(cix), Ref::New(leaf_ix)));
+        }
     }
     // DYNAMIC bindings (leaf type instead of leaf position): one leaf
     // per binding at the ESTABLISHED endpoint of ITS corr, the source
@@ -373,6 +412,10 @@ fn lower_directed_v3(
                 konst: None,
                 derived_dyn: Some((in_anchor, in_attr.clone(), t)),
                 corr_full_match: false,
+                is_corr: false,
+                // Der dynamische Fall bekommt seine Blatt-Korrespondenz
+                // beim Anwenden, weil die Quelle erst dort feststeht.
+                attr_corr: Some(c.typ.clone()),
             });
             create_links.push((est, Ref::New(ix)));
         }
@@ -421,25 +464,29 @@ fn lower_directed_v3(
     Ok(DirectedRule {
         name: format!("{}{}", rule.name, if forward { "→" } else { "←" }),
         rank: rule.rank,
+        direction: if establishes.is_empty() {
+            RuleDirection::Undirected
+        } else if forward {
+            RuleDirection::Forward
+        } else {
+            RuleDirection::Backward
+        },
         pattern,
         create_nodes,
         create_links,
-        // Δ routing over ALL pattern types (including corr/context
-        // nodes): rules whose only new trigger is the corr itself must
-        // fire once it's created.
+        // Delta routing is derived only from the input anchors of
+        // establishing correspondences. References are context and do
+        // not select a direction. Once selected, however, the complete
+        // directed family stays active so newly created context can
+        // enable follow-up rules in the same direction.
         input_types: {
-            let mut t: Vec<String> = inn.nodes.iter().map(|n| n.typ.clone()).collect();
-            for c in &rule.corrs {
-                t.push(c.typ.clone());
-            }
-            for ns in out
-                .nodes
+            let mut t: Vec<String> = establishes
                 .iter()
-                .enumerate()
-                .filter_map(|(i, ns)| out_ctx_pattern_pos.contains_key(&i).then_some(ns))
-            {
-                t.push(ns.typ.clone());
-            }
+                .map(|c| {
+                    let (anchor, _) = corr_ends(c, forward);
+                    inn.nodes[anchor].typ.clone()
+                })
+                .collect();
             t.sort();
             t.dedup();
             t
@@ -596,8 +643,10 @@ mod tests {
         assert_eq!(fwd.name, "R_Class→");
         assert_eq!(bwd.name, "R_Class←");
         assert_eq!(fwd.rank, 40);
-        assert!(fwd.input_types.contains(&"Class".to_string()));
-        assert!(bwd.input_types.contains(&"JavaClass".to_string()));
+        assert_eq!(fwd.direction, RuleDirection::Forward);
+        assert_eq!(bwd.direction, RuleDirection::Backward);
+        assert_eq!(fwd.input_types, vec!["Class"]);
+        assert_eq!(bwd.input_types, vec!["JavaClass"]);
     }
 
     #[test]

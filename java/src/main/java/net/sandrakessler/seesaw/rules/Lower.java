@@ -213,7 +213,7 @@ public final class Lower {
             int ix = createNodes.size();
             createNodes.add(new CreateNode(c.typ, refMatched(inAnchor),
                     estMatched == null ? -1 : estMatched,
-                    estMatched == null ? null : identChain));
+                    estMatched == null ? null : identChain, true));
             createLinks.add(new int[] {refMatched(inAnchor), refNew(ix)});
             estCorrs.add(new int[] {inAnchor, estOut, ix});
             corrOfOut.putIfAbsent(estOut, ix);
@@ -240,11 +240,13 @@ public final class Lower {
             // Eingangsblatt erzeugt, gesucht ueber ALLE
             // establishes-Corrs.
             ResolvedBinding hit = null;
+            String attrCorrTyp = null;
             for (ResolvedCorr c : establishes) {
                 for (ResolvedBinding b : c.bindings) {
                     Source d = dst(b, forward);
                     if (d.isNode() && d.node == i) {
                         hit = b;
+                        attrCorrTyp = c.typ;
                         break;
                     }
                 }
@@ -292,6 +294,19 @@ public final class Lower {
                 parent = refMatched(inn.anchor);
             }
             createNodes.add(new CreateNode(ns.typ, parent, derivedLeaf, derivedTransform, konst));
+            // Attribut-Korrespondenz: das Blattpaar bekommt eine EIGENE
+            // Korrespondenz. Was das Regelformat `bindings` nennt, ist
+            // im TGG-Sinn ein Attribut-Constraint zwischen zwei
+            // Blaettern, also selbst eine Korrespondenz auf Blatt-Ebene
+            // (Sandra 2026-08-12), mit derselben Identitaetsableitung
+            // wie jede andere. Spiegel von lower.rs.
+            if (attrCorrTyp != null && derivedLeaf >= 0) {
+                int acix = createNodes.size();
+                createNodes.add(new CreateNode(attrCorrTyp + "_" + ns.typ,
+                        refMatched(derivedLeaf), -1, null, null, -1, null, null, false, true));
+                createLinks.add(new int[] {refNew(acix), refMatched(derivedLeaf)});
+                createLinks.add(new int[] {refNew(acix), refNew(ix)});
+            }
         }
         // DYNAMISCHE Bindungen (Blatt-Typ statt Blatt-Position): ein
         // Blatt je Bindung am etablierten Endpunkt SEINER Corr, die
@@ -325,8 +340,10 @@ public final class Lower {
                 }
                 Chain t = bindingChain(b, chains, forward);
                 int ix = createNodes.size();
+                // Der dynamische Fall bekommt seine Blatt-Korrespondenz
+                // beim Anwenden, weil die Quelle erst dort feststeht.
                 createNodes.add(new CreateNode(d.leafType, estRef, -1, null, null,
-                        inAnchor, s.leafType, t, false));
+                        inAnchor, s.leafType, t, false, false, c.typ));
                 createLinks.add(new int[] {estRef, refNew(ix)});
             }
         }
@@ -353,20 +370,19 @@ public final class Lower {
 
         dr.name = rule.name + (forward ? "→" : "←");
         dr.rank = rule.rank;
+        dr.direction = establishes.isEmpty()
+                ? Rule.Direction.UNDIRECTED
+                : (forward ? Rule.Direction.FORWARD : Rule.Direction.BACKWARD);
         dr.createNodes = createNodes;
         dr.createLinks = createLinks;
-        // Δ-Routing ueber ALLE Pattern-Typen einschliesslich Corr- und
-        // Kontextknoten: eine Regel, deren einziger neuer Ausloeser die
-        // Corr selbst ist, muss feuern, sobald diese entsteht.
+        // Delta-Routing nur ueber die Eingangsanker etablierender
+        // Korrespondenzen. References sind Kontext und waehlen keine
+        // Richtung. Nach der Auswahl bleibt die gesamte gerichtete
+        // Regelfamilie aktiv, damit neuer Kontext Folgeregeln weckt.
         Set<String> types = new TreeSet<>();
-        for (Validate.ResolvedNode n : inn.nodes) {
-            types.add(n.typ);
-        }
-        for (ResolvedCorr c : rule.corrs) {
-            types.add(c.typ);
-        }
-        for (Integer i : outCtx.keySet()) {
-            types.add(out.nodes.get(i).typ);
+        for (ResolvedCorr c : establishes) {
+            int[] ends = corrEnds(c, forward);
+            types.add(inn.nodes.get(ends[0]).typ);
         }
         dr.inputTypes = new ArrayList<>(types);
         dr.corrRecognition = new ArrayList<>();
