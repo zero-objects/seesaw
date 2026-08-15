@@ -1,9 +1,8 @@
 # Seesaw Rev2 — Mechanisierung der Theorie
 
-Erster Baustein der mechanisierten Beweise. Ziel: die im Paper
-(`paper/sections/formal_core.tex`) als Zukunft erwähnte Mechanisierung real
-beginnen. Vollständige Papier-Beweise stehen im Companion-Report,
-`chapters/09_verifikation.tex` (Lemmata V₁–V₂₃).
+Die mechanisierten Beweise zum Paper. Sie decken die 23
+Verifikations-Verpflichtungen V₁–V₂₃ des formalen Kerns ab; das Paper
+zitiert sie in Abschnitt „Mechanised Verification".
 
 ## Toolchain
 
@@ -16,27 +15,29 @@ beginnen. Vollständige Papier-Beweise stehen im Companion-Report,
 
 ## Stand: alle 23 Vs formalisiert und bewiesen (`lake build` grün, kein `sorry`)
 
-**V₅ ist seit 2026-08-11 über Provenienz statt über Status formuliert.**
-Bis dahin lautete es „keine Operation verändert ein SOLID-Element", was
-zur damaligen Engine passte: sie zog nur GHOST-Erzeugnisse zurück. Genau
-das war ein Defekt — das Löschen der Quelle eines materialisierten
-Erzeugnisses setzte gar keinen Tombstone (behoben in 2.0.1). Status
-beschreibt die Materialisierung, nicht die Herkunft; beides ist
-unabhängig, und nur die Herkunft entscheidet, was zurückgezogen werden
-darf. Das Modell trägt jetzt den Materialisierungsschritt und die
-Provenienzrelation getrennt, und V₅ sagt, was es immer meinte: Struktur,
-die die Kaskade nicht erzeugt hat, bleibt unberührt.
+**V₅ ist über die Korrespondenz formuliert, nicht über den Status.**
+Früher lautete es „keine Operation verändert ein SOLID-Element". Das
+passte zur damaligen Engine, die nur GHOST-Erzeugnisse zurückzog, und
+war genau der Defekt: das Löschen der Quelle eines materialisierten
+Erzeugnisses setzte keinen Tombstone (behoben in 2.0.1). Der Status
+beschreibt die Materialisierung, nicht die Herkunft. Die Herkunft trägt
+die Korrespondenz — `Carries` sagt, welche Korrespondenz ein Element
+hält, `Free` heißt: von keiner gehalten. V₅ sagt damit, was es immer
+meinte: Struktur, die die Kaskade nicht erzeugt hat, bleibt
+unberührt.
 
 Vollständig relativ zu **vier benannten, isolierten Idealisierungen** (unten).
-12 Vs sind ohne jede Idealisierung bewiesen (nur Lean-Standard-Axiome), 11
-weitere ruhen je auf genau einer benannten Idealisierung — nichts global
-axiomatisiert, `#print axioms` pro Lemma geprüft.
+17 Vs sind ohne projektspezifische Annahme bewiesen (nur Lean-Standard,
+teils axiomfrei), 6 ruhen auf je einer der drei Schnittstellen-Idealisierungen.
+Die vierte, die Kollisionsfreiheit des Struktur-Hashes, steckt nur im
+Hilfslemma `distinct_struct_distinct_id`, nicht im V₁₈-Satz selbst. Nichts
+global axiomatisiert, `#print axioms` pro Lemma geprüft.
 
 | Datei | Inhalt | Bezug |
 |---|---|---|
 | `Seesaw/Basic.lean` | `Status`; Sichtbarkeit vs. Materialisierung; `IdInput`/`H`/`Element`/`idOf`; `rename_stable`; `distinct_struct_distinct_id` | def:status, def:ghostid |
 | `Seesaw/Delta.lean` | `deltaRun_length` (\|D_x\|=x+1); `cascadeStep_freeze`/`cascadeSteps_freeze` | **V₆**, **V₃** |
-| `Seesaw/Projection.lean` | `applyScript_preserves_unowned_solid`; `materialized_product_stays_retractable`; `Applies_total` + `Applies_functional` | **V₅**, **V₄** |
+| `Seesaw/Projection.lean` | `applyScript_preserves_free_solid`; `materialized_element_stays_retractable`; `consolidate_preserves_free_solid`; `Applies_total` + `Applies_functional` | **V₅**, **V₄** |
 | `Seesaw/Rank.lean` | `rank_injective`; `rank_total`/`_deterministic`/`muEnum_deterministic`; `selection_wf` + `selection_total` | **V₁₃**, **V₁₄**, **V₁₅** |
 | `Seesaw/Fold.lean` | `fold_fixpoint` (konstruktiv) | **V₁₆** |
 | `Seesaw/Termination.lean` | `Cascade.wf` + `Cascade.length_le_measure` (N(R)-Schranke) | **V₁₀-Basis** |
@@ -90,7 +91,7 @@ Spalte „Mech" = Mechanisierungs-Status/-Aufwand. ✅ = machine-checked.
 | V₂ | Effekt-Äquivalenz ist Kongruenz | V₁ | • | ✅ `effEq_congr` (+refl/symm/trans) (Idealisierung #2) |
 | V₃ | Kaskaden-Freeze (G_t1 immutable) | Konstruktion | ✓ | ✅ `cascadeStep_freeze`, `cascadeSteps_freeze` |
 | V₄ | Projektionsstabilität (φ_L wohldef.) | Induktion \|D\| | • | ✅ `Applies_total` + `Applies_functional` |
-| V₅ | Kaskaden-Isolation (was die Kaskade nicht erzeugt hat, bleibt unberührt) | V₃, def:status | ✓ | ✅ `applyScript_preserves_unowned_solid`, Gegenstück `materialized_product_stays_retractable` |
+| V₅ | Kaskaden-Isolation (was die Kaskade nicht erzeugt hat, bleibt unberührt) | V₃, def:status | ✓ | ✅ `applyScript_preserves_free_solid`, Gegenstück `materialized_element_stays_retractable` |
 | V₆ | Strikte Längen-Monotonie (\|D_x\|=x+1) | append-only | ✓ | ✅ `deltaRun_length` |
 | V₇ | Nicht-Erasure (eigentlich Definition) | — | ✓ | ✅ `Admissible` (dec.); von V₈ via `preserves_admissible` genutzt |
 | V₈ | Retraktion terminiert + erhält V₇ | Wohlfund. depth | • | ✅ `Retraction.wf` + `length_le_depth` + `preserves_admissible` |
@@ -166,6 +167,6 @@ so weit formalisierbar, wie die externe Semantik axiomatisiert wird).
 - EMF/JDT-Notification-Semantik (V₂₁–V₂₃) → nur relativ zu einem axiomatisierten
   Umgebungsmodell beweisbar; teils System-Kontrakt statt Satz.
 
-Realistischer Umfang bis V₁–V₂₀ mechanisiert (ohne Integrations-Vs): Größen-
-ordnung wie im Report genannt (Monate). Dieser Baustein etabliert Toolchain,
-Projekt, Trusted-Base-Hygiene und den ersten substanziellen verifizierten Kern.
+Der Plan ist abgearbeitet: alle 23 Vs sind mechanisiert, einschließlich der
+Integrations-Vs. Die Aufwandsschätzung darüber ist der Stand vor der
+Durchführung und bleibt nur als Planungshistorie stehen.
