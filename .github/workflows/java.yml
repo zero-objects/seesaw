@@ -8,6 +8,10 @@ on:
   pull_request:
     branches: [main]
 
+# Vorgabe fuer alle Jobs; der release-Job hebt sie gezielt an.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: java
