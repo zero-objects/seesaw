@@ -297,36 +297,31 @@ fn enumerate(
     // A candidate from a participation list comes with the connection
     // that realises the first link, so that link is checked on the
     // connection itself; `links_ok` checks the remaining ones.
-    let candidates: Vec<(GhostId, Option<GhostId>)> = match step.links.first() {
-        Some(&(placed, dir)) => {
-            let anchor = cur[placed].expect("placed");
-            g.parts_by_other_type(&anchor, pn.typ)
-                .filter(|p| match dir {
-                    Some(cand_is_source) => p.outgoing != cand_is_source,
-                    None => true,
-                })
-                .map(|p| (p.other, Some(p.connection)))
-                .collect()
-        }
-        None => g.nodes_of_type(pn.typ).map(|n| (n.id, None)).collect(),
-    };
-    trace!(candidates, candidates.len());
+    //
+    // The candidates are tried as they are read, without collecting
+    // them first; the graph does not change during a search.
     let rest = &step.links[step.links.len().min(1)..];
-    for (cand, via) in candidates {
+    let first = step
+        .links
+        .first()
+        .map(|&(placed, dir)| (cur[placed].expect("placed"), dir));
+    // Tries one candidate; `true` = stop (first hit wanted and found).
+    let mut try_candidate = |cand: GhostId, via: Option<GhostId>| -> bool {
+        trace!(candidates);
         if cur.iter().flatten().any(|id| *id == cand) {
-            continue; // injective
+            return false; // injective
         }
         if skip.is_some_and(|skip| skip(&cand)) {
-            continue;
+            return false;
         }
         if via.is_some_and(|c| !g.connection(&c).is_some_and(|c| c.status.is_matchable())) {
-            continue;
+            return false;
         }
         if !node_ok(g, resolver, pn, &cand) {
-            continue;
+            return false;
         }
         if !links_ok(g, cur, rest, cand) {
-            continue;
+            return false;
         }
         cur[step.node_ix] = Some(cand);
         enumerate(
@@ -342,8 +337,25 @@ fn enumerate(
             skip,
         );
         cur[step.node_ix] = None;
-        if stop_first && *found_any {
-            return;
+        stop_first && *found_any
+    };
+    match first {
+        Some((anchor, dir)) => {
+            for p in g.parts_by_other_type(&anchor, pn.typ) {
+                if dir.is_some_and(|cand_is_source| p.outgoing == cand_is_source) {
+                    continue;
+                }
+                if try_candidate(p.other, Some(p.connection)) {
+                    return;
+                }
+            }
+        }
+        None => {
+            for n in g.nodes_of_type(pn.typ) {
+                if try_candidate(n.id, None) {
+                    return;
+                }
+            }
         }
     }
 }

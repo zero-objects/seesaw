@@ -370,6 +370,10 @@ impl AnchorIndex {
             st.marked[id as usize] = true;
             st.list.push(id);
         }
+        // The end of a path: nothing to walk from here.
+        if self.nodes[id as usize].groups.is_empty() {
+            return;
+        }
         self.walk(g, v, x, id, st);
     }
 
