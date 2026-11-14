@@ -12,7 +12,10 @@
 //! cascade, NACs, rank order, duplication verdict) — retraction/
 //! contradiction/fold/backtracking are ported from first-generation afterward.
 
+pub(crate) mod anchor;
 pub mod matcher;
+
+pub use anchor::AnchorIndex;
 
 use std::collections::BTreeSet;
 
@@ -175,6 +178,32 @@ pub struct Engine<'r> {
     deleted: BTreeSet<GhostId>,
     pending_tt_nodes: Vec<GhostId>,
     pending_tt_edges: Vec<GhostId>,
+    /// Anchor conditions of `rules` for the delta-local expansion
+    /// ([`AnchorIndex`]): which (rule, position) a new node can stand at.
+    anchor: AnchorSlot<'r>,
+    /// Working memory of the anchor walks.
+    walk: anchor::Walk,
+}
+
+/// Where the engine's [`AnchorIndex`] comes from.
+enum AnchorSlot<'r> {
+    /// Not built yet ([`Engine::new`]: built on first use).
+    Unbuilt,
+    /// Built by the engine itself.
+    Owned(Box<AnchorIndex>),
+    /// Handed in by the host ([`Engine::with_anchor_index`]).
+    Shared(&'r AnchorIndex),
+}
+
+/// Does `rule` take part under the configured mask and wave route?
+fn rule_admitted(
+    active: Option<&Vec<bool>>,
+    directions: Option<WaveDirections>,
+    rule: &DirectedRule,
+    rule_ix: usize,
+) -> bool {
+    active.is_none_or(|configured| configured[rule_ix])
+        && directions.is_none_or(|d| d.admits(rule.direction))
 }
 
 impl<'r> Engine<'r> {
@@ -195,7 +224,19 @@ impl<'r> Engine<'r> {
             deleted: BTreeSet::new(),
             pending_tt_nodes: Vec::new(),
             pending_tt_edges: Vec::new(),
+            anchor: AnchorSlot::Unbuilt,
+            walk: anchor::Walk::default(),
         }
+    }
+
+    /// Like [`Engine::new`], with an [`AnchorIndex`] the host built once
+    /// for `rules` (several engines over the same rules share it). An
+    /// index built for other rules is not used; the engine then builds
+    /// its own.
+    pub fn with_anchor_index(rules: &'r [DirectedRule], index: &'r AnchorIndex) -> Self {
+        let mut e = Self::new(rules);
+        e.anchor = AnchorSlot::Shared(index);
+        e
     }
 
     pub fn step(&mut self, g: &mut Graph, resolver: &dyn ValueResolver) -> Option<bool> {
@@ -241,12 +282,12 @@ impl<'r> Engine<'r> {
     }
 
     fn rule_active(&self, rule_ix: usize) -> bool {
-        self.active
-            .as_ref()
-            .is_none_or(|configured| configured[rule_ix])
-            && self
-                .wave_directions
-                .is_none_or(|directions| directions.admits(self.rules[rule_ix].direction))
+        rule_admitted(
+            self.active.as_ref(),
+            self.wave_directions,
+            &self.rules[rule_ix],
+            rule_ix,
+        )
     }
 
     fn record(&mut self, rule_ix: usize, refs: Bindings) {
@@ -342,23 +383,86 @@ impl<'r> Engine<'r> {
     }
 
     /// Delta-local expansion: anchor new elements (spec §1.6 add).
+    ///
+    /// Anchors only at the (rule, node, position) triples whose
+    /// neighbourhood realises the paths the pattern requires from there
+    /// ([`AnchorIndex`]); the triples come in the order of the loop over
+    /// rules, nodes and positions, so the recorded matches and their
+    /// order are those of anchoring at every position of the same type.
     fn expand_at(&mut self, g: &Graph, resolver: &dyn ValueResolver, new_nodes: &[GhostId]) {
+        if new_nodes.is_empty() {
+            return;
+        }
+        let rules = self.rules;
+        let usable = match &self.anchor {
+            AnchorSlot::Unbuilt => false,
+            AnchorSlot::Owned(a) => a.built_for(rules),
+            AnchorSlot::Shared(a) => a.built_for(rules),
+        };
+        if !usable {
+            self.anchor = AnchorSlot::Owned(Box::new(AnchorIndex::build(rules)));
+        }
+        let candidates = {
+            let Engine {
+                anchor,
+                walk,
+                active,
+                wave_directions,
+                ..
+            } = self;
+            let index: &AnchorIndex = match anchor {
+                AnchorSlot::Owned(a) => a,
+                AnchorSlot::Shared(a) => a,
+                AnchorSlot::Unbuilt => unreachable!("built above"),
+            };
+            let (active, directions) = (active.as_ref(), *wave_directions);
+            index.candidates(g, resolver, new_nodes, walk, |ri| {
+                rule_admitted(active, directions, &rules[ri], ri)
+            })
+        };
+        #[cfg(test)]
+        self.check_candidates(g, resolver, new_nodes, &candidates);
+        for (ri, ni, pos) in candidates {
+            let pattern = &rules[ri].pattern;
+            let mut fixed = vec![None; pattern.nodes.len()];
+            fixed[pos] = Some(new_nodes[ni]);
+            trace!(anchored_searches);
+            for m in find_matches_with_fixed(g, resolver, pattern, &fixed) {
+                trace!(anchored_found);
+                self.record(ri, m);
+            }
+        }
+    }
+
+    /// Test check of [`anchor::AnchorIndex`]: every (rule, node,
+    /// position) triple at which the unfiltered loop finds a match is a
+    /// candidate.
+    #[cfg(test)]
+    fn check_candidates(
+        &self,
+        g: &Graph,
+        resolver: &dyn ValueResolver,
+        new_nodes: &[GhostId],
+        candidates: &[(usize, usize, usize)],
+    ) {
         for (ri, rule) in self.rules.iter().enumerate() {
             if !self.rule_active(ri) {
                 continue;
             }
-            for &id in new_nodes {
-                let Some(node) = g.node(&id) else { continue };
+            for (ni, id) in new_nodes.iter().enumerate() {
+                let Some(node) = g.node(id) else { continue };
                 for (pos, pn) in rule.pattern.nodes.iter().enumerate() {
                     if pn.typ != node.typ {
                         continue;
                     }
                     let mut fixed = vec![None; rule.pattern.nodes.len()];
-                    fixed[pos] = Some(id);
-                    trace!(anchored_searches);
-                    for m in find_matches_with_fixed(g, resolver, &rule.pattern, &fixed) {
-                        trace!(anchored_found);
-                        self.record(ri, m);
+                    fixed[pos] = Some(*id);
+                    if !find_matches_with_fixed(g, resolver, &rule.pattern, &fixed).is_empty() {
+                        assert!(
+                            candidates.binary_search(&(ri, ni, pos)).is_ok(),
+                            "anchor index drops a match: rule {} position {pos}",
+                            rule.name
+                        );
                     }
                 }
             }

@@ -6,6 +6,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and the project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 Pre-1.0 release candidates are tagged `1.0.0-rcN`.
 
+## [Unreleased]
+
+### Delta-local expansion anchors only where a match can start
+
+After every applied step, `expand_at` anchored each created node at
+every active rule at every pattern position of the same type and ran
+one anchored search per triple. In rule sets whose structural nodes
+share one type and whose node correspondences share one corr type —
+the shape a language pack produces — nearly every rule has such a
+position, and what tells the rules apart (a leaf value two to four
+links away) was checked only inside the search. Each step paid one
+search per rule.
+
+The engine now keeps an anchor index (`engine/anchor.rs`): per rule and
+position the paths of the pattern from that position (breadth-first
+spanning tree, up to six links), merged per position type into one
+prefix tree. A new node's neighbourhood is walked once along that tree;
+a (rule, position) is searched only if all its paths are realised and
+its own value predicate holds. The condition is necessary for a match,
+checked on the same graph state and with the matcher's status checks,
+and the searches run in the order of the former loop, so the recorded
+matches and their order are unchanged. `elements_added` uses the same
+index.
+
+`Engine::new` builds the index on first use. A host that runs several
+engines over the same rules builds it once with `AnchorIndex::build`
+and passes it to the new `Engine::with_anchor_index(rules, &index)`; an
+index built for other rules is ignored and the engine builds its own.
+
+Measured with the Java pack of zerodds-pde (1 395 rules, 2 790 directed)
+on 40 files of commonmark-java: cascade steps of the forward wave
+131.5 s → 3.9 s, of the backward wave 60.3 s → 2.7 s; identical graph
+and output. Rust only; the Java implementation is unchanged.
+
+### Added
+
+- `engine::AnchorIndex` (`build`, `built_for`) and
+  `Engine::with_anchor_index`.
+
 ## [2.0.2] — 2026-08-15
 
 The direction of a synchronisation now holds for a whole realisation
