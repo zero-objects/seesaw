@@ -399,72 +399,27 @@ impl ValueResolver for ValueStore {
 mod ident {
     use super::*;
 
-    /// The input of one identity hash. Collected in place and hashed in
-    /// one call: a streaming `blake3::Hasher` sets up state for inputs
-    /// of any length, which for the usual 40 to 200 bytes cost as much
-    /// as the hash. An input that does not fit goes through the
-    /// streaming hasher; the bytes hashed, and so the identity, are the
-    /// same either way.
-    struct Input {
-        buf: [u8; Input::ROOM],
-        len: usize,
-        long: Option<blake3::Hasher>,
-    }
-
-    impl Input {
-        const ROOM: usize = 256;
-
-        fn new(tag: &[u8; 4]) -> Self {
-            trace!(ident_hashes);
-            let mut input = Self {
-                buf: [0; Self::ROOM],
-                len: 0,
-                long: None,
-            };
-            input.put(tag);
-            input
-        }
-
-        fn put(&mut self, bytes: &[u8]) {
-            if let Some(h) = &mut self.long {
-                h.update(bytes);
-            } else if self.len + bytes.len() <= Self::ROOM {
-                self.buf[self.len..self.len + bytes.len()].copy_from_slice(bytes);
-                self.len += bytes.len();
-            } else {
-                let mut h = blake3::Hasher::new();
-                h.update(&self.buf[..self.len]);
-                h.update(bytes);
-                self.long = Some(h);
-            }
-        }
-
-        /// A variable-length field: length first, then content.
-        fn var(&mut self, bytes: &[u8]) {
-            self.put(&(bytes.len() as u32).to_le_bytes());
-            self.put(bytes);
-        }
-
-        fn id(self) -> GhostId {
-            let hash = match self.long {
-                Some(h) => h.finalize(),
-                None => blake3::hash(&self.buf[..self.len]),
-            };
-            GhostId::from_raw(*hash.as_bytes())
-        }
+    /// A variable-length field: length first, then content.
+    fn var(h: &mut blake3::Hasher, bytes: &[u8]) {
+        h.update(&(bytes.len() as u32).to_le_bytes());
+        h.update(bytes);
     }
 
     pub fn baseline(external: &str) -> GhostId {
-        let mut h = Input::new(b"V2B\0");
-        h.var(external.as_bytes());
-        h.id()
+        trace!(ident_hashes);
+        let mut h = blake3::Hasher::new();
+        h.update(b"V2B\0");
+        var(&mut h, external.as_bytes());
+        GhostId::from_raw(*h.finalize().as_bytes())
     }
 
     pub fn ghost(parent: &GhostId, typ_name: &str) -> GhostId {
-        let mut h = Input::new(b"V2G\0");
-        h.put(&parent.as_bytes());
-        h.var(typ_name.as_bytes());
-        h.id()
+        trace!(ident_hashes);
+        let mut h = blake3::Hasher::new();
+        h.update(b"V2G\0");
+        h.update(&parent.as_bytes());
+        var(&mut h, typ_name.as_bytes());
+        GhostId::from_raw(*h.finalize().as_bytes())
     }
 
     /// Derived leaf: value = transform(source), materialized only at
@@ -476,19 +431,23 @@ mod ident {
         source: &GhostId,
         t: &PlanTransform,
     ) -> GhostId {
-        let mut h = Input::new(b"V2D\0");
-        h.put(&parent.as_bytes());
-        h.var(typ_name.as_bytes());
-        h.put(&source.as_bytes());
-        h.var(&t.ident_bytes());
-        h.id()
+        trace!(ident_hashes);
+        let mut h = blake3::Hasher::new();
+        h.update(b"V2D\0");
+        h.update(&parent.as_bytes());
+        var(&mut h, typ_name.as_bytes());
+        h.update(&source.as_bytes());
+        var(&mut h, &t.ident_bytes());
+        GhostId::from_raw(*h.finalize().as_bytes())
     }
 
     pub fn connection(source: &GhostId, target: &GhostId) -> GhostId {
-        let mut h = Input::new(b"V2C\0");
-        h.put(&source.as_bytes());
-        h.put(&target.as_bytes());
-        h.id()
+        trace!(ident_hashes);
+        let mut h = blake3::Hasher::new();
+        h.update(b"V2C\0");
+        h.update(&source.as_bytes());
+        h.update(&target.as_bytes());
+        GhostId::from_raw(*h.finalize().as_bytes())
     }
 
     /// Corr node: identity = anchor + type + MATCH digest (spec §1.4
@@ -499,14 +458,16 @@ mod ident {
     /// The ref list carries its COUNT, not a byte length: without it a
     /// longer type name and one ref fewer would hash the same.
     pub fn corr(anchor: &GhostId, typ_name: &str, refs: &[GhostId]) -> GhostId {
-        let mut h = Input::new(b"V2R\0");
-        h.put(&anchor.as_bytes());
-        h.var(typ_name.as_bytes());
-        h.put(&(refs.len() as u32).to_le_bytes());
+        trace!(ident_hashes);
+        let mut h = blake3::Hasher::new();
+        h.update(b"V2R\0");
+        h.update(&anchor.as_bytes());
+        var(&mut h, typ_name.as_bytes());
+        h.update(&(refs.len() as u32).to_le_bytes());
         for r in refs {
-            h.put(&r.as_bytes());
+            h.update(&r.as_bytes());
         }
-        h.id()
+        GhostId::from_raw(*h.finalize().as_bytes())
     }
 
     /// Rule-constant leaf: identity via the GENERATING RULE (name +
@@ -514,12 +475,14 @@ mod ident {
     /// variant rules produce structurally distinct leaves at the same
     /// anchor.
     pub fn konst(parent: &GhostId, typ_name: &str, rule_name: &str, plan_ix: u32) -> GhostId {
-        let mut h = Input::new(b"V2K\0");
-        h.put(&parent.as_bytes());
-        h.var(typ_name.as_bytes());
-        h.var(rule_name.as_bytes());
-        h.put(&plan_ix.to_le_bytes());
-        h.id()
+        trace!(ident_hashes);
+        let mut h = blake3::Hasher::new();
+        h.update(b"V2K\0");
+        h.update(&parent.as_bytes());
+        var(&mut h, typ_name.as_bytes());
+        var(&mut h, rule_name.as_bytes());
+        h.update(&plan_ix.to_le_bytes());
+        GhostId::from_raw(*h.finalize().as_bytes())
     }
 }
 
@@ -1130,24 +1093,6 @@ mod tests {
     }
 
     use super::*;
-
-    /// An identity is the hash of the same bytes whether its input fits
-    /// the in-place buffer or goes through the streaming hasher.
-    #[test]
-    fn identity_of_a_long_input_is_the_streamed_hash() {
-        for len in [0usize, 1, 60, 200, 244, 245, 246, 300, 5000] {
-            let external = "x".repeat(len);
-            let mut h = blake3::Hasher::new();
-            h.update(b"V2B\0");
-            h.update(&(len as u32).to_le_bytes());
-            h.update(external.as_bytes());
-            assert_eq!(
-                preview_baseline_id(&external),
-                GhostId::from_raw(*h.finalize().as_bytes()),
-                "length {len}"
-            );
-        }
-    }
 
     /// A participation list answers the same below and above the point
     /// where it turns into a tree, and the same as a plain B-tree.
