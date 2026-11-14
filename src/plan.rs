@@ -12,7 +12,7 @@
 
 use crate::ident::{GhostId, Status};
 
-use crate::engine::matcher::{Bindings, Pattern};
+use crate::engine::matcher::Pattern;
 use crate::graph::{Graph, PlanTransform};
 
 // ── Spec (JSON) ────────────────────────────────────────────────────────────
@@ -127,7 +127,7 @@ pub struct DirectedRule {
 pub fn apply_creation(
     g: &mut Graph,
     rule: &DirectedRule,
-    bindings: &Bindings,
+    bindings: &[GhostId],
 ) -> (Vec<GhostId>, Vec<GhostId>) {
     // Plan-indexed; None = a dynamic leaf without a source (dropped).
     let mut slots: Vec<Option<GhostId>> = Vec::with_capacity(rule.create_nodes.len());

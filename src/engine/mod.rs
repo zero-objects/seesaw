@@ -37,7 +37,8 @@ fn self_node_tt(g: &Graph, id: &GhostId) -> bool {
 #[derive(Debug, Clone)]
 pub struct MatchRec {
     pub rule_ix: usize,
-    pub refs: Bindings,
+    /// The ref sequence, shared with the engine's indexes.
+    pub refs: std::sync::Arc<[GhostId]>,
     pub dead: bool,
     /// Provenance edge match → cascade entry: `Some(cascade-ix)` if
     /// this match WAS APPLIED (for 1:1, the `applied` guard prevents a
@@ -108,9 +109,14 @@ pub struct SelectionBound {
 /// Todo key: (rank descending, ref sequence descending, rule index
 /// ascending) — the same ordering doctrine as the first-generation engine's
 /// intrinsic μ, here the ref sequence is the key.
-type TodoKey = (std::cmp::Reverse<u64>, std::cmp::Reverse<Bindings>, usize);
+type TodoKey = (std::cmp::Reverse<u64>, std::cmp::Reverse<Refs>, usize);
 
-fn todo_key(rank: u64, refs: &Bindings, rule_ix: usize) -> TodoKey {
+/// The ref sequence of a match as the engine keeps it: one allocation,
+/// shared by the match store, the todo, the key index and the applied
+/// set. Equality, order and hash are those of the sequence.
+type Refs = std::sync::Arc<[GhostId]>;
+
+fn todo_key(rank: u64, refs: &Refs, rule_ix: usize) -> TodoKey {
     (
         std::cmp::Reverse(rank),
         std::cmp::Reverse(refs.clone()),
@@ -128,11 +134,11 @@ pub struct Engine<'r> {
     /// adj[k] → match refs (spec §1.6: "which matches contain k?").
     by_element: crate::hash::FxHashMap<GhostId, Vec<u32>>,
     /// Duplicate memory: ref sequences already applied per rule.
-    applied: BTreeSet<(usize, Bindings)>,
+    applied: BTreeSet<(usize, Refs)>,
     todo: BTreeSet<TodoKey>,
     pub saw_contradiction: bool,
     /// (rule_ix, refs) → match store index for todo resolution.
-    by_key: crate::hash::FxHashMap<(usize, Bindings), u32>,
+    by_key: crate::hash::FxHashMap<(usize, Refs), u32>,
     /// Element → the cascade entries that PRODUCED it. The counterpart
     /// to `by_element`, which answers which matches CONTAIN an element.
     ///
@@ -298,13 +304,14 @@ impl<'r> Engine<'r> {
 
     fn record(&mut self, rule_ix: usize, refs: Bindings) {
         trace!(record_calls);
+        let refs: Refs = refs.into();
         let key = (rule_ix, refs.clone());
         if self.by_key.contains_key(&key) {
             trace!(record_known);
             return;
         }
         let ix = self.matches.len() as u32;
-        for id in &refs {
+        for id in refs.iter() {
             self.by_element.entry(*id).or_default().push(ix);
         }
         // The match's LINKS belong in the registry too, not only its
@@ -490,7 +497,7 @@ impl<'r> Engine<'r> {
                     fixed[pos] = Some(*id);
                     for m in find_matches_with_fixed(g, resolver, &rule.pattern, &fixed) {
                         assert!(
-                            self.by_key.contains_key(&(ri, m)),
+                            self.by_key.contains_key(&(ri, Refs::from(m))),
                             "expansion drops a match: rule {} position {pos}",
                             rule.name
                         );
@@ -597,7 +604,7 @@ impl<'r> Engine<'r> {
     fn retract_entry(&mut self, g: &mut Graph, eix: u32, queue: &mut Vec<GhostId>) {
         let key = {
             let e = &self.cascade[eix as usize];
-            (e.rule_ix, e.refs.clone())
+            (e.rule_ix, Refs::from(e.refs.as_slice()))
         };
         if let Some(&mix) = self.by_key.get(&key) {
             self.retract_match(g, mix, queue);
@@ -894,7 +901,7 @@ impl<'r> Engine<'r> {
     /// Duplicate check BEFORE application: does everything the plan
     /// would create already exist, matchable? (Ids are purely
     /// derivable.)
-    fn creation_exists(&self, g: &Graph, rule: &DirectedRule, refs: &Bindings) -> bool {
+    fn creation_exists(&self, g: &Graph, rule: &DirectedRule, refs: &[GhostId]) -> bool {
         let mut ids: Vec<GhostId> = Vec::with_capacity(rule.create_nodes.len());
         for cn in &rule.create_nodes {
             let parent = match cn.parent {
@@ -977,7 +984,7 @@ impl<'r> Engine<'r> {
                 Some(b) => {
                     // Strictly below the bound = in the BTreeSet
                     // strictly AFTER the bound key (reverse order).
-                    let bound = todo_key(b.rank, &b.refs, 0);
+                    let bound = todo_key(b.rank, &Refs::from(b.refs.as_slice()), 0);
                     self.todo
                         .range(bound.clone()..)
                         .find(|k| {
@@ -1104,7 +1111,7 @@ impl<'r> Engine<'r> {
             self.cascade.push(Entry {
                 rule_ix,
                 rank: rule.rank,
-                refs: refs.clone(),
+                refs: refs.to_vec(),
                 created: created.clone(),
                 created_edges,
             });
