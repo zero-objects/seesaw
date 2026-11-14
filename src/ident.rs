@@ -53,8 +53,22 @@ impl Status {
 /// (so the structural identity contract of Def. 5.3 holds — distinct
 /// content never aliases) while being SIMD-accelerated, unlike the prior
 /// SHA-256 software fallback (rc10 perf).
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct GhostId([u8; 32]);
+
+// An identity is the output of a cryptographic hash, so any eight of
+// its bytes are as good a hash of it as all 32. Feeding the maps one
+// word instead of the array (length and four words through an
+// un-inlined call) takes that cost out of every lookup. The first and
+// the last word are combined so that an identity a host built by hand
+// (`from_raw`) with a constant head still spreads.
+impl std::hash::Hash for GhostId {
+    #[inline]
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        let w = self.words();
+        state.write_u64(w[0] ^ w[3]);
+    }
+}
 
 impl GhostId {
     /// The 32 bytes as four big-endian words. Comparing the words in

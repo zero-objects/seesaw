@@ -312,6 +312,32 @@ impl Parts {
         }
     }
 
+    /// The entries whose counterpart has type `typ`, in order. The
+    /// type is the first component of the order, so in a vector the
+    /// range is found by comparing types only.
+    fn of_type(&self, typ: TypeId) -> PartsIter<'_> {
+        match self {
+            Self::Flat(v) => {
+                let from = v.partition_point(|x| x.other_typ < typ);
+                let to = from + v[from..].partition_point(|x| x.other_typ == typ);
+                PartsIter::Flat(v[from..to].iter())
+            }
+            Self::Tree(t) => PartsIter::Range(t.range(
+                Participation {
+                    other_typ: typ,
+                    other: GhostId::from_raw([0; 32]),
+                    outgoing: false,
+                    connection: GhostId::from_raw([0; 32]),
+                }..=Participation {
+                    other_typ: typ,
+                    other: GhostId::from_raw([0xFF; 32]),
+                    outgoing: true,
+                    connection: GhostId::from_raw([0xFF; 32]),
+                },
+            )),
+        }
+    }
+
     fn iter(&self) -> PartsIter<'_> {
         match self {
             Self::Flat(v) => PartsIter::Flat(v.iter()),
@@ -871,22 +897,7 @@ impl Graph {
             .get(id)
             .and_then(Slot::parts)
             .into_iter()
-            .flat_map(move |parts| {
-                parts.range(
-                    Participation {
-                        other_typ: typ,
-                        other: GhostId::from_raw([0; 32]),
-                        outgoing: false,
-                        connection: GhostId::from_raw([0; 32]),
-                    },
-                    Participation {
-                        other_typ: typ,
-                        other: GhostId::from_raw([0xFF; 32]),
-                        outgoing: true,
-                        connection: GhostId::from_raw([0xFF; 32]),
-                    },
-                )
-            })
+            .flat_map(move |parts| parts.of_type(typ))
     }
 
     /// All participations (sorted) — for walks/diagnostics.
@@ -1132,6 +1143,10 @@ mod tests {
                     connection: GhostId::from_raw([0xFF; 32]),
                 };
                 assert!(parts.range(lo, hi).eq(tree.range(lo..=hi)), "type {typ}");
+                assert!(
+                    parts.of_type(TypeId(typ)).eq(tree.range(lo..=hi)),
+                    "of_type {typ}"
+                );
             }
         }
         assert!(matches!(parts, Parts::Tree(_)));
