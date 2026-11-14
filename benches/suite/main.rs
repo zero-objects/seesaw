@@ -12,8 +12,8 @@
 //! Columns: label, cell, samples, user CPU (minimum and median, ms),
 //! wall time (minimum, ms), peak memory (MB), steps, applied steps,
 //! nodes, fingerprint, instructions retired in user mode (minimum;
-//! Linux, 0 elsewhere), then the structural counters (with
-//! `perf_trace`). Time is user CPU of the measured section only, model
+//! Linux, 0 elsewhere), the hardware events of `measure::HARDWARE`
+//! (minimum each), then the structural counters (with `perf_trace`). Time is user CPU of the measured section only, model
 //! construction and rule loading are outside of it. The fingerprint
 //! covers graph and cascade order and has to be the same for every
 //! build of the engine.
@@ -182,6 +182,15 @@ fn run(cell: &Cell, samples: usize, label: &str) -> String {
         .map(|o| o.usage.instructions)
         .min()
         .unwrap_or(0);
+    let hardware: Vec<u64> = (0..measure::HARDWARE.len())
+        .map(|i| {
+            outcomes
+                .iter()
+                .map(|o| o.usage.hardware[i])
+                .min()
+                .unwrap_or(0)
+        })
+        .collect();
     outcomes.sort_by_key(|o| o.usage.user_ns);
     let user_min = outcomes[0].usage.user_ns;
     let user_med = outcomes[outcomes.len() / 2].usage.user_ns;
@@ -203,6 +212,9 @@ fn run(cell: &Cell, samples: usize, label: &str) -> String {
         fingerprint,
         format!("instr={instructions}"),
     ];
+    for ((name, _, _), value) in measure::HARDWARE.iter().zip(hardware) {
+        cols.push(format!("{name}={value}"));
+    }
     for (name, value) in counters {
         cols.push(format!("{name}={value}"));
     }

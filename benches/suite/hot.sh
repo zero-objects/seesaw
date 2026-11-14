@@ -4,7 +4,8 @@
 #   hot.sh <cell> [lines] [event]
 #
 # Samples one run with call graphs (event: instructions:u by default,
-# cycles:u for time) and keeps only the samples whose call chain passes
+# cycles:u for time, cache-misses:u for the memory accesses that miss
+# the last-level cache) and keeps only the samples whose call chain passes
 # through `suite::measure::section`. Two tables, in percent of those
 # samples: inclusive per function (the function is somewhere on the
 # chain below the section), and self per function (the function is the
@@ -21,6 +22,7 @@ bin=$(ls -t target/prof/release/deps/suite-* | grep -v '\.d$' | head -1)
 data=$(mktemp /tmp/suite-perf.XXXXXX)
 case $event in
 instructions*) rate="-c 1000003" ;;
+cache-misses*) rate="-c 10007" ;;
 *) rate="-F 4000" ;;
 esac
 perf record -q --call-graph dwarf,16384 $rate -o "$data" -e "$event" \
