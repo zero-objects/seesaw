@@ -250,8 +250,10 @@ impl<'r> Engine<'r> {
     }
 
     fn record(&mut self, rule_ix: usize, refs: Bindings) {
+        trace!(record_calls);
         let key = (rule_ix, refs.clone());
         if self.by_key.contains_key(&key) {
+            trace!(record_known);
             return;
         }
         let ix = self.matches.len() as u32;
@@ -304,6 +306,7 @@ impl<'r> Engine<'r> {
     }
 
     fn seed_rule(&mut self, g: &Graph, resolver: &dyn ValueResolver, ri: usize) {
+        trace!(seed_searches);
         for m in find_matches(g, resolver, &self.rules[ri].pattern) {
             self.record(ri, m);
         }
@@ -352,7 +355,9 @@ impl<'r> Engine<'r> {
                     }
                     let mut fixed = vec![None; rule.pattern.nodes.len()];
                     fixed[pos] = Some(id);
+                    trace!(anchored_searches);
                     for m in find_matches_with_fixed(g, resolver, &rule.pattern, &fixed) {
+                        trace!(anchored_found);
                         self.record(ri, m);
                     }
                 }
@@ -787,8 +792,18 @@ impl<'r> Engine<'r> {
         loop {
             let filtered = self.active.is_some() || self.wave_directions.is_some();
             let key = match ceiling {
-                None if !filtered => self.todo.iter().next().cloned(),
-                None => self.todo.iter().find(|k| self.rule_active(k.2)).cloned(),
+                None if !filtered => {
+                    trace!(todo_scanned);
+                    self.todo.iter().next().cloned()
+                }
+                None => self
+                    .todo
+                    .iter()
+                    .find(|k| {
+                        trace!(todo_scanned);
+                        self.rule_active(k.2)
+                    })
+                    .cloned(),
                 Some(b) => {
                     // Strictly below the bound = in the BTreeSet
                     // strictly AFTER the bound key (reverse order).
@@ -796,6 +811,7 @@ impl<'r> Engine<'r> {
                     self.todo
                         .range(bound.clone()..)
                         .find(|k| {
+                            trace!(todo_scanned);
                             !(k.0 == bound.0 && k.1 == bound.1)
                                 && (!filtered || self.rule_active(k.2))
                         })
@@ -912,6 +928,7 @@ impl<'r> Engine<'r> {
                 self.saw_contradiction = true;
                 continue;
             }
+            trace!(steps_applied);
             let (created, created_edges) = apply_creation(g, rule, &refs);
             let eix = self.cascade.len() as u32;
             self.cascade.push(Entry {

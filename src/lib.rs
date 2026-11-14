@@ -22,6 +22,23 @@
 //! Users write rules against [`rules`]. The layers below become visible
 //! only where a cascade is driven or a graph is read.
 
+/// Counts structural work under the `perf_trace` feature; expands to
+/// nothing without it. `trace!(field)` adds one, `trace!(field, n)`
+/// adds `n`.
+#[cfg(feature = "perf_trace")]
+macro_rules! trace {
+    ($f:ident) => {
+        $crate::perf_trace::add(|t| t.$f += 1)
+    };
+    ($f:ident, $n:expr) => {
+        $crate::perf_trace::add(|t| t.$f += ($n) as u64)
+    };
+}
+#[cfg(not(feature = "perf_trace"))]
+macro_rules! trace {
+    ($($t:tt)*) => {};
+}
+
 pub mod engine;
 pub mod graph;
 pub mod hash;

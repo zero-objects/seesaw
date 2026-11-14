@@ -103,6 +103,7 @@ struct Step {
 }
 
 fn build_plan(pattern: &Pattern, fixed: &[Option<GhostId>]) -> Vec<Step> {
+    trace!(plan_builds);
     let n = pattern.nodes.len();
     let mut placed = vec![false; n];
     let mut steps = Vec::with_capacity(n);
@@ -167,6 +168,7 @@ fn build_plan(pattern: &Pattern, fixed: &[Option<GhostId>]) -> Vec<Step> {
 // ── Enumeration ──────────────────────────────────────────────────────────
 
 fn node_ok(g: &Graph, resolver: &dyn ValueResolver, pn: &PatternNode, id: &GhostId) -> bool {
+    trace!(node_checks);
     let Some(node) = g.node(id) else {
         return false;
     };
@@ -279,6 +281,7 @@ fn enumerate(
         }
         None => g.nodes_of_type(pn.typ).map(|n| n.id).collect(),
     };
+    trace!(candidates, candidates.len());
     for cand in candidates {
         if cur.iter().flatten().any(|id| *id == cand) {
             continue; // injective

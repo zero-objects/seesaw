@@ -27,6 +27,14 @@ regex = "1.11"
 
 [dev-dependencies]
 proptest = "1.5"
+# User CPU time and peak memory of the performance suite (`getrusage`).
+libc = "0.2"
+
+# The performance suite: one cell (workload, operation, size) per
+# process, see `benches/suite/main.rs`.
+[[bench]]
+name = "suite"
+harness = false
 
 [features]
 # Deterministic structural counters for the cascade, for diagnostics.

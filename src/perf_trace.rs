@@ -1,119 +1,93 @@
-//! Deterministic structural counters for the cascade (perf diagnostics).
+//! Deterministic structural counters of the engine (perf diagnostics).
 //!
-//! Feature-gated (`perf_trace`, default OFF) → in a normal build this
-//! module doesn't exist and there are no call sites at all, the hot
-//! path is unchanged (bit-identical). With `--features perf_trace` a
-//! handful of counters accumulate the *structural* work per phase, to
-//! see which phase grows superlinearly with graph size (= the/a real
-//! quadratic-growth driver) — contention-immune, unlike timing.
+//! Feature-gated (`perf_trace`, default off): in a normal build this
+//! module does not exist and the `trace!` call sites expand to nothing,
+//! so the hot path is unchanged. With `--features perf_trace` the
+//! counters accumulate the structural work of a run. They do not depend
+//! on the machine or its load, so two builds can be compared exactly.
+//!
+//! The counters are per thread. [`reset`] before a run, [`snapshot`]
+//! after it.
 
 use std::cell::RefCell;
 
-/// Accumulated counters over one cascade run.
-#[derive(Debug, Default, Clone)]
+/// Accumulated counters since the last [`reset`].
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
 pub struct Trace {
-    /// Number of cascade_step_cached calls.
-    pub steps: u64,
-    /// Σ over steps of the built candidate list (live, emitted).
-    pub collect_built: u64,
-    /// Σ over steps of all matches traversed in collect (incl. dead ones).
-    pub collect_scanned: u64,
-    /// Σ of the candidates considered in select_and_apply_cached.
-    pub select_examined: u64,
-    /// Σ of the order entries visited in the walk (incl. skipped
-    /// dead/NAC ones) — measures the skip prefix (perf-D3 diagnostics).
-    pub walk_visited: u64,
-    /// produce() calls.
-    pub produce_calls: u64,
-    /// is_duplicate() calls.
-    pub is_duplicate_calls: u64,
-    /// Anchored find_matches_with_fixed calls in cache.update.
-    pub update_anchored_calls: u64,
-    /// Matches returned by anchored matching.
-    pub update_anchored_found: u64,
-    /// Full re-enumerations (removal/mutation) in cache.update.
-    pub update_full_reenum: u64,
-    /// Matches returned by a full re-enumeration.
-    pub update_full_found: u64,
-    /// collect_scanned at the FIRST collect call (match set at the start).
-    pub collect_first: u64,
-    /// collect_scanned at the LAST collect call (match set at the end).
-    /// first==last ⇒ the match set is static (doesn't grow).
-    pub collect_last: u64,
-    /// Op kinds in the APPLIED deltas (to understand what produce emits).
-    pub applied_add_node: u64,
-    pub applied_add_edge: u64,
-    pub applied_del: u64,
-    pub applied_set_attr: u64,
+    /// Applied cascade steps.
+    pub steps_applied: u64,
+    /// Todo entries looked at while selecting the next step, including
+    /// the ones skipped because their rule is not admitted.
+    pub todo_scanned: u64,
+    /// `record` calls (matches handed to the match store).
+    pub record_calls: u64,
+    /// `record` calls that found the match already stored.
+    pub record_known: u64,
+    /// Searches over a whole rule (`seed`).
+    pub seed_searches: u64,
+    /// Anchored searches of the delta-local expansion.
+    pub anchored_searches: u64,
+    /// Matches the anchored searches returned.
+    pub anchored_found: u64,
+    /// Graph nodes entered by the walks of the anchor index.
+    pub anchor_walk_visits: u64,
+    /// Places (rule, position) the anchor index compared against a
+    /// walk.
+    pub anchor_places: u64,
+    /// Search plans built.
+    pub plan_builds: u64,
+    /// Candidates enumerated for a pattern position.
+    pub candidates: u64,
+    /// `node_ok` calls.
+    pub node_checks: u64,
+    /// Link checks against the graph (`connected`).
+    pub link_checks: u64,
+    /// Value resolutions (`resolve_value`).
+    pub value_resolutions: u64,
+    /// Identity hashes computed (blake3).
+    pub ident_hashes: u64,
+}
+
+impl Trace {
+    /// Field names and values in declaration order (for tables).
+    #[must_use]
+    pub fn fields(&self) -> [(&'static str, u64); 15] {
+        [
+            ("steps_applied", self.steps_applied),
+            ("todo_scanned", self.todo_scanned),
+            ("record_calls", self.record_calls),
+            ("record_known", self.record_known),
+            ("seed_searches", self.seed_searches),
+            ("anchored_searches", self.anchored_searches),
+            ("anchored_found", self.anchored_found),
+            ("anchor_walk_visits", self.anchor_walk_visits),
+            ("anchor_places", self.anchor_places),
+            ("plan_builds", self.plan_builds),
+            ("candidates", self.candidates),
+            ("node_checks", self.node_checks),
+            ("link_checks", self.link_checks),
+            ("value_resolutions", self.value_resolutions),
+            ("ident_hashes", self.ident_hashes),
+        ]
+    }
 }
 
 thread_local! {
     static TRACE: RefCell<Trace> = RefCell::new(Trace::default());
 }
 
+/// Sets all counters of this thread to zero.
 pub fn reset() {
     TRACE.with(|t| *t.borrow_mut() = Trace::default());
 }
 
+/// The counters of this thread.
+#[must_use]
 pub fn snapshot() -> Trace {
     TRACE.with(|t| t.borrow().clone())
 }
 
-pub fn step() {
-    TRACE.with(|t| t.borrow_mut().steps += 1);
-}
-
-pub fn collect(built: usize, scanned: usize) {
-    TRACE.with(|t| {
-        let mut t = t.borrow_mut();
-        t.collect_built += built as u64;
-        t.collect_scanned += scanned as u64;
-        if t.collect_first == 0 {
-            t.collect_first = scanned as u64;
-        }
-        t.collect_last = scanned as u64;
-    });
-}
-
-/// Op-kind distribution of one applied delta.
-pub fn applied(add_node: usize, add_edge: usize, del: usize, set_attr: usize) {
-    TRACE.with(|t| {
-        let mut t = t.borrow_mut();
-        t.applied_add_node += add_node as u64;
-        t.applied_add_edge += add_edge as u64;
-        t.applied_del += del as u64;
-        t.applied_set_attr += set_attr as u64;
-    });
-}
-
-pub fn select_examined(n: usize) {
-    TRACE.with(|t| t.borrow_mut().select_examined += n as u64);
-}
-
-pub fn walk_visited(n: usize) {
-    TRACE.with(|t| t.borrow_mut().walk_visited += n as u64);
-}
-
-pub fn produce() {
-    TRACE.with(|t| t.borrow_mut().produce_calls += 1);
-}
-
-pub fn is_duplicate() {
-    TRACE.with(|t| t.borrow_mut().is_duplicate_calls += 1);
-}
-
-pub fn update_anchored(calls: usize, found: usize) {
-    TRACE.with(|t| {
-        let mut t = t.borrow_mut();
-        t.update_anchored_calls += calls as u64;
-        t.update_anchored_found += found as u64;
-    });
-}
-
-pub fn update_full(found: usize) {
-    TRACE.with(|t| {
-        let mut t = t.borrow_mut();
-        t.update_full_reenum += 1;
-        t.update_full_found += found as u64;
-    });
+/// Applies `f` to the counters of this thread (used by `trace!`).
+pub fn add(f: impl FnOnce(&mut Trace)) {
+    TRACE.with(|t| f(&mut t.borrow_mut()));
 }

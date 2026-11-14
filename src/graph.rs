@@ -260,6 +260,7 @@ mod ident {
     }
 
     pub fn baseline(external: &str) -> GhostId {
+        trace!(ident_hashes);
         let mut h = blake3::Hasher::new();
         h.update(b"V2B\0");
         var(&mut h, external.as_bytes());
@@ -267,6 +268,7 @@ mod ident {
     }
 
     pub fn ghost(parent: &GhostId, typ_name: &str) -> GhostId {
+        trace!(ident_hashes);
         let mut h = blake3::Hasher::new();
         h.update(b"V2G\0");
         h.update(&parent.as_bytes());
@@ -283,6 +285,7 @@ mod ident {
         source: &GhostId,
         t: &PlanTransform,
     ) -> GhostId {
+        trace!(ident_hashes);
         let mut h = blake3::Hasher::new();
         h.update(b"V2D\0");
         h.update(&parent.as_bytes());
@@ -293,6 +296,7 @@ mod ident {
     }
 
     pub fn connection(source: &GhostId, target: &GhostId) -> GhostId {
+        trace!(ident_hashes);
         let mut h = blake3::Hasher::new();
         h.update(b"V2C\0");
         h.update(&source.as_bytes());
@@ -308,6 +312,7 @@ mod ident {
     /// The ref list carries its COUNT, not a byte length: without it a
     /// longer type name and one ref fewer would hash the same.
     pub fn corr(anchor: &GhostId, typ_name: &str, refs: &[GhostId]) -> GhostId {
+        trace!(ident_hashes);
         let mut h = blake3::Hasher::new();
         h.update(b"V2R\0");
         h.update(&anchor.as_bytes());
@@ -324,6 +329,7 @@ mod ident {
     /// variant rules produce structurally distinct leaves at the same
     /// anchor.
     pub fn konst(parent: &GhostId, typ_name: &str, rule_name: &str, plan_ix: u32) -> GhostId {
+        trace!(ident_hashes);
         let mut h = blake3::Hasher::new();
         h.update(b"V2K\0");
         h.update(&parent.as_bytes());
@@ -707,6 +713,7 @@ impl Graph {
 
     /// Does a matchable connection source→target exist?
     pub fn connected(&self, source: &GhostId, target: &GhostId) -> bool {
+        trace!(link_checks);
         let id = ident::connection(source, target);
         self.connection(&id)
             .is_some_and(|c| c.status.is_matchable())
@@ -778,6 +785,7 @@ impl Graph {
     /// then apply transformations forward. Values only exist here,
     /// transiently — never in the overlay.
     pub fn resolve_value(&self, id: &GhostId, resolver: &dyn ValueResolver) -> Option<String> {
+        trace!(value_resolutions);
         let mut chain: Vec<LeafTransform> = Vec::new();
         let mut cur = *id;
         loop {
