@@ -85,6 +85,9 @@ struct Filed {
     /// Places without a value predicate or with one that is not
     /// `Predicate::Equals`.
     any: Vec<u32>,
+    /// Does `any` hold a place with a value predicate? Such a place is
+    /// checked against the value of the node.
+    valued: bool,
     /// Places with `Predicate::Equals`, by value.
     equals: FxHashMap<String, Vec<u32>>,
 }
@@ -107,7 +110,10 @@ impl Filed {
                     self.equals.insert(v.clone(), vec![place]);
                 }
             },
-            _ => self.any.push(place),
+            _ => {
+                self.valued |= value.is_some();
+                self.any.push(place);
+            }
         }
     }
 }
@@ -488,7 +494,9 @@ impl AnchorIndex {
                     .map(|&id| &self.filed[id as usize])
                     .chain(std::iter::once(&ti.free))
             };
-            let value = if reached().any(|f| !f.equals.is_empty()) {
+            // The value of the node, where a reached place asks for it:
+            // by value (`equals`) or with another predicate (`valued`).
+            let value = if reached().any(|f| !f.equals.is_empty() || f.valued) {
                 g.resolve_value(x, v)
             } else {
                 None
@@ -758,6 +766,87 @@ mod tests {
         // has no Method rule and so no flag rule either.
         assert_eq!(cascade(&t, true), 6);
         assert_eq!(cascade(&t, false), 6);
+    }
+
+    /// One rule: an `Item` with a context leaf `Attr` that carries the
+    /// given predicate; the right side is a marker.
+    fn predicate_rule(predicate: &str) -> String {
+        format!(
+            r#"{{"format":3,"name":"anchor_predicates","rules":[{{"name":"R","rank":1,
+            "left":{{"anchor":"item","nodes":[
+                {{"name":"item","type":"Item"}},
+                {{"name":"attr","type":"Attr","context":true,"predicate":{predicate}}}],
+              "links":[["item","attr"]]}},
+            "right":{{"anchor":"marker","nodes":[{{"name":"marker","type":"Marker"}}]}},
+            "corrs":[{{"type":"C","left":"item","right":"marker","role":"establishes"}}]}}]}}"#
+        )
+    }
+
+    /// Applied steps for one item with one leaf of the given value. The
+    /// delta is `[attr]`, `[attr, item]` or `[item, attr]`, or the
+    /// engine seeds; `by_index` forces the seed through the index.
+    fn predicate_cascade(predicate: &str, value: &str, delta: Option<&[usize]>) -> usize {
+        let mut g = Graph::new();
+        let mut vs = ValueStore::default();
+        let item = g.add_baseline("item", "Item");
+        let attr = g.add_baseline("attr", "Attr");
+        g.connect(item, attr, Status::Solid);
+        vs.insert(attr, value);
+        let rules = crate::rules::load(&predicate_rule(predicate), &mut g).expect("rules load");
+        let mut e = Engine::new(&rules);
+        match delta {
+            Some(order) => {
+                let nodes: Vec<GhostId> = order.iter().map(|&i| [item, attr][i]).collect();
+                e.elements_added(&g, &vs, &nodes);
+            }
+            None => e.seed_by_index(&g, &vs),
+        }
+        while e.step(&mut g, &vs).is_some() {}
+        e.cascade.len()
+    }
+
+    /// The value predicate of the anchored position itself, for every
+    /// kind of predicate: a leaf that stands alone or first in the
+    /// delta is anchored at its own position, and the place there asks
+    /// for the value of the leaf.
+    #[test]
+    fn the_index_checks_every_kind_of_predicate_on_the_anchored_node() {
+        let kinds = [
+            (r#"{"kind":"exists"}"#, "anything", None),
+            (r#"{"kind":"equals","value":"yes"}"#, "yes", Some("no")),
+            (
+                r#"{"kind":"prefix","value":"get"}"#,
+                "getAge",
+                Some("setAge"),
+            ),
+            (
+                r#"{"kind":"regex","pattern":"Abstract.*"}"#,
+                "AbstractList",
+                Some("List"),
+            ),
+            (
+                r#"{"kind":"numeric_range","min":0.0,"max":100.0}"#,
+                "42",
+                Some("420"),
+            ),
+        ];
+        let deltas: [Option<&[usize]>; 4] = [Some(&[1]), Some(&[1, 0]), Some(&[0, 1]), None];
+        for (predicate, holds, fails) in kinds {
+            for delta in deltas {
+                assert_eq!(
+                    predicate_cascade(predicate, holds, delta),
+                    1,
+                    "{predicate} on {holds:?}, delta {delta:?}"
+                );
+                if let Some(fails) = fails {
+                    assert_eq!(
+                        predicate_cascade(predicate, fails, delta),
+                        0,
+                        "{predicate} on {fails:?}, delta {delta:?}"
+                    );
+                }
+            }
+        }
     }
 
     proptest! {
