@@ -53,7 +53,7 @@ impl Status {
 /// (so the structural identity contract of Def. 5.3 holds — distinct
 /// content never aliases) while being SIMD-accelerated, unlike the prior
 /// SHA-256 software fallback (rc10 perf).
-#[derive(Clone, Copy, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct GhostId([u8; 32]);
 
 impl GhostId {
@@ -71,19 +71,10 @@ impl GhostId {
     }
 }
 
-// Equality and order are those of the byte array. They are written out
-// over four words so that they compile to a few inline compares; the
-// derived versions call `memcmp`, which showed as a tenth of the run
-// time of a cascade (match keys, participation lists, map lookups).
-impl PartialEq for GhostId {
-    #[inline]
-    fn eq(&self, other: &Self) -> bool {
-        self.words() == other.words()
-    }
-}
-
-impl Eq for GhostId {}
-
+// The order is that of the byte array, written out over four words so
+// that it compiles to inline compares; the derived version calls
+// `memcmp`. Equality stays derived: written out over the words it
+// measured slower than the derived compare of the 32 bytes.
 impl Ord for GhostId {
     #[inline]
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
