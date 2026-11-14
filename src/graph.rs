@@ -197,13 +197,66 @@ pub struct Participation {
 }
 
 /// Slot of one participant in the global map.
+///
+/// A participant is a node (with its participations) or a connection,
+/// never both: the identities of the two come from different
+/// derivations. The slot holds the one it is, not room for both.
 #[derive(Clone, Debug, Default)]
-struct Slot {
-    node: Option<Node>,
-    connection: Option<Connection>,
-    /// Participations, sorted (deterministic order, O(log) access by
-    /// counterpart type via range).
-    parts: Parts,
+enum Slot {
+    /// Created by `entry`, about to be filled.
+    #[default]
+    Empty,
+    Node {
+        node: Node,
+        /// Participations, sorted (deterministic order, O(log) access
+        /// by counterpart type via range).
+        parts: Parts,
+    },
+    Connection(Connection),
+}
+
+impl Slot {
+    fn node(&self) -> Option<&Node> {
+        match self {
+            Self::Node { node, .. } => Some(node),
+            _ => None,
+        }
+    }
+
+    fn node_mut(&mut self) -> Option<&mut Node> {
+        match self {
+            Self::Node { node, .. } => Some(node),
+            _ => None,
+        }
+    }
+
+    fn connection(&self) -> Option<&Connection> {
+        match self {
+            Self::Connection(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    fn connection_mut(&mut self) -> Option<&mut Connection> {
+        match self {
+            Self::Connection(c) => Some(c),
+            _ => None,
+        }
+    }
+
+    fn parts(&self) -> Option<&Parts> {
+        match self {
+            Self::Node { parts, .. } => Some(parts),
+            _ => None,
+        }
+    }
+
+    fn parts_mut(&mut self) -> Option<&mut Parts> {
+        match self {
+            Self::Node { parts, .. } => Some(parts),
+            _ => None,
+        }
+    }
 }
 
 /// The participation list of one participant: a set, in the order of
@@ -646,24 +699,30 @@ impl Graph {
     /// node with two endpoints, not a special kind) — the mark must not
     /// touch identity.
     pub fn mark_corr(&mut self, id: &GhostId) {
-        if let Some(n) = self.map.get_mut(id).and_then(|s| s.node.as_mut()) {
+        if let Some(n) = self.map.get_mut(id).and_then(Slot::node_mut) {
             n.is_corr = true;
         }
     }
 
     fn insert_node(&mut self, node: Node) {
         let slot = self.map.entry(node.id).or_default();
-        match &mut slot.node {
-            Some(existing) => {
+        match slot {
+            Slot::Node { node: existing, .. } => {
                 // M5: resurrection.
                 if existing.status == Status::TentativeTombstone {
                     existing.status = node.status;
                 }
             }
-            None => {
+            Slot::Empty => {
                 self.node_order.push(node.id);
                 self.by_type.entry(node.typ).or_default().push(node.id);
-                slot.node = Some(node);
+                *slot = Slot::Node {
+                    node,
+                    parts: Parts::default(),
+                };
+            }
+            Slot::Connection(_) => {
+                unreachable!("a node identity is not a connection identity")
             }
         }
     }
@@ -673,7 +732,7 @@ impl Graph {
     /// value into its original (store/host). From here on the leaf is
     /// value-independent (state-based adapter).
     pub fn freeze_derived(&mut self, id: &GhostId) {
-        if let Some(n) = self.map.get_mut(id).and_then(|s| s.node.as_mut()) {
+        if let Some(n) = self.map.get_mut(id).and_then(Slot::node_mut) {
             n.derived = None;
         }
     }
@@ -722,7 +781,7 @@ impl Graph {
         if status != Status::Tombstone && status != Status::TentativeTombstone {
             for (id, node_status) in [(source, sstatus), (target, tstatus)] {
                 if node_status == Status::TentativeTombstone {
-                    if let Some(n) = self.map.get_mut(&id).and_then(|s| s.node.as_mut()) {
+                    if let Some(n) = self.map.get_mut(&id).and_then(Slot::node_mut) {
                         n.status = Status::Ghost;
                     }
                 }
@@ -730,45 +789,43 @@ impl Graph {
         }
         let id = ident::connection(&source, &target);
         let slot = self.map.entry(id).or_default();
-        if let Some(c) = slot.connection.as_mut() {
+        if let Some(c) = slot.connection_mut() {
             if c.status == Status::TentativeTombstone {
                 c.status = status;
             }
             return Some((id, false));
         }
-        slot.connection = Some(Connection {
+        debug_assert!(matches!(slot, Slot::Empty));
+        *slot = Slot::Connection(Connection {
             id,
             source,
             target,
             status,
         });
-        self.map
-            .entry(source)
-            .or_default()
-            .parts
-            .insert(Participation {
+        // Both endpoints are nodes (read above).
+        if let Some(parts) = self.map.get_mut(&source).and_then(Slot::parts_mut) {
+            parts.insert(Participation {
                 other_typ: ttyp,
                 other: target,
                 outgoing: true,
                 connection: id,
             });
-        self.map
-            .entry(target)
-            .or_default()
-            .parts
-            .insert(Participation {
+        }
+        if let Some(parts) = self.map.get_mut(&target).and_then(Slot::parts_mut) {
+            parts.insert(Participation {
                 other_typ: styp,
                 other: source,
                 outgoing: false,
                 connection: id,
             });
+        }
         Some((id, true))
     }
 
     // ── Status ───────────────────────────────────────────────────
 
     pub fn set_node_status(&mut self, id: &GhostId, status: Status) -> bool {
-        match self.map.get_mut(id).and_then(|s| s.node.as_mut()) {
+        match self.map.get_mut(id).and_then(Slot::node_mut) {
             Some(n) => {
                 n.status = status;
                 true
@@ -778,7 +835,7 @@ impl Graph {
     }
 
     pub fn set_connection_status(&mut self, id: &GhostId, status: Status) -> bool {
-        match self.map.get_mut(id).and_then(|s| s.connection.as_mut()) {
+        match self.map.get_mut(id).and_then(Slot::connection_mut) {
             Some(c) => {
                 c.status = status;
                 true
@@ -790,17 +847,17 @@ impl Graph {
     // ── Reading ──────────────────────────────────────────────────
 
     pub fn node(&self, id: &GhostId) -> Option<&Node> {
-        self.map.get(id).and_then(|s| s.node.as_ref())
+        self.map.get(id).and_then(Slot::node)
     }
 
     /// Every node in the graph, in no particular order. Callers that
     /// need a stable sequence sort by id.
     pub fn nodes(&self) -> impl Iterator<Item = &Node> + '_ {
-        self.map.values().filter_map(|s| s.node.as_ref())
+        self.map.values().filter_map(Slot::node)
     }
 
     pub fn connection(&self, id: &GhostId) -> Option<&Connection> {
-        self.map.get(id).and_then(|s| s.connection.as_ref())
+        self.map.get(id).and_then(Slot::connection)
     }
 
     /// A node's participations whose counterpart has type `typ` (range
@@ -810,27 +867,35 @@ impl Graph {
         id: &GhostId,
         typ: TypeId,
     ) -> impl Iterator<Item = &'a Participation> + 'a {
-        self.map.get(id).into_iter().flat_map(move |s| {
-            s.parts.range(
-                Participation {
-                    other_typ: typ,
-                    other: GhostId::from_raw([0; 32]),
-                    outgoing: false,
-                    connection: GhostId::from_raw([0; 32]),
-                },
-                Participation {
-                    other_typ: typ,
-                    other: GhostId::from_raw([0xFF; 32]),
-                    outgoing: true,
-                    connection: GhostId::from_raw([0xFF; 32]),
-                },
-            )
-        })
+        self.map
+            .get(id)
+            .and_then(Slot::parts)
+            .into_iter()
+            .flat_map(move |parts| {
+                parts.range(
+                    Participation {
+                        other_typ: typ,
+                        other: GhostId::from_raw([0; 32]),
+                        outgoing: false,
+                        connection: GhostId::from_raw([0; 32]),
+                    },
+                    Participation {
+                        other_typ: typ,
+                        other: GhostId::from_raw([0xFF; 32]),
+                        outgoing: true,
+                        connection: GhostId::from_raw([0xFF; 32]),
+                    },
+                )
+            })
     }
 
     /// All participations (sorted) — for walks/diagnostics.
     pub fn parts<'a>(&'a self, id: &GhostId) -> impl Iterator<Item = &'a Participation> + 'a {
-        self.map.get(id).into_iter().flat_map(|s| s.parts.iter())
+        self.map
+            .get(id)
+            .and_then(Slot::parts)
+            .into_iter()
+            .flat_map(Parts::iter)
     }
 
     /// The id of the connection source→target, if the graph holds one
@@ -849,7 +914,7 @@ impl Graph {
             connection: GhostId::from_raw([0xFF; 32]),
             ..lo
         };
-        let found = self.map.get(source)?.parts.range(lo, hi).next()?;
+        let found = self.map.get(source)?.parts()?.range(lo, hi).next()?;
         debug_assert_eq!(found.connection, ident::connection(source, target));
         Some(found.connection)
     }
@@ -886,7 +951,7 @@ impl Graph {
     pub fn iter_nodes(&self) -> impl Iterator<Item = &Node> {
         self.node_order
             .iter()
-            .filter_map(|id| self.map.get(id).and_then(|s| s.node.as_ref()))
+            .filter_map(|id| self.map.get(id).and_then(Slot::node))
     }
 
     pub fn node_count(&self) -> usize {
@@ -914,10 +979,16 @@ impl Graph {
             let id = node.id;
             out.node_order.push(id);
             out.by_type.entry(node.typ).or_default().push(id);
-            out.map.entry(id).or_default().node = Some(node);
+            out.map.insert(
+                id,
+                Slot::Node {
+                    node,
+                    parts: Parts::default(),
+                },
+            );
         }
         for slot in self.map.values() {
-            if let Some(c) = &slot.connection {
+            if let Some(c) = slot.connection() {
                 if c.status == Status::Tombstone {
                     continue;
                 }
