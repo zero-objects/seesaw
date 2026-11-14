@@ -21,7 +21,9 @@ use std::collections::BTreeSet;
 
 use crate::ident::{GhostId, Status};
 
-use crate::engine::matcher::{find_matches, find_matches_with_fixed, Bindings};
+#[cfg(test)]
+use crate::engine::matcher::find_matches_with_fixed;
+use crate::engine::matcher::{find_matches, find_matches_without, Bindings};
 use crate::graph::{Graph, ValueResolver};
 use crate::plan::{apply_creation, DirectedRule, Ref, RuleDirection};
 
@@ -194,6 +196,10 @@ enum AnchorSlot<'r> {
     /// Handed in by the host ([`Engine::with_anchor_index`]).
     Shared(&'r AnchorIndex),
 }
+
+/// Up to this many new nodes, "stands earlier among the new nodes" is
+/// answered by a scan of the slice; above it by a map.
+const LINEAR_NEW: usize = 8;
 
 /// Does `rule` take part under the configured mask and wave route?
 fn rule_admitted(
@@ -422,14 +428,74 @@ impl<'r> Engine<'r> {
         };
         #[cfg(test)]
         self.check_candidates(g, resolver, new_nodes, &candidates);
+        // A match that binds several of the new nodes would be found
+        // once from each of them. It is searched from the first of them
+        // only: the search anchored at `new_nodes[ni]` leaves out every
+        // node that stands earlier in `new_nodes`. A match with such a
+        // node has it at a position where the index offers it as a
+        // candidate too (the condition is necessary), and that triple
+        // sorts before this one, so the match is recorded there, at the
+        // place in the order where it was recorded first before.
+        let first: crate::hash::FxHashMap<GhostId, usize> = if new_nodes.len() > LINEAR_NEW {
+            let mut first = crate::hash::FxHashMap::default();
+            for (i, id) in new_nodes.iter().enumerate() {
+                first.entry(*id).or_insert(i);
+            }
+            first
+        } else {
+            crate::hash::FxHashMap::default()
+        };
         for (ri, ni, pos) in candidates {
+            let earlier = |id: &GhostId| {
+                if new_nodes.len() > LINEAR_NEW {
+                    first.get(id).is_some_and(|&i| i < ni)
+                } else {
+                    new_nodes[..ni].contains(id)
+                }
+            };
+            if earlier(&new_nodes[ni]) {
+                // The same node again: searched at its first index.
+                continue;
+            }
             let pattern = &rules[ri].pattern;
             let mut fixed = vec![None; pattern.nodes.len()];
             fixed[pos] = Some(new_nodes[ni]);
             trace!(anchored_searches);
-            for m in find_matches_with_fixed(g, resolver, pattern, &fixed) {
+            for m in find_matches_without(g, resolver, pattern, &fixed, Some(&earlier)) {
                 trace!(anchored_found);
                 self.record(ri, m);
+            }
+        }
+        #[cfg(test)]
+        self.check_recorded(g, resolver, new_nodes);
+    }
+
+    /// Test check of the expansion as a whole: every match the
+    /// unfiltered loop finds (every active rule, every new node, every
+    /// position of its type, no node left out) is in the match store
+    /// afterwards.
+    #[cfg(test)]
+    fn check_recorded(&self, g: &Graph, resolver: &dyn ValueResolver, new_nodes: &[GhostId]) {
+        for (ri, rule) in self.rules.iter().enumerate() {
+            if !self.rule_active(ri) {
+                continue;
+            }
+            for id in new_nodes {
+                let Some(node) = g.node(id) else { continue };
+                for (pos, pn) in rule.pattern.nodes.iter().enumerate() {
+                    if pn.typ != node.typ {
+                        continue;
+                    }
+                    let mut fixed = vec![None; rule.pattern.nodes.len()];
+                    fixed[pos] = Some(*id);
+                    for m in find_matches_with_fixed(g, resolver, &rule.pattern, &fixed) {
+                        assert!(
+                            self.by_key.contains_key(&(ri, m)),
+                            "expansion drops a match: rule {} position {pos}",
+                            rule.name
+                        );
+                    }
+                }
             }
         }
     }

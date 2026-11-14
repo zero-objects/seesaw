@@ -243,7 +243,8 @@ fn closing_links_ok(
 }
 
 // The recursion carries the whole search state: graph, resolver, pattern,
-// plan, depth, current binding, optional sink, hit flag, stop mode.
+// plan, depth, current binding, optional sink, hit flag, stop mode and
+// the candidates to leave out.
 // Bundling them into a struct would add an indirection on the hot path.
 #[allow(clippy::too_many_arguments)]
 fn enumerate(
@@ -256,6 +257,7 @@ fn enumerate(
     out: &mut Option<&mut Vec<Bindings>>,
     found_any: &mut bool,
     stop_first: bool,
+    skip: Option<&dyn Fn(&GhostId) -> bool>,
 ) {
     if depth == plan.steps.len() {
         if closing_links_ok(g, resolver, pattern, plan, cur) {
@@ -282,6 +284,7 @@ fn enumerate(
                 out,
                 found_any,
                 stop_first,
+                skip,
             );
         }
         return;
@@ -313,6 +316,9 @@ fn enumerate(
         if cur.iter().flatten().any(|id| *id == cand) {
             continue; // injective
         }
+        if skip.is_some_and(|skip| skip(&cand)) {
+            continue;
+        }
         if via.is_some_and(|c| !g.connection(&c).is_some_and(|c| c.status.is_matchable())) {
             continue;
         }
@@ -333,6 +339,7 @@ fn enumerate(
             out,
             found_any,
             stop_first,
+            skip,
         );
         cur[step.node_ix] = None;
         if stop_first && *found_any {
@@ -353,6 +360,19 @@ pub fn find_matches_with_fixed(
     pattern: &Pattern,
     fixed: &[Option<GhostId>],
 ) -> Vec<Bindings> {
+    find_matches_without(g, resolver, pattern, fixed, None)
+}
+
+/// [`find_matches_with_fixed`] without the matches that bind a node
+/// `skip` names at a position that is not pre-bound. The search leaves
+/// such a node out as a candidate, so it does not descend below it.
+pub(crate) fn find_matches_without(
+    g: &Graph,
+    resolver: &dyn ValueResolver,
+    pattern: &Pattern,
+    fixed: &[Option<GhostId>],
+    skip: Option<&dyn Fn(&GhostId) -> bool>,
+) -> Vec<Bindings> {
     let plan = build_plan(pattern, fixed);
     let mut cur = fixed.to_vec();
     let mut result = Vec::new();
@@ -367,6 +387,7 @@ pub fn find_matches_with_fixed(
         &mut Some(&mut result),
         &mut found,
         false,
+        skip,
     );
     result.sort();
     result
