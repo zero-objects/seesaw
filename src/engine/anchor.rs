@@ -68,10 +68,13 @@ struct PathNode {
 struct Place {
     rule: usize,
     pos: usize,
-    /// Value predicate of the position itself.
+    /// Value predicate of the position itself, unless it is
+    /// `Predicate::Equals`: such a place is filed by its value
+    /// ([`Filed::equals`]) and reached only by a node that has it.
     value: Option<Predicate>,
-    /// The prefix-tree nodes that end the paths from the position.
-    needs: Vec<u32>,
+    /// The prefix-tree nodes that end the paths from the position, as
+    /// a range of `AnchorIndex::needs`.
+    needs: std::ops::Range<u32>,
 }
 
 /// Places filed at one point of the index, split by their own value
@@ -98,7 +101,12 @@ impl Filed {
 
     fn push(&mut self, value: Option<&Predicate>, place: u32) {
         match value {
-            Some(Predicate::Equals(v)) => self.equals.entry(v.clone()).or_default().push(place),
+            Some(Predicate::Equals(v)) => match self.equals.get_mut(v.as_str()) {
+                Some(places) => places.push(place),
+                None => {
+                    self.equals.insert(v.clone(), vec![place]);
+                }
+            },
             _ => self.any.push(place),
         }
     }
@@ -146,83 +154,103 @@ pub struct AnchorIndex {
     /// places it can satisfy through the nodes it marked, without
     /// looking at the other places of the type.
     filed: Vec<Filed>,
+    /// The `needs` of all places, one range per place.
+    needs: Vec<u32>,
     /// Per rule and position: the plan of the search anchored there,
     /// built when the first search at that place runs. Building all of
-    /// them with the index costs more than a short run saves.
-    plans: Vec<Vec<OnceLock<Plan>>>,
+    /// them with the index costs more than a short run saves. The plans
+    /// of rule `r` start at `plan_at[r]`.
+    plans: Vec<OnceLock<Plan>>,
+    plan_at: Vec<usize>,
     by_type: FxHashMap<TypeId, TypeIndex>,
     /// The rule slice the index was built for (address, length).
     built_for: (usize, usize),
 }
 
-/// One step of a path: direction, type and predicate of the next node.
-type PathStep = (Option<bool>, TypeId, Option<Predicate>);
+/// Working memory of [`AnchorIndex::build`]: the breadth-first spanning
+/// tree of the links of one pattern from one position (no value joins,
+/// no self links), cut at [`MAX_DEPTH`]. A path of the position is the
+/// way from it to a leaf of the tree; a leaf path covers its prefixes.
+#[derive(Debug, Default)]
+struct Tree {
+    seen: Vec<bool>,
+    /// Per reached position: the position it was reached from and the
+    /// direction of the edge as seen from there (`None`: direction-free).
+    parent: Vec<(usize, Option<bool>)>,
+    depth: Vec<usize>,
+    has_child: Vec<bool>,
+    queue: VecDeque<usize>,
+    /// The positions of one path, from the leaf back to the root.
+    chain: Vec<usize>,
+}
 
-/// The paths of `pattern` from `pos` along a breadth-first spanning
-/// tree of its links (no value joins, no self links), cut at
-/// [`MAX_DEPTH`]. One path per tree leaf; a leaf path covers its
-/// prefixes.
-fn paths_from(pattern: &Pattern, pos: usize) -> Vec<Vec<PathStep>> {
-    let n = pattern.nodes.len();
-    let mut seen = vec![false; n];
-    let mut path: Vec<Option<Vec<PathStep>>> = vec![None; n];
-    let mut has_child = vec![false; n];
-    seen[pos] = true;
-    path[pos] = Some(Vec::new());
-    let mut queue = VecDeque::from([pos]);
-    while let Some(u) = queue.pop_front() {
-        let base = path[u].clone().expect("visited");
-        if base.len() >= MAX_DEPTH {
-            continue;
-        }
-        for l in &pattern.links {
-            if l.kind == LinkKind::SameValue || l.from == l.to {
+impl Tree {
+    fn span(&mut self, pattern: &Pattern, pos: usize) {
+        let n = pattern.nodes.len();
+        self.seen.clear();
+        self.seen.resize(n, false);
+        self.parent.clear();
+        self.parent.resize(n, (pos, None));
+        self.depth.clear();
+        self.depth.resize(n, 0);
+        self.has_child.clear();
+        self.has_child.resize(n, false);
+        self.queue.clear();
+        self.seen[pos] = true;
+        self.queue.push_back(pos);
+        while let Some(u) = self.queue.pop_front() {
+            if self.depth[u] >= MAX_DEPTH {
                 continue;
             }
-            let (w, outgoing) = if l.from == u {
-                (l.to, true)
-            } else if l.to == u {
-                (l.from, false)
-            } else {
-                continue;
-            };
-            if w >= n || seen[w] {
-                continue;
+            for l in &pattern.links {
+                if l.kind == LinkKind::SameValue || l.from == l.to {
+                    continue;
+                }
+                let (w, outgoing) = if l.from == u {
+                    (l.to, true)
+                } else if l.to == u {
+                    (l.from, false)
+                } else {
+                    continue;
+                };
+                if w >= n || self.seen[w] {
+                    continue;
+                }
+                self.seen[w] = true;
+                self.has_child[u] = true;
+                self.parent[w] = (u, (l.kind != LinkKind::Context).then_some(outgoing));
+                self.depth[w] = self.depth[u] + 1;
+                self.queue.push_back(w);
             }
-            seen[w] = true;
-            has_child[u] = true;
-            let dir = (l.kind != LinkKind::Context).then_some(outgoing);
-            let pn = &pattern.nodes[w];
-            let mut p = base.clone();
-            p.push((dir, pn.typ, pn.value.clone()));
-            path[w] = Some(p);
-            queue.push_back(w);
         }
     }
-    (0..n)
-        .filter(|&i| i != pos && seen[i] && !has_child[i])
-        .filter_map(|i| path[i].take())
-        .collect()
+
+    /// Is `i` the end of a path from `pos`?
+    fn is_leaf(&self, pos: usize, i: usize) -> bool {
+        i != pos && self.seen[i] && !self.has_child[i]
+    }
 }
 
 impl AnchorIndex {
     /// Reads the paths from every position of the directed rules.
     #[must_use]
     pub fn build(rules: &[DirectedRule]) -> Self {
+        let mut plan_at = Vec::with_capacity(rules.len());
+        let mut positions = 0;
+        for r in rules {
+            plan_at.push(positions);
+            positions += r.pattern.nodes.len();
+        }
         let mut index = Self {
             nodes: Vec::new(),
             filed: Vec::new(),
-            plans: rules
-                .iter()
-                .map(|r| {
-                    (0..r.pattern.nodes.len())
-                        .map(|_| OnceLock::new())
-                        .collect()
-                })
-                .collect(),
+            needs: Vec::new(),
+            plans: (0..positions).map(|_| OnceLock::new()).collect(),
+            plan_at,
             by_type: FxHashMap::default(),
             built_for: (rules.as_ptr() as usize, rules.len()),
         };
+        let mut tree = Tree::default();
         for (ri, rule) in rules.iter().enumerate() {
             let pattern = &rule.pattern;
             for (pos, pn) in pattern.nodes.iter().enumerate() {
@@ -241,21 +269,35 @@ impl AnchorIndex {
                         root
                     }
                 };
-                let mut needs = Vec::new();
-                for p in paths_from(pattern, pos) {
-                    let mut cur = root;
-                    for (dir, typ, pred) in p {
-                        cur = index.child(cur, dir, typ, pred);
+                // One path per leaf of the spanning tree, the leaves in
+                // ascending position.
+                tree.span(pattern, pos);
+                let from = index.needs.len();
+                for leaf in 0..pattern.nodes.len() {
+                    if !tree.is_leaf(pos, leaf) {
+                        continue;
                     }
-                    if !needs.contains(&cur) {
-                        needs.push(cur);
+                    tree.chain.clear();
+                    let mut w = leaf;
+                    while w != pos {
+                        tree.chain.push(w);
+                        w = tree.parent[w].0;
+                    }
+                    let mut cur = root;
+                    for &w in tree.chain.iter().rev() {
+                        let next = &pattern.nodes[w];
+                        cur = index.child(cur, tree.parent[w].1, next.typ, next.value.as_ref());
+                    }
+                    if !index.needs[from..].contains(&cur) {
+                        index.needs.push(cur);
                     }
                 }
+                let needs = from as u32..index.needs.len() as u32;
                 // File the place under the need that carries the fewest
                 // places so far: a path many rules share (the link to
                 // the parent) fills up, a path few rules share (a leaf
                 // value) stays short.
-                let key = needs
+                let key = index.needs[from..]
                     .iter()
                     .copied()
                     .min_by_key(|&n| index.filed[n as usize].load(pn.value.as_ref()));
@@ -268,7 +310,10 @@ impl AnchorIndex {
                 ti.places.push(Place {
                     rule: ri,
                     pos,
-                    value: pn.value.clone(),
+                    value: match &pn.value {
+                        Some(Predicate::Equals(_)) => None,
+                        other => other.clone(),
+                    },
                     needs,
                 });
             }
@@ -288,7 +333,7 @@ impl AnchorIndex {
         parent: u32,
         outgoing: Option<bool>,
         typ: TypeId,
-        pred: Option<Predicate>,
+        pred: Option<&Predicate>,
     ) -> u32 {
         let groups = &self.nodes[parent as usize].groups;
         let gi = match groups
@@ -309,9 +354,9 @@ impl AnchorIndex {
         };
         let found = {
             let group = &self.nodes[parent as usize].groups[gi];
-            match &pred {
+            match pred {
                 None => group.any,
-                Some(Predicate::Equals(v)) => group.equals.get(v).copied(),
+                Some(Predicate::Equals(v)) => group.equals.get(v.as_str()).copied(),
                 Some(p) => {
                     let key = format!("{p:?}");
                     group
@@ -330,9 +375,9 @@ impl AnchorIndex {
         match pred {
             None => group.any = Some(c),
             Some(Predicate::Equals(v)) => {
-                group.equals.insert(v, c);
+                group.equals.insert(v.clone(), c);
             }
-            Some(p) => group.other.push((format!("{p:?}"), p, c)),
+            Some(p) => group.other.push((format!("{p:?}"), p.clone(), c)),
         }
         c
     }
@@ -340,7 +385,7 @@ impl AnchorIndex {
     /// The plan of the search anchored at position `pos` of `pattern`,
     /// the pattern of rule `rule` of the rules the index was built for.
     pub(crate) fn plan(&self, rule: usize, pos: usize, pattern: &Pattern) -> &Plan {
-        self.plans[rule][pos].get_or_init(|| plan_anchored(pattern, pos))
+        self.plans[self.plan_at[rule] + pos].get_or_init(|| plan_anchored(pattern, pos))
     }
 
     /// Was the index built for this rule slice?
@@ -451,7 +496,8 @@ impl AnchorIndex {
             let mut check = |place_ix: u32, value_holds: bool| {
                 trace!(anchor_places);
                 let place = &ti.places[place_ix as usize];
-                if !place.needs.iter().all(|&n| st.marked[n as usize]) {
+                let needs = &self.needs[place.needs.start as usize..place.needs.end as usize];
+                if !needs.iter().all(|&n| st.marked[n as usize]) {
                     return;
                 }
                 if !value_holds {
