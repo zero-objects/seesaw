@@ -208,7 +208,7 @@ pub struct Engine<'r> {
     /// adj[k] → match refs (spec §1.6: "which matches contain k?").
     by_element: crate::hash::FxHashMap<GhostId, Ixs>,
     /// Duplicate memory: ref sequences already applied per rule.
-    applied: BTreeSet<(usize, Refs)>,
+    applied: std::collections::HashSet<(usize, Refs), crate::hash::FxBuildHasher>,
     todo: BTreeSet<TodoKey>,
     pub saw_contradiction: bool,
     /// (rule_ix, refs) → match store index for todo resolution.
@@ -336,7 +336,7 @@ impl<'r> Engine<'r> {
             rules,
             matches: Vec::new(),
             by_element: Default::default(),
-            applied: BTreeSet::new(),
+            applied: Default::default(),
             todo: BTreeSet::new(),
             by_key: Default::default(),
             by_product: Default::default(),
@@ -1263,21 +1263,20 @@ impl<'r> Engine<'r> {
             trace!(steps_applied);
             let (created, created_edges) = apply_creation_at(g, rule, &refs, Some(&ids));
             let eix = self.cascade.len() as u32;
+            // Provenance, product side: every node and edge this entry
+            // built points back at it.
+            for id in created.iter().chain(created_edges.iter()) {
+                self.by_product.entry(*id).or_default().push(eix);
+            }
+            // The entry keeps `created`; the expansion below borrows
+            // it back for its duration.
             self.cascade.push(Entry {
                 rule_ix,
                 rank: rule.rank,
                 refs: refs.to_vec(),
-                created: created.clone(),
+                created: Vec::new(),
                 created_edges,
             });
-            // Provenance, product side: every node and edge this entry
-            // built points back at it.
-            for id in created
-                .iter()
-                .chain(self.cascade[eix as usize].created_edges.iter())
-            {
-                self.by_product.entry(*id).or_default().push(eix);
-            }
             self.applied.insert((rule_ix, refs.clone()));
             // Materialize the provenance edge: the applied match points
             // at its cascade entry (so `retract_for` needs no scan).
@@ -1285,6 +1284,7 @@ impl<'r> Engine<'r> {
                 self.matches[mix as usize].entry = Some(eix);
             }
             self.expand_at(g, resolver, &created, true);
+            self.cascade[eix as usize].created = created;
             return Some(true);
         }
     }
