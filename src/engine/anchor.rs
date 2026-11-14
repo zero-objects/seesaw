@@ -72,6 +72,36 @@ struct Place {
     needs: Vec<u32>,
 }
 
+/// Places filed at one point of the index, split by their own value
+/// predicate: a new node reaches the places that ask for its value
+/// through `equals`, without looking at those that ask for another.
+#[derive(Debug, Default)]
+struct Filed {
+    /// Places without a value predicate or with one that is not
+    /// `Predicate::Equals`.
+    any: Vec<u32>,
+    /// Places with `Predicate::Equals`, by value.
+    equals: FxHashMap<String, Vec<u32>>,
+}
+
+impl Filed {
+    /// How many places a node with the value of `value` would look at
+    /// here.
+    fn load(&self, value: Option<&Predicate>) -> usize {
+        match value {
+            Some(Predicate::Equals(v)) => self.equals.get(v).map_or(0, Vec::len),
+            _ => self.any.len(),
+        }
+    }
+
+    fn push(&mut self, value: Option<&Predicate>, place: u32) {
+        match value {
+            Some(Predicate::Equals(v)) => self.equals.entry(v.clone()).or_default().push(place),
+            _ => self.any.push(place),
+        }
+    }
+}
+
 /// Places and prefix tree of one position type.
 #[derive(Debug)]
 struct TypeIndex {
@@ -81,7 +111,7 @@ struct TypeIndex {
     root: u32,
     /// The places without a path (a pattern of one node, or a position
     /// no link leaves): candidates for every node of the type.
-    free: Vec<u32>,
+    free: Filed,
 }
 
 /// Working memory of the walks, kept by the engine across expansions.
@@ -111,7 +141,7 @@ pub struct AnchorIndex {
     /// filed under exactly one of its `needs`, so a walk reaches the
     /// places it can satisfy through the nodes it marked, without
     /// looking at the other places of the type.
-    filed: Vec<Vec<u32>>,
+    filed: Vec<Filed>,
     by_type: FxHashMap<TypeId, TypeIndex>,
     /// The rule slice the index was built for (address, length).
     built_for: (usize, usize),
@@ -189,7 +219,7 @@ impl AnchorIndex {
                             TypeIndex {
                                 places: Vec::new(),
                                 root,
-                                free: Vec::new(),
+                                free: Filed::default(),
                             },
                         );
                         root
@@ -212,12 +242,12 @@ impl AnchorIndex {
                 let key = needs
                     .iter()
                     .copied()
-                    .min_by_key(|&n| index.filed[n as usize].len());
+                    .min_by_key(|&n| index.filed[n as usize].load(pn.value.as_ref()));
                 let ti = index.by_type.get_mut(&pn.typ).expect("inserted above");
                 let place_ix = ti.places.len() as u32;
                 match key {
-                    Some(n) => index.filed[n as usize].push(place_ix),
-                    None => ti.free.push(place_ix),
+                    Some(n) => index.filed[n as usize].push(pn.value.as_ref(), place_ix),
+                    None => ti.free.push(pn.value.as_ref(), place_ix),
                 }
                 ti.places.push(Place {
                     rule: ri,
@@ -232,7 +262,7 @@ impl AnchorIndex {
 
     fn new_node(&mut self) -> u32 {
         self.nodes.push(PathNode::default());
-        self.filed.push(Vec::new());
+        self.filed.push(Filed::default());
         (self.nodes.len() - 1) as u32
     }
 
@@ -370,31 +400,48 @@ impl AnchorIndex {
             }
             st.visited.clear();
             self.walk(g, v, *x, ti.root, st);
-            let mut value: Option<Option<String>> = None;
             // The places filed under a marked node, and the places
             // without a path. Each place is filed once, so none comes
-            // twice; the triples are sorted below.
-            let reached = st
-                .list
-                .iter()
-                .flat_map(|&id| self.filed[id as usize].iter())
-                .chain(ti.free.iter());
-            for &place_ix in reached {
+            // twice; the triples are sorted below. Of the places that
+            // ask for a value of the node itself, only those that ask
+            // for the value it has.
+            let reached = || {
+                st.list
+                    .iter()
+                    .map(|&id| &self.filed[id as usize])
+                    .chain(std::iter::once(&ti.free))
+            };
+            let value = if reached().any(|f| !f.equals.is_empty()) {
+                g.resolve_value(x, v)
+            } else {
+                None
+            };
+            let mut check = |place_ix: u32, value_holds: bool| {
                 trace!(anchor_places);
                 let place = &ti.places[place_ix as usize];
                 if !place.needs.iter().all(|&n| st.marked[n as usize]) {
-                    continue;
+                    return;
                 }
-                if let Some(pred) = &place.value {
-                    let val = value.get_or_insert_with(|| g.resolve_value(x, v));
-                    if !pred.matches(val.as_deref()) {
-                        continue;
+                if !value_holds {
+                    if let Some(pred) = &place.value {
+                        if !pred.matches(value.as_deref()) {
+                            return;
+                        }
                     }
                 }
-                if !active(place.rule) {
-                    continue;
+                if active(place.rule) {
+                    out.push((place.rule, ni, place.pos));
                 }
-                out.push((place.rule, ni, place.pos));
+            };
+            for f in reached() {
+                for &place_ix in &f.any {
+                    check(place_ix, false);
+                }
+                if let Some(places) = value.as_deref().and_then(|s| f.equals.get(s)) {
+                    for &place_ix in places {
+                        check(place_ix, true);
+                    }
+                }
             }
             // Reset only what this walk marked.
             for id in st.list.drain(..) {
