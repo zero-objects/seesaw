@@ -11,7 +11,8 @@
 //!
 //! Columns: label, cell, samples, user CPU (minimum and median, ms),
 //! wall time (minimum, ms), peak memory (MB), steps, applied steps,
-//! nodes, fingerprint, then the structural counters (with
+//! nodes, fingerprint, instructions retired in user mode (minimum;
+//! Linux, 0 elsewhere), then the structural counters (with
 //! `perf_trace`). Time is user CPU of the measured section only, model
 //! construction and rule loading are outside of it. The fingerprint
 //! covers graph and cascade order and has to be the same for every
@@ -171,6 +172,11 @@ fn run(cell: &Cell, samples: usize, label: &str) -> String {
     let fingerprint = first.fingerprint.clone();
     let counters = first.usage.counters.clone();
     let wall_min = outcomes.iter().map(|o| o.usage.wall_ns).min().unwrap_or(0);
+    let instructions = outcomes
+        .iter()
+        .map(|o| o.usage.instructions)
+        .min()
+        .unwrap_or(0);
     outcomes.sort_by_key(|o| o.usage.user_ns);
     let user_min = outcomes[0].usage.user_ns;
     let user_med = outcomes[outcomes.len() / 2].usage.user_ns;
@@ -190,6 +196,7 @@ fn run(cell: &Cell, samples: usize, label: &str) -> String {
         applied.to_string(),
         nodes.to_string(),
         fingerprint,
+        format!("instr={instructions}"),
     ];
     for (name, value) in counters {
         cols.push(format!("{name}={value}"));
