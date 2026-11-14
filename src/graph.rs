@@ -582,13 +582,13 @@ impl Graph {
         target: GhostId,
         status: Status,
     ) -> Option<(GhostId, bool)> {
-        let (styp, ttyp) = {
+        let (styp, sstatus, ttyp, tstatus) = {
             let s = self.node(&source)?;
             let t = self.node(&target)?;
             if s.status == Status::Tombstone || t.status == Status::Tombstone {
                 return None;
             }
-            (s.typ, t.typ)
+            (s.typ, s.status, t.typ, t.status)
         };
         // Reclaim through USE (M5): whoever derives a live connection
         // to a tentatively retracted node re-legitimizes it
@@ -596,26 +596,23 @@ impl Graph {
         // survives the deletion of its creator as long as one member
         // still uses it.
         if status != Status::Tombstone && status != Status::TentativeTombstone {
-            for id in [source, target] {
-                if let Some(n) = self.map.get_mut(&id).and_then(|s| s.node.as_mut()) {
-                    if n.status == Status::TentativeTombstone {
+            for (id, node_status) in [(source, sstatus), (target, tstatus)] {
+                if node_status == Status::TentativeTombstone {
+                    if let Some(n) = self.map.get_mut(&id).and_then(|s| s.node.as_mut()) {
                         n.status = Status::Ghost;
                     }
                 }
             }
         }
         let id = ident::connection(&source, &target);
-        if let Some(slot) = self.map.get(&id) {
-            if slot.connection.is_some() {
-                if let Some(c) = self.map.get_mut(&id).and_then(|s| s.connection.as_mut()) {
-                    if c.status == Status::TentativeTombstone {
-                        c.status = status;
-                    }
-                }
-                return Some((id, false));
+        let slot = self.map.entry(id).or_default();
+        if let Some(c) = slot.connection.as_mut() {
+            if c.status == Status::TentativeTombstone {
+                c.status = status;
             }
+            return Some((id, false));
         }
-        self.map.entry(id).or_default().connection = Some(Connection {
+        slot.connection = Some(Connection {
             id,
             source,
             target,
