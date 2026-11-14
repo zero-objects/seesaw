@@ -25,9 +25,8 @@ spanning tree, up to six links), merged per position type into one
 prefix tree. A new node's neighbourhood is walked once along that tree;
 a (rule, position) is searched only if all its paths are realised and
 its own value predicate holds. The condition is necessary for a match,
-checked on the same graph state and with the matcher's status checks,
-and the searches run in the order of the former loop, so the recorded
-matches and their order are unchanged. `elements_added` uses the same
+checked on the same graph state, and the searches run in the order of
+the former loop, so the recorded matches and their order are unchanged. `elements_added` uses the same
 index.
 
 `Engine::new` builds the index on first use. A host that runs several
@@ -40,61 +39,110 @@ on 40 files of commonmark-java: cascade steps of the forward wave
 131.5 s → 3.9 s, of the backward wave 60.3 s → 2.7 s; identical graph
 and output. Rust only; the Java implementation is unchanged.
 
-### Three further changes to the expansion
+### Further changes to expansion, matcher and graph
 
-Found with the counters of the performance suite (below), each with the
-same graph and the same cascade order as before.
+Found with the counters and profiles of the performance suite (below).
+Each leaves the graph and the order of the cascade as they were; the
+suite checks that with a fingerprint over both.
+
+Expansion:
 
 - The anchor index compared every place of a node's type against each
-  walk (30.8 million comparisons for 2 623 applied steps in
-  `langpack/add/k700/n2000`). Each place with a path is now filed under
-  one of its path nodes, the one that carries the fewest places, and a
+  walk. Each place with a path is now filed under one of its path
+  nodes, split by the value the place asks of the node itself, and a
   walk looks only at the places under the nodes it marked.
+- The walk reads types, directions and values, not the status of the
+  elements on a path. The condition stays necessary; a path over a
+  retracted element leads to a search that fails on that element.
+- A match that binds several of the new nodes was found once from each
+  of them and dropped again by the match store. The search anchored at
+  a new node now leaves out the nodes that stand earlier in the same
+  delta, so the match is found from the first of them, at the point in
+  the order where it was recorded first before.
+- The plan of an anchored search depends on rule and position only. It
+  is built at the first search at its place and kept.
+- An anchored search writes into buffers the engine keeps and no longer
+  allocates per search and per match.
+
+Matcher:
+
 - A candidate taken from a participation list comes with the connection
   of the link it was reached by. The matcher reads that connection's
   status instead of calling `Graph::connected`, which derives the
-  connection id with a blake3 hash on every call. The check over all
-  links at the end of a search is reduced to the links no step has
-  checked (value joins, self links, links between two pre-bound
-  positions). A direction-free link that only one of the two
-  connections carries used to return the same match twice and now
-  returns it once.
-- A match that binds several of the new nodes was found once from each
-  of them and dropped again by the match store (three of four finds in
-  `f2p/delta-add`). The search anchored at a new node now leaves out the
-  nodes that stand earlier in the same delta, so the match is found from
-  the first of them, at the point in the order where it was recorded
-  first before.
+  connection id with a blake3 hash. The check over all links at the end
+  of a search is reduced to the links no step has checked (value joins,
+  self links, links between two pre-bound positions). A direction-free
+  link that only one of the two connections carries used to return the
+  same match twice and now returns it once.
+- Candidates are tried as they are read, without collecting them first.
+- Value predicates read the value of a rule constant or of a baseline
+  leaf borrowed, without building a `String`
+  (`ValueResolver::baseline_str`, `Graph::with_value`).
 
-User CPU of the measured section, minimum of five runs (three for f2p
-and for 2.0.2), on one exclusively reserved machine. "2.0.2" is the
-released engine, "index" the anchor index alone, "now" all of the above.
+Engine bookkeeping:
 
-| cell | 2.0.2 | index | now |
-|---|---|---|---|
-| `langpack/add/k700/n2000` | 16 143 ms | 155.7 ms | 68.8 ms |
-| `langpack/backward/k700/n2000` | 8 413 ms | 134.1 ms | 58.1 ms |
-| `langpack/seed/k700/n2000` | 11 193 ms | 1 096 ms | 838.9 ms |
-| `langpack/add/k700/n20000` | not run | 1 563 ms | 668.1 ms |
-| `langpack/delta-add/k700/n20000/d200` | not run | 16.8 ms | 8.7 ms |
-| `langpack/delta-change/k700/n20000/d200` | not run | 300.1 ms | 159.1 ms |
-| `langpack/delta-delete/k700/n20000/d200` | not run | 50.8 ms | 49.3 ms |
-| `f2p/batch/f20000` | 1 775 ms | not run | 1 495 ms |
-| `f2p/add/f20000` | 2 658 ms | not run | 1 809 ms |
-| `f2p/delta-add/f20000/d1000` | 90.3 ms | not run | 67.8 ms |
+- The ref sequence of a match is held once and shared by match store,
+  todo, key index and applied set (four copies before).
+- The match store reads the ids of a match's connections from the graph
+  instead of deriving each with a hash.
+- The identities of the nodes a step creates are derived once, for the
+  contradiction check and the creation.
+- The per-element index lists hold up to four entries in place.
+- The todo key carries the head of the ref sequence, so that most
+  comparisons are decided without following the sequence.
+
+Graph:
+
+- A slot of the map holds a node or a connection, not room for both.
+- The participation list of a node is a sorted vector while short and a
+  B-tree from 48 entries on.
+- `connect_reporting` looks its endpoints up twice instead of four
+  times.
+- The order of `GhostId` is written out over four words instead of a
+  call to `memcmp`.
+
+Tried and taken back, each on a measurement: equality of `GhostId`
+written out like its order (slower), reading the connection id from the
+participation list in `Graph::connected` (more instructions in `seed`),
+collecting the input of an identity hash and hashing it in one call
+(more instructions).
+
+Measured on one exclusively reserved machine. Time is user CPU of the
+measured section, minimum of four interleaved runs ("2.0.2": two runs).
+Because the time varied by 10 to 15 % between runs of one binary, the
+comparison within this series is the number of instructions retired in
+user mode. "index" is the anchor index alone, "now" all of the above.
+
+| cell | 2.0.2 | index | now | index / now, instructions |
+|---|---|---|---|---|
+| `langpack/add/k700/n2000` | 16 030 ms | 156.1 ms | 53.0 ms | 3.59 |
+| `langpack/backward/k700/n2000` | 8 278 ms | 135.2 ms | 42.6 ms | 3.63 |
+| `langpack/seed/k700/n2000` | 11 155 ms | 1 078 ms | 604.4 ms | 2.01 |
+| `langpack/add/k700/n20000` | not run | 1 568 ms | 466.2 ms | 5.51 |
+| `langpack/delta-add/k700/n20000/d200` | not run | 16.8 ms | 5.0 ms | 3.90 |
+| `langpack/delta-change/k700/n20000/d200` | not run | 295.1 ms | 112.7 ms | 4.42 |
+| `langpack/delta-delete/k700/n20000/d200` | not run | 49.8 ms | 37.7 ms | 1.25 |
+| `f2p/batch/f20000` | 1 738 ms | 1 712 ms | 1 168 ms | 1.93 |
+| `f2p/add/f20000` | 2 646 ms | 2 392 ms | 1 323 ms | 2.44 |
+| `f2p/delta-add/f20000/d1000` | 98.0 ms | 88.3 ms | 51.2 ms | 2.12 |
+
+Peak memory of the process in `f2p/add/f20000` (580 006 nodes): 1 514 MB
+with 2.0.2, 862 MB now.
 
 `langpack` is a synthetic rule set in the shape of a language pack
 (1 401 rules over one structural type per side), not the Java pack
-above. Raw data: `benches/suite/results/2026-11-14-codepit/`.
+above. Raw data: `benches/suite/results/`.
 
 ### Performance suite
 
 `benches/suite` runs one cell (workload, operation, size) per process
-and writes one line per cell: user CPU, wall time, peak memory, steps
-and a fingerprint over the graph and the cascade in the order it was
-applied. The fingerprint has to be the same for every build of the
-engine. `cargo bench --bench suite -- list` names the cells,
-`benches/suite/cells.sh` runs a list of them.
+and writes one line per cell: user CPU, wall time, peak memory, steps,
+a fingerprint over the graph and the cascade in the order it was
+applied, and on Linux the instructions retired in user mode. The
+fingerprint has to be the same for every build of the engine.
+`cargo bench --bench suite -- list` names the cells,
+`benches/suite/cells.sh` runs a list of them, `benches/suite/profile.sh`
+profiles one.
 
 With `--features perf_trace` a cell also reports structural counters
 (searches, candidates, node checks, value resolutions, identity hashes
@@ -104,9 +152,14 @@ and others). They do not depend on the machine.
 
 - `engine::AnchorIndex` (`build`, `built_for`) and
   `Engine::with_anchor_index`.
+- `ValueResolver::baseline_str` (provided, lends nothing by default),
+  `Graph::with_value`, `Graph::with_node_value`, `Graph::connection_id`.
 
 ### Changed
 
+- `plan::apply_creation` takes the bindings as `&[GhostId]`.
+- `engine::MatchRec::refs` is an `Arc<[GhostId]>`. The type is public,
+  a value of it is not reachable from outside the engine.
 - `perf_trace` (feature, off by default): the module now holds the
   counters of the current engine. The fields of the first generation
   had no call site left and are gone.
