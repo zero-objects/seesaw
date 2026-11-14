@@ -201,9 +201,90 @@ pub struct Participation {
 struct Slot {
     node: Option<Node>,
     connection: Option<Connection>,
-    /// Participations, sorted (BTreeSet = deterministic order,
-    /// O(log) access by counterpart type via range).
-    parts: BTreeSet<Participation>,
+    /// Participations, sorted (deterministic order, O(log) access by
+    /// counterpart type via range).
+    parts: Parts,
+}
+
+/// The participation list of one participant: a set, in the order of
+/// [`Participation`]. A sorted vector while it is short, a B-tree from
+/// [`PARTS_TREE_AT`] entries on. Most nodes have a handful of
+/// participations, for which a B-tree leaf (room for eleven entries of
+/// 72 bytes) was the largest part of the node's memory; a few hubs have
+/// many, for which inserting into a vector would move too much.
+#[derive(Clone, Debug)]
+enum Parts {
+    Flat(Vec<Participation>),
+    Tree(BTreeSet<Participation>),
+}
+
+/// From this many entries on a participation list is a B-tree.
+const PARTS_TREE_AT: usize = 48;
+
+impl Default for Parts {
+    fn default() -> Self {
+        Self::Flat(Vec::new())
+    }
+}
+
+impl Parts {
+    fn insert(&mut self, p: Participation) {
+        match self {
+            Self::Flat(v) => {
+                if let Err(at) = v.binary_search(&p) {
+                    if v.len() >= PARTS_TREE_AT {
+                        let mut t: BTreeSet<Participation> = v.drain(..).collect();
+                        t.insert(p);
+                        *self = Self::Tree(t);
+                    } else {
+                        v.insert(at, p);
+                    }
+                }
+            }
+            Self::Tree(t) => {
+                t.insert(p);
+            }
+        }
+    }
+
+    /// The entries from `lo` to `hi`, both included, in order.
+    fn range(&self, lo: Participation, hi: Participation) -> PartsIter<'_> {
+        match self {
+            Self::Flat(v) => {
+                let from = v.partition_point(|x| *x < lo);
+                let to = from + v[from..].partition_point(|x| *x <= hi);
+                PartsIter::Flat(v[from..to].iter())
+            }
+            Self::Tree(t) => PartsIter::Range(t.range(lo..=hi)),
+        }
+    }
+
+    fn iter(&self) -> PartsIter<'_> {
+        match self {
+            Self::Flat(v) => PartsIter::Flat(v.iter()),
+            Self::Tree(t) => PartsIter::All(t.iter()),
+        }
+    }
+}
+
+/// Iterator over (a range of) a [`Parts`].
+enum PartsIter<'a> {
+    Flat(std::slice::Iter<'a, Participation>),
+    Range(std::collections::btree_set::Range<'a, Participation>),
+    All(std::collections::btree_set::Iter<'a, Participation>),
+}
+
+impl<'a> Iterator for PartsIter<'a> {
+    type Item = &'a Participation;
+
+    #[inline]
+    fn next(&mut self) -> Option<Self::Item> {
+        match self {
+            Self::Flat(i) => i.next(),
+            Self::Range(i) => i.next(),
+            Self::All(i) => i.next(),
+        }
+    }
 }
 
 /// Raw-value access — the ONLY place where values exist. Implemented
@@ -736,7 +817,8 @@ impl Graph {
                     other: GhostId::from_raw([0; 32]),
                     outgoing: false,
                     connection: GhostId::from_raw([0; 32]),
-                }..=Participation {
+                },
+                Participation {
                     other_typ: typ,
                     other: GhostId::from_raw([0xFF; 32]),
                     outgoing: true,
@@ -767,7 +849,7 @@ impl Graph {
             connection: GhostId::from_raw([0xFF; 32]),
             ..lo
         };
-        let found = self.map.get(source)?.parts.range(lo..=hi).next()?;
+        let found = self.map.get(source)?.parts.range(lo, hi).next()?;
         debug_assert_eq!(found.connection, ident::connection(source, target));
         Some(found.connection)
     }
@@ -940,6 +1022,49 @@ mod tests {
     }
 
     use super::*;
+
+    /// A participation list answers the same below and above the point
+    /// where it turns into a tree, and the same as a plain B-tree.
+    #[test]
+    fn parts_agree_with_a_btree_across_the_switch() {
+        let id = |i: u32| {
+            let mut b = [0u8; 32];
+            b[..4].copy_from_slice(&i.wrapping_mul(2_654_435_761).to_be_bytes());
+            GhostId::from_raw(b)
+        };
+        let mut parts = Parts::default();
+        let mut tree: BTreeSet<Participation> = BTreeSet::new();
+        for i in 0..(3 * PARTS_TREE_AT as u32) {
+            let p = Participation {
+                other_typ: TypeId(i % 3),
+                other: id(i / 2),
+                outgoing: i % 2 == 0,
+                connection: id(1000 + i),
+            };
+            // Twice: the list is a set.
+            for _ in 0..2 {
+                parts.insert(p);
+                tree.insert(p);
+            }
+            assert!(parts.iter().eq(tree.iter()), "after {i} entries");
+            for typ in 0..4 {
+                let lo = Participation {
+                    other_typ: TypeId(typ),
+                    other: GhostId::from_raw([0; 32]),
+                    outgoing: false,
+                    connection: GhostId::from_raw([0; 32]),
+                };
+                let hi = Participation {
+                    other_typ: TypeId(typ),
+                    other: GhostId::from_raw([0xFF; 32]),
+                    outgoing: true,
+                    connection: GhostId::from_raw([0xFF; 32]),
+                };
+                assert!(parts.range(lo, hi).eq(tree.range(lo..=hi)), "type {typ}");
+            }
+        }
+        assert!(matches!(parts, Parts::Tree(_)));
+    }
 
     fn leaf_setup() -> (Graph, ValueStore, GhostId, GhostId) {
         let mut g = Graph::new();
