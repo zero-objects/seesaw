@@ -773,10 +773,15 @@ impl Graph {
     }
 
     /// Does a matchable connection source→target exist?
+    ///
+    /// Derives the id rather than reading it from the participation
+    /// list ([`Graph::connection_id`]): a link check mostly asks about
+    /// a connection that may not exist, between nodes with long lists,
+    /// and measured cheaper this way (`langpack/seed`).
     pub fn connected(&self, source: &GhostId, target: &GhostId) -> bool {
         trace!(link_checks);
-        self.connection_id(source, target)
-            .and_then(|id| self.connection(&id))
+        let id = ident::connection(source, target);
+        self.connection(&id)
             .is_some_and(|c| c.status.is_matchable())
     }
 
@@ -784,8 +789,8 @@ impl Graph {
     /// TT does NOT count as present — the reclaim runs via apply/connect
     /// (M5 resurrection), consolidate clears the unreclaimed.
     pub fn connected_alive(&self, source: &GhostId, target: &GhostId) -> bool {
-        self.connection_id(source, target)
-            .and_then(|id| self.connection(&id))
+        let id = ident::connection(source, target);
+        self.connection(&id)
             .is_some_and(|c| matches!(c.status, Status::Solid | Status::Ghost))
     }
 
