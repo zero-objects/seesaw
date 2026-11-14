@@ -243,6 +243,8 @@ pub struct Engine<'r> {
     anchor: AnchorSlot<'r>,
     /// Working memory of the anchor walks.
     walk: anchor::Walk,
+    /// Working memory of the anchored searches.
+    scratch: crate::engine::matcher::Scratch,
 }
 
 /// Where the engine's [`AnchorIndex`] comes from.
@@ -290,6 +292,7 @@ impl<'r> Engine<'r> {
             pending_tt_edges: Vec::new(),
             anchor: AnchorSlot::Unbuilt,
             walk: anchor::Walk::default(),
+            scratch: Default::default(),
         }
     }
 
@@ -354,7 +357,7 @@ impl<'r> Engine<'r> {
         )
     }
 
-    fn record(&mut self, g: &Graph, rule_ix: usize, refs: Bindings) {
+    fn record(&mut self, g: &Graph, rule_ix: usize, refs: &[GhostId]) {
         trace!(record_calls);
         let refs: Refs = refs.into();
         let key = (rule_ix, refs.clone());
@@ -420,7 +423,7 @@ impl<'r> Engine<'r> {
     fn seed_rule(&mut self, g: &Graph, resolver: &dyn ValueResolver, ri: usize) {
         trace!(seed_searches);
         for m in find_matches(g, resolver, &self.rules[ri].pattern) {
-            self.record(g, ri, m);
+            self.record(g, ri, &m);
         }
     }
 
@@ -507,6 +510,7 @@ impl<'r> Engine<'r> {
         } else {
             crate::hash::FxHashMap::default()
         };
+        let mut scratch = std::mem::take(&mut self.scratch);
         for (ri, ni, pos) in candidates {
             let earlier = |id: &GhostId| {
                 if new_nodes.len() > LINEAR_NEW {
@@ -522,7 +526,7 @@ impl<'r> Engine<'r> {
             let pattern = &rules[ri].pattern;
             let plan = index.plan(ri, pos, pattern);
             trace!(anchored_searches);
-            for m in find_matches_planned(
+            find_matches_planned(
                 g,
                 resolver,
                 pattern,
@@ -530,11 +534,14 @@ impl<'r> Engine<'r> {
                 pos,
                 new_nodes[ni],
                 Some(&earlier),
-            ) {
+                &mut scratch,
+            );
+            for m in scratch.matches(pattern) {
                 trace!(anchored_found);
                 self.record(g, ri, m);
             }
         }
+        self.scratch = scratch;
         self.anchor = anchor;
         #[cfg(test)]
         self.check_recorded(g, resolver, new_nodes);

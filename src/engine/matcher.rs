@@ -256,7 +256,7 @@ fn enumerate(
     plan: &Plan,
     depth: usize,
     cur: &mut Vec<Option<GhostId>>,
-    out: &mut Option<&mut Vec<Bindings>>,
+    out: &mut Option<&mut Found>,
     found_any: &mut bool,
     stop_first: bool,
     skip: Option<&dyn Fn(&GhostId) -> bool>,
@@ -265,7 +265,8 @@ fn enumerate(
         if closing_links_ok(g, resolver, pattern, plan, cur) {
             *found_any = true;
             if let Some(out) = out.as_deref_mut() {
-                out.push(cur.iter().map(|o| o.expect("complete")).collect());
+                out.ids.extend(cur.iter().map(|o| o.expect("complete")));
+                out.count += 1;
             }
         }
         return;
@@ -400,8 +401,39 @@ pub(crate) fn plan_anchored(pattern: &Pattern, pos: usize) -> Plan {
     build_plan(pattern, &fixed)
 }
 
+/// The matches of one search, one after the other in one vector.
+#[derive(Debug, Default)]
+pub(crate) struct Found {
+    /// `count` ref sequences of the pattern's length each.
+    ids: Vec<GhostId>,
+    count: usize,
+}
+
+/// Working memory of the anchored searches, kept by the engine across
+/// searches so that a search allocates nothing.
+#[derive(Debug, Default)]
+pub(crate) struct Scratch {
+    cur: Vec<Option<GhostId>>,
+    found: Found,
+    /// The matches of the last search as offsets into `found.ids`, in
+    /// μ order.
+    order: Vec<usize>,
+}
+
+impl Scratch {
+    /// The matches of the last [`find_matches_planned`], in μ order.
+    pub(crate) fn matches(&self, pattern: &Pattern) -> impl Iterator<Item = &[GhostId]> + '_ {
+        let n = pattern.nodes.len();
+        self.order
+            .iter()
+            .map(move |&at| &self.found.ids[at..at + n])
+    }
+}
+
 /// [`find_matches_without`] with `id` at `pos` and nothing else
 /// pre-bound, along a plan from [`plan_anchored`] for that position.
+/// The matches are left in `scratch` ([`Scratch::matches`]).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn find_matches_planned(
     g: &Graph,
     resolver: &dyn ValueResolver,
@@ -410,10 +442,37 @@ pub(crate) fn find_matches_planned(
     pos: usize,
     id: GhostId,
     skip: Option<&dyn Fn(&GhostId) -> bool>,
-) -> Vec<Bindings> {
-    let mut cur = vec![None; pattern.nodes.len()];
-    cur[pos] = Some(id);
-    search(g, resolver, pattern, plan, cur, skip)
+    scratch: &mut Scratch,
+) {
+    let n = pattern.nodes.len();
+    scratch.cur.clear();
+    scratch.cur.resize(n, None);
+    scratch.cur[pos] = Some(id);
+    scratch.found.ids.clear();
+    scratch.found.count = 0;
+    let mut found = false;
+    enumerate(
+        g,
+        resolver,
+        pattern,
+        plan,
+        0,
+        &mut scratch.cur,
+        &mut Some(&mut scratch.found),
+        &mut found,
+        false,
+        skip,
+    );
+    let ids = &scratch.found.ids;
+    scratch.order.clear();
+    scratch
+        .order
+        .extend((0..scratch.found.count).map(|i| i * n));
+    if scratch.order.len() > 1 {
+        scratch
+            .order
+            .sort_by(|&a, &b| ids[a..a + n].cmp(&ids[b..b + n]));
+    }
 }
 
 fn search(
@@ -424,7 +483,7 @@ fn search(
     mut cur: Vec<Option<GhostId>>,
     skip: Option<&dyn Fn(&GhostId) -> bool>,
 ) -> Vec<Bindings> {
-    let mut result = Vec::new();
+    let mut out = Found::default();
     let mut found = false;
     enumerate(
         g,
@@ -433,11 +492,15 @@ fn search(
         plan,
         0,
         &mut cur,
-        &mut Some(&mut result),
+        &mut Some(&mut out),
         &mut found,
         false,
         skip,
     );
+    let n = pattern.nodes.len();
+    let mut result: Vec<Bindings> = (0..out.count)
+        .map(|i| out.ids[i * n..(i + 1) * n].to_vec())
+        .collect();
     result.sort();
     result
 }
