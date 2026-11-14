@@ -78,6 +78,9 @@ struct TypeIndex {
     places: Vec<Place>,
     /// Root of the prefix tree (a node id into `AnchorIndex::nodes`).
     root: u32,
+    /// The places without a path (a pattern of one node, or a position
+    /// no link leaves): candidates for every node of the type.
+    free: Vec<u32>,
 }
 
 /// Working memory of the walks, kept by the engine across expansions.
@@ -102,6 +105,12 @@ pub(crate) struct Walk {
 #[derive(Debug, Default)]
 pub struct AnchorIndex {
     nodes: Vec<PathNode>,
+    /// Per prefix-tree node: the places (indices into the `places` of
+    /// the node's type) filed under it. Every place with a path is
+    /// filed under exactly one of its `needs`, so a walk reaches the
+    /// places it can satisfy through the nodes it marked, without
+    /// looking at the other places of the type.
+    filed: Vec<Vec<u32>>,
     by_type: FxHashMap<TypeId, TypeIndex>,
     /// The rule slice the index was built for (address, length).
     built_for: (usize, usize),
@@ -163,6 +172,7 @@ impl AnchorIndex {
     pub fn build(rules: &[DirectedRule]) -> Self {
         let mut index = Self {
             nodes: Vec::new(),
+            filed: Vec::new(),
             by_type: FxHashMap::default(),
             built_for: (rules.as_ptr() as usize, rules.len()),
         };
@@ -178,6 +188,7 @@ impl AnchorIndex {
                             TypeIndex {
                                 places: Vec::new(),
                                 root,
+                                free: Vec::new(),
                             },
                         );
                         root
@@ -193,17 +204,26 @@ impl AnchorIndex {
                         needs.push(cur);
                     }
                 }
-                index
-                    .by_type
-                    .get_mut(&pn.typ)
-                    .expect("inserted above")
-                    .places
-                    .push(Place {
-                        rule: ri,
-                        pos,
-                        value: pn.value.clone(),
-                        needs,
-                    });
+                // File the place under the need that carries the fewest
+                // places so far: a path many rules share (the link to
+                // the parent) fills up, a path few rules share (a leaf
+                // value) stays short.
+                let key = needs
+                    .iter()
+                    .copied()
+                    .min_by_key(|&n| index.filed[n as usize].len());
+                let ti = index.by_type.get_mut(&pn.typ).expect("inserted above");
+                let place_ix = ti.places.len() as u32;
+                match key {
+                    Some(n) => index.filed[n as usize].push(place_ix),
+                    None => ti.free.push(place_ix),
+                }
+                ti.places.push(Place {
+                    rule: ri,
+                    pos,
+                    value: pn.value.clone(),
+                    needs,
+                });
             }
         }
         index
@@ -211,6 +231,7 @@ impl AnchorIndex {
 
     fn new_node(&mut self) -> u32 {
         self.nodes.push(PathNode::default());
+        self.filed.push(Vec::new());
         (self.nodes.len() - 1) as u32
     }
 
@@ -356,8 +377,17 @@ impl AnchorIndex {
             st.visited.clear();
             self.walk(g, v, *x, ti.root, st);
             let mut value: Option<Option<String>> = None;
-            trace!(anchor_places, ti.places.len());
-            for place in &ti.places {
+            // The places filed under a marked node, and the places
+            // without a path. Each place is filed once, so none comes
+            // twice; the triples are sorted below.
+            let reached = st
+                .list
+                .iter()
+                .flat_map(|&id| self.filed[id as usize].iter())
+                .chain(ti.free.iter());
+            for &place_ix in reached {
+                trace!(anchor_places);
+                let place = &ti.places[place_ix as usize];
                 if !place.needs.iter().all(|&n| st.marked[n as usize]) {
                     continue;
                 }
