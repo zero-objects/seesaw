@@ -63,6 +63,21 @@ Expansion:
   is built at the first search at its place and kept.
 - An anchored search writes into buffers the engine keeps and no longer
   allocates per search and per match.
+- After a step, its new nodes are anchored at every admitted rule. In a
+  wave without a route they fit the rules of the opposite direction:
+  the match was searched, recorded and later pulled by `step`, which
+  found it translated and counted a duplicate (two of three steps in
+  `f2p/add`). The condition `step` applies (every anchor of the rule's
+  establishes corrs already carries a corr of its type with a live
+  counterpart) is now checked when the match is found, for the nodes a
+  step of the engine has just created. Such a match is not recorded,
+  and where the rule has one establishes corr and the search would be
+  anchored at its anchor, the search is left out. This changes the
+  inner state: these matches are no longer in the match store or the
+  applied set, and `step` no longer returns `Some(false)` for them.
+  Graph and cascade are the same.
+- The candidate triples of a large delta are sorted per node and
+  distributed by rule instead of sorted as a whole.
 
 Matcher:
 
@@ -90,6 +105,8 @@ Engine bookkeeping:
 - The per-element index lists hold up to four entries in place.
 - The todo key carries the head of the ref sequence, so that most
   comparisons are decided without following the sequence.
+- The applied set is a hash set, and a cascade entry takes the created
+  nodes without a copy.
 
 Graph:
 
@@ -99,7 +116,12 @@ Graph:
 - `connect_reporting` looks its endpoints up twice instead of four
   times.
 - The order of `GhostId` is written out over four words instead of a
-  call to `memcmp`.
+  call to `memcmp`. Its hash is one word instead of the 32 bytes; the
+  order in which `Graph::nodes` walks the map changes with it (it is
+  documented as unspecified).
+- The range of one counterpart type in a participation list is found by
+  comparing types only.
+- A new slot is written once.
 
 Tried and taken back, each on a measurement: equality of `GhostId`
 written out like its order (slower), reading the connection id from the
@@ -108,26 +130,28 @@ collecting the input of an identity hash and hashing it in one call
 (more instructions).
 
 Measured on one exclusively reserved machine. Time is user CPU of the
-measured section, minimum of four interleaved runs ("2.0.2": two runs).
-Because the time varied by 10 to 15 % between runs of one binary, the
-comparison within this series is the number of instructions retired in
-user mode. "index" is the anchor index alone, "now" all of the above.
+measured section, minimum of four interleaved runs ("2.0.2": two runs;
+"now": taken two commits before the last, whose instruction counts
+differ by less than 0.5 %). Because the time varied by 10 to 15 %
+between runs of one binary, the comparison within this series is the
+number of instructions retired in user mode. "index" is the anchor
+index alone, "now" all of the above.
 
 | cell | 2.0.2 | index | now | index / now, instructions |
 |---|---|---|---|---|
-| `langpack/add/k700/n2000` | 16 030 ms | 156.1 ms | 53.0 ms | 3.59 |
-| `langpack/backward/k700/n2000` | 8 278 ms | 135.2 ms | 42.6 ms | 3.63 |
-| `langpack/seed/k700/n2000` | 11 155 ms | 1 078 ms | 604.4 ms | 2.01 |
-| `langpack/add/k700/n20000` | not run | 1 568 ms | 466.2 ms | 5.51 |
-| `langpack/delta-add/k700/n20000/d200` | not run | 16.8 ms | 5.0 ms | 3.90 |
-| `langpack/delta-change/k700/n20000/d200` | not run | 295.1 ms | 112.7 ms | 4.42 |
-| `langpack/delta-delete/k700/n20000/d200` | not run | 49.8 ms | 37.7 ms | 1.25 |
-| `f2p/batch/f20000` | 1 738 ms | 1 712 ms | 1 168 ms | 1.93 |
-| `f2p/add/f20000` | 2 646 ms | 2 392 ms | 1 323 ms | 2.44 |
-| `f2p/delta-add/f20000/d1000` | 98.0 ms | 88.3 ms | 51.2 ms | 2.12 |
+| `langpack/add/k700/n2000` | 16 030 ms | 156.1 ms | 43.0 ms | 4.38 |
+| `langpack/backward/k700/n2000` | 8 278 ms | 135.2 ms | 38.9 ms | 4.01 |
+| `langpack/seed/k700/n2000` | 11 155 ms | 1 078 ms | 463.0 ms | 2.64 |
+| `langpack/add/k700/n20000` | not run | 1 568 ms | 335.3 ms | 7.99 |
+| `langpack/delta-add/k700/n20000/d200` | not run | 16.8 ms | 3.6 ms | 7.94 |
+| `langpack/delta-change/k700/n20000/d200` | not run | 295.1 ms | 87.9 ms | 5.99 |
+| `langpack/delta-delete/k700/n20000/d200` | not run | 49.8 ms | 22.0 ms | 2.11 |
+| `f2p/batch/f20000` | 1 738 ms | 1 712 ms | 765.8 ms | 2.79 |
+| `f2p/add/f20000` | 2 646 ms | 2 392 ms | 893.2 ms | 3.63 |
+| `f2p/delta-add/f20000/d1000` | 98.0 ms | 88.3 ms | 46.1 ms | 2.46 |
 
 Peak memory of the process in `f2p/add/f20000` (580 006 nodes): 1 514 MB
-with 2.0.2, 862 MB now.
+with 2.0.2, 823 MB now.
 
 `langpack` is a synthetic rule set in the shape of a language pack
 (1 401 rules over one structural type per side), not the Java pack
@@ -142,7 +166,10 @@ applied, and on Linux the instructions retired in user mode. The
 fingerprint has to be the same for every build of the engine.
 `cargo bench --bench suite -- list` names the cells,
 `benches/suite/cells.sh` runs a list of them, `benches/suite/profile.sh`
-profiles one.
+profiles one over the whole process, and `benches/suite/hot.sh` reports
+the hot paths of the measured section alone (inclusive and self share
+per function, from the samples whose call chain passes through the
+section).
 
 With `--features perf_trace` a cell also reports structural counters
 (searches, candidates, node checks, value resolutions, identity hashes
