@@ -53,8 +53,56 @@ impl Status {
 /// (so the structural identity contract of Def. 5.3 holds — distinct
 /// content never aliases) while being SIMD-accelerated, unlike the prior
 /// SHA-256 software fallback (rc10 perf).
-#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Hash, Serialize, Deserialize)]
 pub struct GhostId([u8; 32]);
+
+impl GhostId {
+    /// The 32 bytes as four big-endian words. Comparing the words in
+    /// order is comparing the bytes in order.
+    #[inline]
+    fn words(&self) -> [u64; 4] {
+        let mut w = [0u64; 4];
+        for (i, word) in w.iter_mut().enumerate() {
+            let mut b = [0u8; 8];
+            b.copy_from_slice(&self.0[i * 8..i * 8 + 8]);
+            *word = u64::from_be_bytes(b);
+        }
+        w
+    }
+}
+
+// Equality and order are those of the byte array. They are written out
+// over four words so that they compile to a few inline compares; the
+// derived versions call `memcmp`, which showed as a tenth of the run
+// time of a cascade (match keys, participation lists, map lookups).
+impl PartialEq for GhostId {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.words() == other.words()
+    }
+}
+
+impl Eq for GhostId {}
+
+impl Ord for GhostId {
+    #[inline]
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        let (a, b) = (self.words(), other.words());
+        for i in 0..4 {
+            if a[i] != b[i] {
+                return a[i].cmp(&b[i]);
+            }
+        }
+        std::cmp::Ordering::Equal
+    }
+}
+
+impl PartialOrd for GhostId {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl GhostId {
     /// Short hexadecimal form (8 characters) for user interfaces and logging.
@@ -91,5 +139,27 @@ impl GhostId {
 impl fmt::Debug for GhostId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "GhostId({})", self.short())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::GhostId;
+    use proptest::prelude::*;
+
+    proptest! {
+        /// Equality and order of `GhostId` are those of its bytes.
+        #[test]
+        fn order_is_the_byte_order(a in any::<[u8; 32]>(), b in any::<[u8; 32]>(), cut in 0usize..32) {
+            // Also pairs with a common prefix, which random arrays
+            // almost never have.
+            let mut c = b;
+            c[..cut].copy_from_slice(&a[..cut]);
+            for (x, y) in [(a, b), (a, c), (a, a)] {
+                let (gx, gy) = (GhostId::from_raw(x), GhostId::from_raw(y));
+                prop_assert_eq!(gx.cmp(&gy), x.cmp(&y));
+                prop_assert_eq!(gx == gy, x == y);
+            }
+        }
     }
 }
