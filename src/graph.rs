@@ -989,6 +989,12 @@ impl Graph {
         self.node_order.len()
     }
 
+    /// How many nodes of a type the graph holds, whatever their status.
+    #[must_use]
+    pub fn type_count(&self, typ: TypeId) -> usize {
+        self.by_type.get(&typ).map_or(0, Vec::len)
+    }
+
     /// Materialization (fold end stage, def. 5.1): a new
     /// graph without tombstones, all ghosts become solid; connections
     /// only if both endpoints survive. Values stay in the original

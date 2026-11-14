@@ -279,6 +279,95 @@ enum AnchorSlot<'r> {
     Shared(&'r AnchorIndex),
 }
 
+impl AnchorSlot<'_> {
+    /// The index of a slot [`Engine::take_index`] has filled.
+    fn index(&self) -> &AnchorIndex {
+        match self {
+            AnchorSlot::Owned(a) => a,
+            AnchorSlot::Shared(a) => a,
+            AnchorSlot::Unbuilt => unreachable!("taken from `take_index`"),
+        }
+    }
+}
+
+/// The matches of every admitted rule over the whole graph, found
+/// through the anchor index: rule by rule, those of one rule in μ order,
+/// each handed to `each` once. That is the sequence of one
+/// [`find_matches`] per rule.
+///
+/// Every matchable node is anchored at the places the index offers for
+/// it. A match is searched from the smallest of its nodes only: the
+/// search anchored at a node leaves out every smaller one, and the match
+/// with a smaller node is found at that node, where the index offers its
+/// position as well (the condition of the index is necessary). A pattern
+/// without nodes has no place in the index and is searched directly.
+#[allow(clippy::too_many_arguments)]
+fn index_seed(
+    index: &AnchorIndex,
+    rules: &[DirectedRule],
+    g: &Graph,
+    resolver: &dyn ValueResolver,
+    walk: &mut anchor::Walk,
+    scratch: &mut crate::engine::matcher::Scratch,
+    admitted: &[bool],
+    mut each: impl FnMut(usize, &[GhostId]),
+) {
+    let mut nodes: Vec<GhostId> = g
+        .iter_nodes()
+        .filter(|n| n.status.is_matchable())
+        .map(|n| n.id)
+        .collect();
+    nodes.sort_unstable();
+    nodes.dedup();
+    let candidates = index.candidates(g, resolver, &nodes, walk, |ri| admitted[ri]);
+    let mut next = 0;
+    // The matches of one rule, one after the other, and their starts in
+    // μ order.
+    let mut found: Vec<GhostId> = Vec::new();
+    let mut order: Vec<usize> = Vec::new();
+    for (ri, rule) in rules.iter().enumerate() {
+        if !admitted[ri] {
+            continue;
+        }
+        let pattern = &rule.pattern;
+        let n = pattern.nodes.len();
+        if n == 0 {
+            for m in find_matches(g, resolver, pattern) {
+                each(ri, &m);
+            }
+            continue;
+        }
+        found.clear();
+        while let Some(&(rule_ix, ni, pos)) = candidates.get(next).filter(|c| c.0 == ri) {
+            next += 1;
+            let at = nodes[ni];
+            let smaller = |id: &GhostId| *id < at;
+            trace!(anchored_searches);
+            find_matches_planned(
+                g,
+                resolver,
+                pattern,
+                index.plan(rule_ix, pos, pattern),
+                pos,
+                at,
+                Some(&smaller),
+                scratch,
+            );
+            for m in scratch.matches(pattern) {
+                trace!(anchored_found);
+                found.extend_from_slice(m);
+            }
+        }
+        order.clear();
+        order.extend((0..found.len() / n).map(|i| i * n));
+        order.sort_unstable_by(|&a, &b| found[a..a + n].cmp(&found[b..b + n]));
+        for &at in &order {
+            each(ri, &found[at..at + n]);
+        }
+    }
+    debug_assert_eq!(next, candidates.len(), "a candidate of a rule not admitted");
+}
+
 /// Does `anchor` already carry a correspondence of type `typ` with a
 /// live counterpart of type `endpoint_typ`?
 fn anchor_translated(g: &Graph, typ: &str, endpoint_typ: &str, anchor: &GhostId) -> bool {
@@ -470,7 +559,25 @@ impl<'r> Engine<'r> {
 
     /// Initial enumeration: all rules in full (seeds) — with stage 8
     /// (add stream) this special path mostly disappears.
+    ///
+    /// The matches are recorded rule by rule, those of one rule in μ
+    /// order. They are found either by one search per rule over the
+    /// whole graph or through the [`AnchorIndex`], whichever looks at
+    /// fewer nodes; both find the same matches and record them in the
+    /// same order.
     pub fn seed(&mut self, g: &Graph, resolver: &dyn ValueResolver) {
+        #[cfg(test)]
+        self.check_seed(g, resolver);
+        if self.seed_through_index(g) {
+            self.seed_by_index(g, resolver);
+        } else {
+            self.seed_by_scan(g, resolver);
+        }
+    }
+
+    /// One search per admitted rule over the whole graph. The search
+    /// starts at the nodes of the type of the rule's first position.
+    fn seed_by_scan(&mut self, g: &Graph, resolver: &dyn ValueResolver) {
         for ri in 0..self.rules.len() {
             if self.rule_active(ri) {
                 self.seed_rule(g, resolver, ri);
@@ -485,17 +592,116 @@ impl<'r> Engine<'r> {
         }
     }
 
+    /// Does the seed go through the [`AnchorIndex`]?
+    ///
+    /// The scan looks at the nodes of the type of the first position
+    /// once per rule; the index walks every node once for all rules. In
+    /// a rule set whose rules share one structural type the scan costs
+    /// rules × nodes, the walk nodes. In a rule set with a type of its
+    /// own per rule the scan looks at fewer nodes than the graph has,
+    /// and the walk costs more per node than the scan. The index is
+    /// taken when the scan would start at more than `FACTOR` times the
+    /// nodes of the graph (measured: 560 times in the suite's language
+    /// pack with 700 kinds, 0.3 times in Families to Persons).
+    fn seed_through_index(&self, g: &Graph) -> bool {
+        const FACTOR: usize = 4;
+        let starts: usize = self
+            .rules
+            .iter()
+            .enumerate()
+            .filter(|(ri, _)| self.rule_active(*ri))
+            .filter_map(|(_, rule)| rule.pattern.nodes.first())
+            .map(|pn| g.type_count(pn.typ))
+            .sum();
+        starts > FACTOR * g.node_count()
+    }
+
+    /// The seed through the [`AnchorIndex`]: every matchable node of the
+    /// graph is anchored like an added one ([`index_seed`]).
+    fn seed_by_index(&mut self, g: &Graph, resolver: &dyn ValueResolver) {
+        let rules = self.rules;
+        let admitted: Vec<bool> = (0..rules.len()).map(|ri| self.rule_active(ri)).collect();
+        let anchor = self.take_index();
+        let mut walk = std::mem::take(&mut self.walk);
+        let mut scratch = std::mem::take(&mut self.scratch);
+        index_seed(
+            anchor.index(),
+            rules,
+            g,
+            resolver,
+            &mut walk,
+            &mut scratch,
+            &admitted,
+            |ri, m| self.record(g, ri, m),
+        );
+        self.walk = walk;
+        self.scratch = scratch;
+        self.anchor = anchor;
+    }
+
+    /// Test check of the seed: the index finds the matches of the scan,
+    /// in its order.
+    #[cfg(test)]
+    fn check_seed(&mut self, g: &Graph, resolver: &dyn ValueResolver) {
+        let rules = self.rules;
+        let admitted: Vec<bool> = (0..rules.len()).map(|ri| self.rule_active(ri)).collect();
+        let mut scanned: Vec<(usize, Vec<GhostId>)> = Vec::new();
+        for (ri, rule) in rules.iter().enumerate() {
+            if admitted[ri] {
+                scanned.extend(
+                    find_matches(g, resolver, &rule.pattern)
+                        .into_iter()
+                        .map(|m| (ri, m)),
+                );
+            }
+        }
+        let anchor = self.take_index();
+        let mut walk = std::mem::take(&mut self.walk);
+        let mut scratch = std::mem::take(&mut self.scratch);
+        let mut indexed: Vec<(usize, Vec<GhostId>)> = Vec::new();
+        index_seed(
+            anchor.index(),
+            rules,
+            g,
+            resolver,
+            &mut walk,
+            &mut scratch,
+            &admitted,
+            |ri, m| indexed.push((ri, m.to_vec())),
+        );
+        self.walk = walk;
+        self.scratch = scratch;
+        self.anchor = anchor;
+        assert_eq!(
+            indexed, scanned,
+            "the seed through the index differs from the scan"
+        );
+    }
+
+    /// The engine's [`AnchorIndex`], built if it is missing or was built
+    /// for other rules. It leaves the engine for the time of an
+    /// expansion, so that the searches can read its plans while `record`
+    /// writes the match store; the caller puts it back.
+    fn take_index(&mut self) -> AnchorSlot<'r> {
+        let rules = self.rules;
+        let usable = match &self.anchor {
+            AnchorSlot::Unbuilt => false,
+            AnchorSlot::Owned(a) => a.built_for(rules),
+            AnchorSlot::Shared(a) => a.built_for(rules),
+        };
+        if !usable {
+            self.anchor = AnchorSlot::Owned(Box::new(AnchorIndex::build(rules)));
+        }
+        std::mem::replace(&mut self.anchor, AnchorSlot::Unbuilt)
+    }
+
     /// Compatibility route for hosts that report touched type names.
     /// The types select a DIRECTION; every rule lowered for that
     /// direction remains active for the wave, including follow-up rules
     /// enabled by newly created correspondence context.
     pub fn seed_routed(&mut self, g: &Graph, resolver: &dyn ValueResolver, delta_types: &[String]) {
         self.admit_delta_types(delta_types);
-        for ri in 0..self.rules.len() {
-            if self.rule_active(ri) {
-                self.seed_rule(g, resolver, ri);
-            }
-        }
+        self.seed(g, resolver);
     }
 
     /// Add stream (spec §1.6): anchor externally added elements DELTA-
@@ -541,23 +747,8 @@ impl<'r> Engine<'r> {
             return;
         }
         let rules = self.rules;
-        let usable = match &self.anchor {
-            AnchorSlot::Unbuilt => false,
-            AnchorSlot::Owned(a) => a.built_for(rules),
-            AnchorSlot::Shared(a) => a.built_for(rules),
-        };
-        if !usable {
-            self.anchor = AnchorSlot::Owned(Box::new(AnchorIndex::build(rules)));
-        }
-        // The index leaves the engine for the expansion, so that the
-        // searches can read its plans while `record` writes the match
-        // store.
-        let anchor = std::mem::replace(&mut self.anchor, AnchorSlot::Unbuilt);
-        let index: &AnchorIndex = match &anchor {
-            AnchorSlot::Owned(a) => a,
-            AnchorSlot::Shared(a) => a,
-            AnchorSlot::Unbuilt => unreachable!("built above"),
-        };
+        let anchor = self.take_index();
+        let index = anchor.index();
         let candidates = {
             let (active, directions) = (self.active.as_ref(), self.wave_directions);
             index.candidates(g, resolver, new_nodes, &mut self.walk, |ri| {
