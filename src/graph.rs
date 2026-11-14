@@ -383,6 +383,11 @@ impl Graph {
     /// Corr node (match-digest identity, spec §1.4).
     pub fn add_corr(&mut self, anchor: &GhostId, typ_name: &str, refs: &[GhostId]) -> GhostId {
         let id = ident::corr(anchor, typ_name, refs);
+        self.add_corr_at(id, typ_name)
+    }
+
+    /// [`Graph::add_corr`] with the identity already derived.
+    pub(crate) fn add_corr_at(&mut self, id: GhostId, typ_name: &str) -> GhostId {
         let typ = self.types.intern(typ_name);
         self.insert_node(Node {
             id,
@@ -446,6 +451,11 @@ impl Graph {
     /// TentativeTombstone, the status is reset.
     pub fn add_ghost(&mut self, parent: &GhostId, typ_name: &str) -> GhostId {
         let id = ident::ghost(parent, typ_name);
+        self.add_ghost_at(id, typ_name)
+    }
+
+    /// [`Graph::add_ghost`] with the identity already derived.
+    pub(crate) fn add_ghost_at(&mut self, id: GhostId, typ_name: &str) -> GhostId {
         let typ = self.types.intern(typ_name);
         self.insert_node(Node {
             id,
@@ -476,6 +486,17 @@ impl Graph {
         transform: &PlanTransform,
     ) -> GhostId {
         let id = ident::derived(parent, typ_name, &source, transform);
+        self.add_derived_leaf_at(id, typ_name, source, transform)
+    }
+
+    /// [`Graph::add_derived_leaf`] with the identity already derived.
+    pub(crate) fn add_derived_leaf_at(
+        &mut self,
+        id: GhostId,
+        typ_name: &str,
+        source: GhostId,
+        transform: &PlanTransform,
+    ) -> GhostId {
         let transform = self.intern_plan(transform);
         let typ = self.types.intern(typ_name);
         self.insert_node(Node {
@@ -503,6 +524,16 @@ impl Graph {
         value: &str,
     ) -> GhostId {
         let id = ident::konst(parent, typ_name, rule_name, plan_ix);
+        self.add_konst_leaf_at(id, typ_name, value)
+    }
+
+    /// [`Graph::add_konst_leaf`] with the identity already derived.
+    pub(crate) fn add_konst_leaf_at(
+        &mut self,
+        id: GhostId,
+        typ_name: &str,
+        value: &str,
+    ) -> GhostId {
         let typ = self.types.intern(typ_name);
         let konst = self.konsts.intern(value);
         self.insert_node(Node {

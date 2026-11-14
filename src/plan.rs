@@ -129,6 +129,19 @@ pub fn apply_creation(
     rule: &DirectedRule,
     bindings: &[GhostId],
 ) -> (Vec<GhostId>, Vec<GhostId>) {
+    apply_creation_at(g, rule, bindings, None)
+}
+
+/// [`apply_creation`], optionally with the identities of the plan's
+/// nodes already derived (`ids`, plan-indexed, as the engine derives
+/// them for its checks before it applies). An entry for a dynamic leaf
+/// without a source is not read.
+pub(crate) fn apply_creation_at(
+    g: &mut Graph,
+    rule: &DirectedRule,
+    bindings: &[GhostId],
+    ids: Option<&[GhostId]>,
+) -> (Vec<GhostId>, Vec<GhostId>) {
     // Plan-indexed; None = a dynamic leaf without a source (dropped).
     let mut slots: Vec<Option<GhostId>> = Vec::with_capacity(rule.create_nodes.len());
     let mut dyn_corrs: Vec<(GhostId, GhostId, GhostId)> = Vec::new();
@@ -149,10 +162,22 @@ pub fn apply_creation(
                 Ref::Matched(p) => bindings[p],
                 Ref::New(_) => unreachable!("a corr anchor is always matched"),
             };
-            Some(g.add_corr(&anchor, &cn.typ, bindings))
+            Some(match ids {
+                Some(ids) => {
+                    debug_assert_eq!(
+                        ids[plan_ix],
+                        crate::graph::preview_corr_id(&anchor, &cn.typ, bindings)
+                    );
+                    g.add_corr_at(ids[plan_ix], &cn.typ)
+                }
+                None => g.add_corr(&anchor, &cn.typ, bindings),
+            })
         } else if let Some((anchor, ref attr, ref t)) = cn.derived_dyn {
             g.child_leaf_of_type(&bindings[anchor], attr).map(|src| {
-                let leaf = g.add_derived_leaf(&parent, &cn.typ, src, t);
+                let leaf = match ids {
+                    Some(ids) => g.add_derived_leaf_at(ids[plan_ix], &cn.typ, src, t),
+                    None => g.add_derived_leaf(&parent, &cn.typ, src, t),
+                };
                 // Die Attribut-Korrespondenz des dynamischen Falls.
                 // Fehlt die Quelle, entsteht kein Blatt und folglich
                 // auch keine Korrespondenz -- apply-if-present gilt
@@ -165,12 +190,19 @@ pub fn apply_creation(
                 leaf
             })
         } else {
-            Some(match (&cn.konst, &cn.derived) {
-                (Some(v), _) => g.add_konst_leaf(&parent, &cn.typ, &rule.name, plan_ix as u32, v),
-                (None, Some((in_leaf, t))) => {
+            Some(match (ids, &cn.konst, &cn.derived) {
+                (Some(ids), Some(v), _) => g.add_konst_leaf_at(ids[plan_ix], &cn.typ, v),
+                (Some(ids), None, Some((in_leaf, t))) => {
+                    g.add_derived_leaf_at(ids[plan_ix], &cn.typ, bindings[*in_leaf], t)
+                }
+                (Some(ids), None, None) => g.add_ghost_at(ids[plan_ix], &cn.typ),
+                (None, Some(v), _) => {
+                    g.add_konst_leaf(&parent, &cn.typ, &rule.name, plan_ix as u32, v)
+                }
+                (None, None, Some((in_leaf, t))) => {
                     g.add_derived_leaf(&parent, &cn.typ, bindings[*in_leaf], t)
                 }
-                (None, None) => g.add_ghost(&parent, &cn.typ),
+                (None, None, None) => g.add_ghost(&parent, &cn.typ),
             })
         };
         if cn.is_corr {

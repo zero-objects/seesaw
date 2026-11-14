@@ -25,7 +25,7 @@ use crate::ident::{GhostId, Status};
 use crate::engine::matcher::find_matches_with_fixed;
 use crate::engine::matcher::{find_matches, find_matches_without, Bindings};
 use crate::graph::{Graph, ValueResolver};
-use crate::plan::{apply_creation, DirectedRule, Ref, RuleDirection};
+use crate::plan::{apply_creation_at, DirectedRule, Ref, RuleDirection};
 
 fn self_node_tt(g: &Graph, id: &GhostId) -> bool {
     g.node(id)
@@ -1063,8 +1063,10 @@ impl<'r> Engine<'r> {
             // V7 guard: reusing tombstone substance is a contradiction
             // with history (not TT — that's the legitimate resurrection
             // zone).
-            let contradicts = {
-                let mut ids: Vec<GhostId> = Vec::new();
+            // The identities of the plan's nodes, derived once: for this
+            // check and for the application below.
+            let (ids, contradicts) = {
+                let mut ids: Vec<GhostId> = Vec::with_capacity(rule.create_nodes.len());
                 let mut bad = false;
                 'outer: for cn in &rule.create_nodes {
                     let parent = match cn.parent {
@@ -1105,14 +1107,14 @@ impl<'r> Engine<'r> {
                     }
                     ids.push(id);
                 }
-                bad
+                (ids, bad)
             };
             if contradicts {
                 self.saw_contradiction = true;
                 continue;
             }
             trace!(steps_applied);
-            let (created, created_edges) = apply_creation(g, rule, &refs);
+            let (created, created_edges) = apply_creation_at(g, rule, &refs, Some(&ids));
             let eix = self.cascade.len() as u32;
             self.cascade.push(Entry {
                 rule_ix,
