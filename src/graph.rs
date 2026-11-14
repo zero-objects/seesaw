@@ -711,11 +711,32 @@ impl Graph {
         self.map.get(id).into_iter().flat_map(|s| s.parts.iter())
     }
 
+    /// The id of the connection source→target, if the graph holds one
+    /// (in any status). Read from the participation list of `source`;
+    /// the id is the one `ident::connection` derives, without deriving
+    /// it again.
+    pub fn connection_id(&self, source: &GhostId, target: &GhostId) -> Option<GhostId> {
+        let typ = self.node(target)?.typ;
+        let lo = Participation {
+            other_typ: typ,
+            other: *target,
+            outgoing: true,
+            connection: GhostId::from_raw([0; 32]),
+        };
+        let hi = Participation {
+            connection: GhostId::from_raw([0xFF; 32]),
+            ..lo
+        };
+        let found = self.map.get(source)?.parts.range(lo..=hi).next()?;
+        debug_assert_eq!(found.connection, ident::connection(source, target));
+        Some(found.connection)
+    }
+
     /// Does a matchable connection source→target exist?
     pub fn connected(&self, source: &GhostId, target: &GhostId) -> bool {
         trace!(link_checks);
-        let id = ident::connection(source, target);
-        self.connection(&id)
+        self.connection_id(source, target)
+            .and_then(|id| self.connection(&id))
             .is_some_and(|c| c.status.is_matchable())
     }
 
@@ -723,8 +744,8 @@ impl Graph {
     /// TT does NOT count as present — the reclaim runs via apply/connect
     /// (M5 resurrection), consolidate clears the unreclaimed.
     pub fn connected_alive(&self, source: &GhostId, target: &GhostId) -> bool {
-        let id = ident::connection(source, target);
-        self.connection(&id)
+        self.connection_id(source, target)
+            .and_then(|id| self.connection(&id))
             .is_some_and(|c| matches!(c.status, Status::Solid | Status::Ghost))
     }
 
