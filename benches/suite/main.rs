@@ -82,6 +82,11 @@ fn cells() -> Vec<Cell> {
             "200 deleted nodes, one wave each",
             Box::new(move || langpack::delta_delete(spec, 200)),
         );
+        cell(
+            format!("langpack/delta-delete/{size}/d2000"),
+            "2000 deleted nodes, one wave each",
+            Box::new(move || langpack::delta_delete(spec, 2000)),
+        );
     }
     // 200 000 families (the 10^6 anchor of the report) need more than
     // 10 GB at about 2.8 KB per node and are not a cell.
