@@ -1898,7 +1898,7 @@ mod tests {
     }
 
     fn bound_refs(k: &TodoKey) -> Bindings {
-        k.1 .0.clone()
+        k.1 .0.to_vec()
     }
 
     #[test]
