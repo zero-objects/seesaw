@@ -279,6 +279,42 @@ enum AnchorSlot<'r> {
     Shared(&'r AnchorIndex),
 }
 
+/// Does `anchor` already carry a correspondence of type `typ` with a
+/// live counterpart of type `endpoint_typ`?
+fn anchor_translated(g: &Graph, typ: &str, endpoint_typ: &str, anchor: &GhostId) -> bool {
+    g.types.lookup(typ).is_some_and(|t| {
+        let ep = g.types.lookup(endpoint_typ);
+        g.parts_by_other_type(anchor, t).any(|p| {
+            // TT does NOT count (M5 window): something tentatively
+            // retracted doesn't suppress a new derivation.
+            let corr_ok = g
+                .connection(&p.connection)
+                .is_some_and(|c| matches!(c.status, Status::Solid | Status::Ghost))
+                && g.node_alive(&p.other);
+            // Check the endpoint type: the corr's counterpart (≠ the
+            // anchor) must match the expected type (single-corr-type
+            // rule sets).
+            corr_ok
+                && ep.is_some_and(|ept| {
+                    g.parts(&p.other)
+                        .any(|q| q.other != *anchor && q.other_typ == ept && g.node_alive(&q.other))
+                })
+        })
+    })
+}
+
+/// rc8-#2: every anchor of the rule's establishes corrs already
+/// carries a corr of its type with a MATCHABLE counterpart — the
+/// element is translated, regardless of which direction/variant ⇒ a
+/// duplicate.
+fn is_translated(g: &Graph, rule: &DirectedRule, refs: &[GhostId]) -> bool {
+    !rule.corr_recognition.is_empty()
+        && rule
+            .corr_recognition
+            .iter()
+            .all(|(typ, pos, endpoint_typ)| anchor_translated(g, typ, endpoint_typ, &refs[*pos]))
+}
+
 /// Up to this many new nodes, "stands earlier among the new nodes" is
 /// answered by a scan of the slice; above it by a map.
 const LINEAR_NEW: usize = 8;
@@ -475,7 +511,7 @@ impl<'r> Engine<'r> {
         resolver: &dyn ValueResolver,
         new_nodes: &[GhostId],
     ) {
-        self.expand_at(g, resolver, new_nodes);
+        self.expand_at(g, resolver, new_nodes, false);
     }
 
     /// Delta-local expansion: anchor new elements (spec §1.6 add).
@@ -485,7 +521,22 @@ impl<'r> Engine<'r> {
     /// ([`AnchorIndex`]); the triples come in the order of the loop over
     /// rules, nodes and positions, so the recorded matches and their
     /// order are those of anchoring at every position of the same type.
-    fn expand_at(&mut self, g: &Graph, resolver: &dyn ValueResolver, new_nodes: &[GhostId]) {
+    ///
+    /// `own`: the new nodes are the ones a step of this engine has just
+    /// created (as opposed to a delta of the host). A match found there
+    /// that is already translated ([`is_translated`]) is not recorded:
+    /// `step` would pull it later only to find the same and count a
+    /// duplicate. These are above all the matches of the opposite
+    /// direction over what the step has just built, in a wave without a
+    /// route. Where the rule has one establishes corr and the search
+    /// would be anchored at its anchor, the search itself is left out.
+    fn expand_at(
+        &mut self,
+        g: &Graph,
+        resolver: &dyn ValueResolver,
+        new_nodes: &[GhostId],
+        own: bool,
+    ) {
         if new_nodes.is_empty() {
             return;
         }
@@ -545,7 +596,17 @@ impl<'r> Engine<'r> {
                 // The same node again: searched at its first index.
                 continue;
             }
-            let pattern = &rules[ri].pattern;
+            let rule = &rules[ri];
+            if own {
+                if let [(typ, anchor_pos, endpoint_typ)] = rule.corr_recognition.as_slice() {
+                    if *anchor_pos == pos && anchor_translated(g, typ, endpoint_typ, &new_nodes[ni])
+                    {
+                        trace!(translated_skipped);
+                        continue;
+                    }
+                }
+            }
+            let pattern = &rule.pattern;
             let plan = index.plan(ri, pos, pattern);
             trace!(anchored_searches);
             find_matches_planned(
@@ -560,13 +621,17 @@ impl<'r> Engine<'r> {
             );
             for m in scratch.matches(pattern) {
                 trace!(anchored_found);
+                if own && is_translated(g, rule, m) {
+                    trace!(translated_dropped);
+                    continue;
+                }
                 self.record(g, ri, m);
             }
         }
         self.scratch = scratch;
         self.anchor = anchor;
         #[cfg(test)]
-        self.check_recorded(g, resolver, new_nodes);
+        self.check_recorded(g, resolver, new_nodes, own);
     }
 
     /// Test check of the expansion as a whole: every match the
@@ -574,7 +639,13 @@ impl<'r> Engine<'r> {
     /// position of its type, no node left out) is in the match store
     /// afterwards.
     #[cfg(test)]
-    fn check_recorded(&self, g: &Graph, resolver: &dyn ValueResolver, new_nodes: &[GhostId]) {
+    fn check_recorded(
+        &self,
+        g: &Graph,
+        resolver: &dyn ValueResolver,
+        new_nodes: &[GhostId],
+        own: bool,
+    ) {
         for (ri, rule) in self.rules.iter().enumerate() {
             if !self.rule_active(ri) {
                 continue;
@@ -588,6 +659,11 @@ impl<'r> Engine<'r> {
                     let mut fixed = vec![None; rule.pattern.nodes.len()];
                     fixed[pos] = Some(*id);
                     for m in find_matches_with_fixed(g, resolver, &rule.pattern, &fixed) {
+                        // On a step's own nodes a translated match is
+                        // left out on purpose.
+                        if own && is_translated(g, rule, &m) {
+                            continue;
+                        }
                         assert!(
                             self.by_key.contains_key(&(ri, Refs::from(m))),
                             "expansion drops a match: rule {} position {pos}",
@@ -964,7 +1040,7 @@ impl<'r> Engine<'r> {
         a: &GhostId,
         b: &GhostId,
     ) {
-        self.expand_at(g, resolver, &[*a, *b]);
+        self.expand_at(g, resolver, &[*a, *b], false);
     }
 
     pub fn link_removed(&mut self, g: &mut Graph, a: &GhostId, b: &GhostId) {
@@ -1125,35 +1201,7 @@ impl<'r> Engine<'r> {
             // this type with a MATCHABLE counterpart — the element is
             // translated, regardless of which direction/variant ⇒ a
             // duplicate.
-            let translated = !rule.corr_recognition.is_empty()
-                && rule
-                    .corr_recognition
-                    .iter()
-                    .all(|(typ, pos, endpoint_typ)| {
-                        g.types.lookup(typ).is_some_and(|t| {
-                            let ep = g.types.lookup(endpoint_typ);
-                            g.parts_by_other_type(&refs[*pos], t).any(|p| {
-                                // TT does NOT count (M5 window): something
-                                // tentatively retracted doesn't suppress a
-                                // new derivation.
-                                let corr_ok = g.connection(&p.connection).is_some_and(|c| {
-                                    matches!(c.status, Status::Solid | Status::Ghost)
-                                }) && g.node_alive(&p.other);
-                                // Check the endpoint type: the corr's
-                                // counterpart (≠ the anchor) must match the
-                                // expected type (single-corr-type rule
-                                // sets).
-                                corr_ok
-                                    && ep.is_some_and(|ept| {
-                                        g.parts(&p.other).any(|q| {
-                                            q.other != refs[*pos]
-                                                && q.other_typ == ept
-                                                && g.node_alive(&q.other)
-                                        })
-                                    })
-                            })
-                        })
-                    });
+            let translated = is_translated(g, rule, &refs);
             if translated || self.creation_exists(g, rule, &refs) {
                 // Duplicate: nothing new — note it for the verdict.
                 self.applied.insert((rule_ix, refs));
@@ -1236,7 +1284,7 @@ impl<'r> Engine<'r> {
             if let Some(&mix) = self.by_key.get(&(rule_ix, refs.clone())) {
                 self.matches[mix as usize].entry = Some(eix);
             }
-            self.expand_at(g, resolver, &created);
+            self.expand_at(g, resolver, &created, true);
             return Some(true);
         }
     }
