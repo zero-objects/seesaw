@@ -415,7 +415,9 @@ impl AnchorIndex {
             st.marked = vec![false; self.nodes.len()];
             st.list.clear();
         }
+        let mut groups: Vec<usize> = Vec::new();
         for (ni, x) in nodes.iter().enumerate() {
+            groups.push(out.len());
             let Some(node) = g.node(x) else { continue };
             let Some(ti) = self.by_type.get(&node.typ) else {
                 continue;
@@ -473,8 +475,42 @@ impl AnchorIndex {
                 st.marked[id as usize] = false;
             }
         }
-        out.sort_unstable();
-        out
+        Self::in_order(out, &groups)
+    }
+
+    /// Brings the triples into the order (rule, node index, position).
+    /// `groups` are the starts of the triples of each node, which come
+    /// with ascending node index. A short list is sorted as a whole. A
+    /// long one (a delta of many nodes) is sorted within each node and
+    /// then distributed by rule, which keeps the node order: linear
+    /// instead of one comparison sort over all triples.
+    fn in_order(
+        mut out: Vec<(usize, usize, usize)>,
+        groups: &[usize],
+    ) -> Vec<(usize, usize, usize)> {
+        const WHOLE: usize = 256;
+        if out.len() <= WHOLE {
+            out.sort_unstable();
+            return out;
+        }
+        for (i, &from) in groups.iter().enumerate() {
+            let to = groups.get(i + 1).copied().unwrap_or(out.len());
+            out[from..to].sort_unstable();
+        }
+        let rules = out.iter().map(|t| t.0).max().map_or(0, |m| m + 1);
+        let mut start = vec![0usize; rules + 1];
+        for t in &out {
+            start[t.0 + 1] += 1;
+        }
+        for r in 0..rules {
+            start[r + 1] += start[r];
+        }
+        let mut sorted = vec![(0, 0, 0); out.len()];
+        for t in out {
+            sorted[start[t.0]] = t;
+            start[t.0] += 1;
+        }
+        sorted
     }
 }
 
@@ -489,6 +525,7 @@ mod tests {
     //! of the cascades below runs `Engine::check_candidates`, which
     //! compares the index against the unfiltered loop.
 
+    use super::AnchorIndex;
     use crate::engine::{Engine, Termination};
     use crate::graph::{Graph, ValueStore};
     use crate::ident::{GhostId, Status};
@@ -668,6 +705,32 @@ mod tests {
         // has no Method rule and so no flag rule either.
         assert_eq!(cascade(&t, true), 6);
         assert_eq!(cascade(&t, false), 6);
+    }
+
+    proptest! {
+        /// The distribution by rule gives the order of a sort.
+        #[test]
+        fn in_order_is_a_sort(
+            per_node in prop::collection::vec(
+                prop::collection::vec((0usize..40, 0usize..6), 0..12),
+                0..120,
+            ),
+        ) {
+            let mut out = Vec::new();
+            let mut groups = Vec::new();
+            for (ni, places) in per_node.iter().enumerate() {
+                groups.push(out.len());
+                let mut seen = std::collections::BTreeSet::new();
+                for &(rule, pos) in places {
+                    if seen.insert((rule, pos)) {
+                        out.push((rule, ni, pos));
+                    }
+                }
+            }
+            let mut expected = out.clone();
+            expected.sort_unstable();
+            prop_assert_eq!(AnchorIndex::in_order(out, &groups), expected);
+        }
     }
 
     proptest! {
