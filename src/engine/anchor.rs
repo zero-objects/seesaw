@@ -27,7 +27,7 @@
 
 use std::collections::VecDeque;
 
-use crate::engine::matcher::{plan_anchored, LinkKind, Pattern, Plan};
+use crate::engine::matcher::{LinkKind, Pattern};
 use crate::graph::{Graph, TypeId, ValueResolver};
 use crate::hash::{FxBuildHasher, FxHashMap};
 use crate::ident::GhostId;
@@ -111,8 +111,6 @@ pub struct AnchorIndex {
     /// places it can satisfy through the nodes it marked, without
     /// looking at the other places of the type.
     filed: Vec<Vec<u32>>,
-    /// Per rule and position: the plan of the search anchored there.
-    plans: Vec<Vec<Plan>>,
     by_type: FxHashMap<TypeId, TypeIndex>,
     /// The rule slice the index was built for (address, length).
     built_for: (usize, usize),
@@ -175,17 +173,11 @@ impl AnchorIndex {
         let mut index = Self {
             nodes: Vec::new(),
             filed: Vec::new(),
-            plans: Vec::with_capacity(rules.len()),
             by_type: FxHashMap::default(),
             built_for: (rules.as_ptr() as usize, rules.len()),
         };
         for (ri, rule) in rules.iter().enumerate() {
             let pattern = &rule.pattern;
-            index.plans.push(
-                (0..pattern.nodes.len())
-                    .map(|pos| plan_anchored(pattern, pos))
-                    .collect(),
-            );
             for (pos, pn) in pattern.nodes.iter().enumerate() {
                 let root = match index.by_type.get(&pn.typ) {
                     Some(ti) => ti.root,
@@ -296,11 +288,6 @@ impl AnchorIndex {
             Some(p) => group.other.push((format!("{p:?}"), p, c)),
         }
         c
-    }
-
-    /// The plan of the search anchored at `pos` of rule `rule`.
-    pub(crate) fn plan(&self, rule: usize, pos: usize) -> &Plan {
-        &self.plans[rule][pos]
     }
 
     /// Was the index built for this rule slice?
