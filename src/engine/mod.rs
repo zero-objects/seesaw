@@ -23,7 +23,7 @@ use crate::ident::{GhostId, Status};
 
 #[cfg(test)]
 use crate::engine::matcher::find_matches_with_fixed;
-use crate::engine::matcher::{find_matches, find_matches_without, Bindings};
+use crate::engine::matcher::{find_matches, find_matches_planned, Bindings};
 use crate::graph::{Graph, ValueResolver};
 use crate::plan::{apply_creation_at, DirectedRule, Ref, RuleDirection};
 
@@ -421,21 +421,18 @@ impl<'r> Engine<'r> {
         if !usable {
             self.anchor = AnchorSlot::Owned(Box::new(AnchorIndex::build(rules)));
         }
+        // The index leaves the engine for the expansion, so that the
+        // searches can read its plans while `record` writes the match
+        // store.
+        let anchor = std::mem::replace(&mut self.anchor, AnchorSlot::Unbuilt);
+        let index: &AnchorIndex = match &anchor {
+            AnchorSlot::Owned(a) => a,
+            AnchorSlot::Shared(a) => a,
+            AnchorSlot::Unbuilt => unreachable!("built above"),
+        };
         let candidates = {
-            let Engine {
-                anchor,
-                walk,
-                active,
-                wave_directions,
-                ..
-            } = self;
-            let index: &AnchorIndex = match anchor {
-                AnchorSlot::Owned(a) => a,
-                AnchorSlot::Shared(a) => a,
-                AnchorSlot::Unbuilt => unreachable!("built above"),
-            };
-            let (active, directions) = (active.as_ref(), *wave_directions);
-            index.candidates(g, resolver, new_nodes, walk, |ri| {
+            let (active, directions) = (self.active.as_ref(), self.wave_directions);
+            index.candidates(g, resolver, new_nodes, &mut self.walk, |ri| {
                 rule_admitted(active, directions, &rules[ri], ri)
             })
         };
@@ -471,14 +468,22 @@ impl<'r> Engine<'r> {
                 continue;
             }
             let pattern = &rules[ri].pattern;
-            let mut fixed = vec![None; pattern.nodes.len()];
-            fixed[pos] = Some(new_nodes[ni]);
+            let plan = index.plan(ri, pos, pattern);
             trace!(anchored_searches);
-            for m in find_matches_without(g, resolver, pattern, &fixed, Some(&earlier)) {
+            for m in find_matches_planned(
+                g,
+                resolver,
+                pattern,
+                plan,
+                pos,
+                new_nodes[ni],
+                Some(&earlier),
+            ) {
                 trace!(anchored_found);
                 self.record(g, ri, m);
             }
         }
+        self.anchor = anchor;
         #[cfg(test)]
         self.check_recorded(g, resolver, new_nodes);
     }

@@ -28,7 +28,9 @@
 
 use std::collections::VecDeque;
 
-use crate::engine::matcher::{LinkKind, Pattern};
+use std::sync::OnceLock;
+
+use crate::engine::matcher::{plan_anchored, LinkKind, Pattern, Plan};
 use crate::graph::{Graph, TypeId, ValueResolver};
 use crate::hash::{FxBuildHasher, FxHashMap};
 use crate::ident::GhostId;
@@ -142,6 +144,10 @@ pub struct AnchorIndex {
     /// places it can satisfy through the nodes it marked, without
     /// looking at the other places of the type.
     filed: Vec<Filed>,
+    /// Per rule and position: the plan of the search anchored there,
+    /// built when the first search at that place runs. Building all of
+    /// them with the index costs more than a short run saves.
+    plans: Vec<Vec<OnceLock<Plan>>>,
     by_type: FxHashMap<TypeId, TypeIndex>,
     /// The rule slice the index was built for (address, length).
     built_for: (usize, usize),
@@ -204,6 +210,14 @@ impl AnchorIndex {
         let mut index = Self {
             nodes: Vec::new(),
             filed: Vec::new(),
+            plans: rules
+                .iter()
+                .map(|r| {
+                    (0..r.pattern.nodes.len())
+                        .map(|_| OnceLock::new())
+                        .collect()
+                })
+                .collect(),
             by_type: FxHashMap::default(),
             built_for: (rules.as_ptr() as usize, rules.len()),
         };
@@ -319,6 +333,12 @@ impl AnchorIndex {
             Some(p) => group.other.push((format!("{p:?}"), p, c)),
         }
         c
+    }
+
+    /// The plan of the search anchored at position `pos` of `pattern`,
+    /// the pattern of rule `rule` of the rules the index was built for.
+    pub(crate) fn plan(&self, rule: usize, pos: usize, pattern: &Pattern) -> &Plan {
+        self.plans[rule][pos].get_or_init(|| plan_anchored(pattern, pos))
     }
 
     /// Was the index built for this rule slice?

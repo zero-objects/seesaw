@@ -94,6 +94,7 @@ pub type Bindings = Vec<GhostId>;
 
 // ── Plan (connected order, fixed first) ────────────────────────────────────
 
+#[derive(Debug)]
 struct Step {
     node_ix: usize,
     pre_bound: bool,
@@ -103,6 +104,7 @@ struct Step {
 }
 
 /// Search plan of a pattern for one set of pre-bound positions.
+#[derive(Debug)]
 pub(crate) struct Plan {
     steps: Vec<Step>,
     /// The links no step checks, as indices into `Pattern::links`:
@@ -386,14 +388,49 @@ pub(crate) fn find_matches_without(
     skip: Option<&dyn Fn(&GhostId) -> bool>,
 ) -> Vec<Bindings> {
     let plan = build_plan(pattern, fixed);
-    let mut cur = fixed.to_vec();
+    search(g, resolver, pattern, &plan, fixed.to_vec(), skip)
+}
+
+/// The plan of the searches that pre-bind exactly `pos`. It depends on
+/// the pattern and the position only, so it can be kept
+/// ([`find_matches_planned`]).
+pub(crate) fn plan_anchored(pattern: &Pattern, pos: usize) -> Plan {
+    let mut fixed = vec![None; pattern.nodes.len()];
+    fixed[pos] = Some(GhostId::from_raw([0; 32]));
+    build_plan(pattern, &fixed)
+}
+
+/// [`find_matches_without`] with `id` at `pos` and nothing else
+/// pre-bound, along a plan from [`plan_anchored`] for that position.
+pub(crate) fn find_matches_planned(
+    g: &Graph,
+    resolver: &dyn ValueResolver,
+    pattern: &Pattern,
+    plan: &Plan,
+    pos: usize,
+    id: GhostId,
+    skip: Option<&dyn Fn(&GhostId) -> bool>,
+) -> Vec<Bindings> {
+    let mut cur = vec![None; pattern.nodes.len()];
+    cur[pos] = Some(id);
+    search(g, resolver, pattern, plan, cur, skip)
+}
+
+fn search(
+    g: &Graph,
+    resolver: &dyn ValueResolver,
+    pattern: &Pattern,
+    plan: &Plan,
+    mut cur: Vec<Option<GhostId>>,
+    skip: Option<&dyn Fn(&GhostId) -> bool>,
+) -> Vec<Bindings> {
     let mut result = Vec::new();
     let mut found = false;
     enumerate(
         g,
         resolver,
         pattern,
-        &plan,
+        plan,
         0,
         &mut cur,
         &mut Some(&mut result),
