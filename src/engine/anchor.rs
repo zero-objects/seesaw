@@ -123,6 +123,8 @@ pub(crate) struct Walk {
     marked: Vec<bool>,
     /// The nodes marked by the current walk (for the reset).
     list: Vec<u32>,
+    /// Starts of the triples per node of the current expansion.
+    groups: Vec<usize>,
     /// (graph node, prefix-tree node) pairs already expanded.
     visited: std::collections::HashSet<(GhostId, u32), FxBuildHasher>,
 }
@@ -415,7 +417,10 @@ impl AnchorIndex {
             st.marked = vec![false; self.nodes.len()];
             st.list.clear();
         }
-        let mut groups: Vec<usize> = Vec::new();
+        // Where the triples of each node start; kept in the working
+        // memory, an expansion of a few nodes allocates nothing for it.
+        let mut groups = std::mem::take(&mut st.groups);
+        groups.clear();
         for (ni, x) in nodes.iter().enumerate() {
             groups.push(out.len());
             let Some(node) = g.node(x) else { continue };
@@ -475,7 +480,9 @@ impl AnchorIndex {
                 st.marked[id as usize] = false;
             }
         }
-        Self::in_order(out, &groups)
+        let out = Self::in_order(out, &groups);
+        st.groups = groups;
+        out
     }
 
     /// Brings the triples into the order (rule, node index, position).
