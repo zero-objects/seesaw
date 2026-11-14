@@ -102,7 +102,17 @@ struct Step {
     links: Vec<(usize, Option<bool>)>,
 }
 
-fn build_plan(pattern: &Pattern, fixed: &[Option<GhostId>]) -> Vec<Step> {
+/// Search plan of a pattern for one set of pre-bound positions.
+pub(crate) struct Plan {
+    steps: Vec<Step>,
+    /// The links no step checks, as indices into `Pattern::links`:
+    /// value joins, self links and links between two pre-bound
+    /// positions. Every other link is checked by the step that places
+    /// the later of its two ends.
+    closing: Vec<usize>,
+}
+
+fn build_plan(pattern: &Pattern, fixed: &[Option<GhostId>]) -> Plan {
     trace!(plan_builds);
     let n = pattern.nodes.len();
     let mut placed = vec![false; n];
@@ -143,7 +153,7 @@ fn build_plan(pattern: &Pattern, fixed: &[Option<GhostId>]) -> Vec<Step> {
             .iter()
             .filter_map(|l| {
                 if l.kind == LinkKind::SameValue {
-                    return None; // Value joins are checked by all_links_ok.
+                    return None; // Value joins are closing links.
                 }
                 let dirless = l.kind == LinkKind::Context;
                 if l.from == i && placed[l.to] {
@@ -162,7 +172,17 @@ fn build_plan(pattern: &Pattern, fixed: &[Option<GhostId>]) -> Vec<Step> {
             links,
         });
     }
-    steps
+    let bound = |i: usize| fixed.get(i).is_some_and(Option::is_some);
+    let closing = pattern
+        .links
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| {
+            l.kind == LinkKind::SameValue || l.from == l.to || (bound(l.from) && bound(l.to))
+        })
+        .map(|(i, _)| i)
+        .collect();
+    Plan { steps, closing }
 }
 
 // ── Enumeration ──────────────────────────────────────────────────────────
@@ -198,15 +218,17 @@ fn links_ok(
     })
 }
 
-fn all_links_ok(
+/// The links of `plan.closing` on the complete binding.
+fn closing_links_ok(
     g: &Graph,
     resolver: &dyn ValueResolver,
     pattern: &Pattern,
+    plan: &Plan,
     cur: &[Option<GhostId>],
 ) -> bool {
-    pattern
-        .links
+    plan.closing
         .iter()
+        .map(|&li| &pattern.links[li])
         .all(|l| match (cur[l.from], cur[l.to]) {
             (Some(s), Some(t)) => match l.kind {
                 LinkKind::Directed => g.connected(&s, &t),
@@ -228,15 +250,15 @@ fn enumerate(
     g: &Graph,
     resolver: &dyn ValueResolver,
     pattern: &Pattern,
-    plan: &[Step],
+    plan: &Plan,
     depth: usize,
     cur: &mut Vec<Option<GhostId>>,
     out: &mut Option<&mut Vec<Bindings>>,
     found_any: &mut bool,
     stop_first: bool,
 ) {
-    if depth == plan.len() {
-        if all_links_ok(g, resolver, pattern, cur) {
+    if depth == plan.steps.len() {
+        if closing_links_ok(g, resolver, pattern, plan, cur) {
             *found_any = true;
             if let Some(out) = out.as_deref_mut() {
                 out.push(cur.iter().map(|o| o.expect("complete")).collect());
@@ -244,7 +266,7 @@ fn enumerate(
         }
         return;
     }
-    let step = &plan[depth];
+    let step = &plan.steps[depth];
     let pn = &pattern.nodes[step.node_ix];
 
     if step.pre_bound {
@@ -268,7 +290,11 @@ fn enumerate(
     // Candidates: the participation list of the first placed neighbor,
     // via range by counterpart type (spec §1.5); without a link: seed
     // scan.
-    let candidates: Vec<GhostId> = match step.links.first() {
+    //
+    // A candidate from a participation list comes with the connection
+    // that realises the first link, so that link is checked on the
+    // connection itself; `links_ok` checks the remaining ones.
+    let candidates: Vec<(GhostId, Option<GhostId>)> = match step.links.first() {
         Some(&(placed, dir)) => {
             let anchor = cur[placed].expect("placed");
             g.parts_by_other_type(&anchor, pn.typ)
@@ -276,20 +302,24 @@ fn enumerate(
                     Some(cand_is_source) => p.outgoing != cand_is_source,
                     None => true,
                 })
-                .map(|p| p.other)
+                .map(|p| (p.other, Some(p.connection)))
                 .collect()
         }
-        None => g.nodes_of_type(pn.typ).map(|n| n.id).collect(),
+        None => g.nodes_of_type(pn.typ).map(|n| (n.id, None)).collect(),
     };
     trace!(candidates, candidates.len());
-    for cand in candidates {
+    let rest = &step.links[step.links.len().min(1)..];
+    for (cand, via) in candidates {
         if cur.iter().flatten().any(|id| *id == cand) {
             continue; // injective
+        }
+        if via.is_some_and(|c| !g.connection(&c).is_some_and(|c| c.status.is_matchable())) {
+            continue;
         }
         if !node_ok(g, resolver, pn, &cand) {
             continue;
         }
-        if !links_ok(g, cur, &step.links, cand) {
+        if !links_ok(g, cur, rest, cand) {
             continue;
         }
         cur[step.node_ix] = Some(cand);
