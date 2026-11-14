@@ -21,9 +21,9 @@ use std::collections::BTreeSet;
 
 use crate::ident::{GhostId, Status};
 
-use crate::engine::matcher::{find_matches, find_matches_planned, Bindings};
 #[cfg(test)]
 use crate::engine::matcher::find_matches_with_fixed;
+use crate::engine::matcher::{find_matches, find_matches_planned, Bindings};
 use crate::graph::{Graph, ValueResolver};
 use crate::plan::{apply_creation, DirectedRule, Ref, RuleDirection};
 
