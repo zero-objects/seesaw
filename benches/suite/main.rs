@@ -82,7 +82,9 @@ fn cells() -> Vec<Cell> {
             Box::new(move || langpack::delta_delete(spec, 200)),
         );
     }
-    for families in [2_000, 20_000, 200_000] {
+    // 200 000 families (the 10^6 anchor of the report) need more than
+    // 10 GB at about 2.8 KB per node and are not a cell.
+    for families in [2_000, 20_000, 60_000] {
         cell(
             format!("f2p/batch/f{families}"),
             "batch through run (seed and steps)",
