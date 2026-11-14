@@ -20,8 +20,9 @@
 //!
 //! Every path of a match is realised by the match itself, so the
 //! condition is necessary for a match with the node at the position; it
-//! is checked on the same graph state as the search, with the status
-//! checks of the matcher (`node_ok`, `links_ok`). The triples come back
+//! is checked on the same graph state as the search. The walk reads
+//! types, directions and values, not the status of the elements on a
+//! path; that is left to the search. The triples come back
 //! in the order of the unfiltered loop (rule, node, position), so the
 //! recorded matches and their order stay the same.
 
@@ -309,20 +310,13 @@ impl AnchorIndex {
                 if group.outgoing.is_some_and(|o| o != p.outgoing) {
                     continue;
                 }
-                // As `matcher::links_ok` and `matcher::node_ok`: edge and
-                // neighbour in a state the matcher sees.
-                if !g
-                    .connection(&p.connection)
-                    .is_some_and(|c| c.status.is_matchable())
-                {
-                    continue;
-                }
-                if !g
-                    .node(&p.other)
-                    .is_some_and(|n| n.status.is_matchable() && n.typ == group.typ)
-                {
-                    continue;
-                }
+                // The status of the edge and of the neighbour is not
+                // read here. A path over a retracted element is marked
+                // although no match can use it; the condition stays
+                // necessary, and the search at that place fails on the
+                // element. Reading the status costs two map lookups per
+                // participation of every walk, the retracted elements
+                // are few. The type is that of the participation range.
                 if let Some(id) = group.any {
                     self.enter(g, v, p.other, id, st);
                 }
