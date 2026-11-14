@@ -109,7 +109,28 @@ pub struct SelectionBound {
 /// Todo key: (rank descending, ref sequence descending, rule index
 /// ascending) — the same ordering doctrine as the first-generation engine's
 /// intrinsic μ, here the ref sequence is the key.
-type TodoKey = (std::cmp::Reverse<u64>, std::cmp::Reverse<Refs>, usize);
+///
+/// The second component is the head of the ref sequence (the first 16
+/// bytes of its first id). It orders like the sequence itself wherever
+/// two heads differ, so it changes nothing about the order; it lets
+/// the todo compare two keys without following both sequences to the
+/// heap, which is where most comparisons of a lookup were decided.
+type TodoKey = (
+    std::cmp::Reverse<u64>,
+    std::cmp::Reverse<u128>,
+    std::cmp::Reverse<Refs>,
+    usize,
+);
+
+/// The first 16 bytes of the first id of a ref sequence, big-endian;
+/// 0 for an empty sequence. `head(a) < head(b)` implies `a < b`.
+fn head(refs: &[GhostId]) -> u128 {
+    refs.first().map_or(0, |id| {
+        let mut b = [0u8; 16];
+        b.copy_from_slice(&id.as_bytes()[..16]);
+        u128::from_be_bytes(b)
+    })
+}
 
 /// The ref sequence of a match as the engine keeps it: one allocation,
 /// shared by the match store, the todo, the key index and the applied
@@ -119,6 +140,7 @@ type Refs = std::sync::Arc<[GhostId]>;
 fn todo_key(rank: u64, refs: &Refs, rule_ix: usize) -> TodoKey {
     (
         std::cmp::Reverse(rank),
+        std::cmp::Reverse(head(refs)),
         std::cmp::Reverse(refs.clone()),
         rule_ix,
     )
@@ -1054,14 +1076,14 @@ impl<'r> Engine<'r> {
             let key = match ceiling {
                 None if !filtered => {
                     trace!(todo_scanned);
-                    self.todo.iter().next().cloned()
+                    self.todo.first().cloned()
                 }
                 None => self
                     .todo
                     .iter()
                     .find(|k| {
                         trace!(todo_scanned);
-                        self.rule_active(k.2)
+                        self.rule_active(k.3)
                     })
                     .cloned(),
                 Some(b) => {
@@ -1072,15 +1094,15 @@ impl<'r> Engine<'r> {
                         .range(bound.clone()..)
                         .find(|k| {
                             trace!(todo_scanned);
-                            !(k.0 == bound.0 && k.1 == bound.1)
-                                && (!filtered || self.rule_active(k.2))
+                            !(k.0 == bound.0 && k.2 == bound.2)
+                                && (!filtered || self.rule_active(k.3))
                         })
                         .cloned()
                 }
             };
             let key = key?;
             self.todo.remove(&key);
-            let (rule_ix, refs) = (key.2, (key.1).0.clone());
+            let (rule_ix, refs) = (key.3, (key.2).0.clone());
             let rule = &self.rules[rule_ix];
             if self.applied.contains(&(rule_ix, refs.clone())) {
                 continue;
@@ -1958,7 +1980,7 @@ mod tests {
             let high = e
                 .todo
                 .iter()
-                .find(|k| k.2 == 1)
+                .find(|k| k.3 == 1)
                 .expect("der hochrangige steht in der Queue")
                 .clone();
             SelectionBound {
@@ -1983,7 +2005,7 @@ mod tests {
     }
 
     fn bound_refs(k: &TodoKey) -> Bindings {
-        k.1 .0.to_vec()
+        k.2 .0.to_vec()
     }
 
     #[test]
@@ -2009,5 +2031,32 @@ mod tests {
         let mut e = Engine::new(&rules);
         let _ = e.run(&mut g, &vs, 100);
         assert_eq!(e.cascade[0].rank, 900, "the highest rank first");
+    }
+}
+
+#[cfg(test)]
+mod todo_key_tests {
+    use super::{head, GhostId};
+    use proptest::prelude::*;
+
+    proptest! {
+        /// The head orders like the sequence wherever two heads differ.
+        #[test]
+        fn head_is_consistent_with_the_sequence_order(
+            a in prop::collection::vec(any::<[u8; 32]>(), 0..3),
+            b in prop::collection::vec(any::<[u8; 32]>(), 0..3),
+            share in 0usize..33,
+        ) {
+            let a: Vec<GhostId> = a.into_iter().map(GhostId::from_raw).collect();
+            let mut b: Vec<[u8; 32]> = b;
+            // Also sequences whose first ids share a prefix.
+            if let (Some(x), Some(y)) = (a.first(), b.first_mut()) {
+                y[..share.min(32)].copy_from_slice(&x.as_bytes()[..share.min(32)]);
+            }
+            let b: Vec<GhostId> = b.into_iter().map(GhostId::from_raw).collect();
+            if head(&a) != head(&b) {
+                prop_assert_eq!(head(&a).cmp(&head(&b)), a.cmp(&b));
+            }
+        }
     }
 }
