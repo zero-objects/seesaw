@@ -731,37 +731,25 @@ impl Graph {
     }
 
     fn insert_node(&mut self, node: Node) {
-        use std::collections::hash_map::Entry;
-        // A new node is written into its slot once (no default slot
-        // first).
-        match self.map.entry(node.id) {
-            Entry::Vacant(v) => {
+        let slot = self.map.entry(node.id).or_default();
+        match slot {
+            Slot::Node { node: existing, .. } => {
+                // M5: resurrection.
+                if existing.status == Status::TentativeTombstone {
+                    existing.status = node.status;
+                }
+            }
+            Slot::Empty => {
                 self.node_order.push(node.id);
                 self.by_type.entry(node.typ).or_default().push(node.id);
-                v.insert(Slot::Node {
+                *slot = Slot::Node {
                     node,
                     parts: Parts::default(),
-                });
+                };
             }
-            Entry::Occupied(mut o) => match o.get_mut() {
-                Slot::Node { node: existing, .. } => {
-                    // M5: resurrection.
-                    if existing.status == Status::TentativeTombstone {
-                        existing.status = node.status;
-                    }
-                }
-                slot @ Slot::Empty => {
-                    self.node_order.push(node.id);
-                    self.by_type.entry(node.typ).or_default().push(node.id);
-                    *slot = Slot::Node {
-                        node,
-                        parts: Parts::default(),
-                    };
-                }
-                Slot::Connection(_) => {
-                    unreachable!("a node identity is not a connection identity")
-                }
-            },
+            Slot::Connection(_) => {
+                unreachable!("a node identity is not a connection identity")
+            }
         }
     }
 
@@ -826,28 +814,20 @@ impl Graph {
             }
         }
         let id = ident::connection(&source, &target);
-        let connection = Connection {
+        let slot = self.map.entry(id).or_default();
+        if let Some(c) = slot.connection_mut() {
+            if c.status == Status::TentativeTombstone {
+                c.status = status;
+            }
+            return Some((id, false));
+        }
+        debug_assert!(matches!(slot, Slot::Empty));
+        *slot = Slot::Connection(Connection {
             id,
             source,
             target,
             status,
-        };
-        match self.map.entry(id) {
-            std::collections::hash_map::Entry::Vacant(v) => {
-                v.insert(Slot::Connection(connection));
-            }
-            std::collections::hash_map::Entry::Occupied(mut o) => {
-                let slot = o.get_mut();
-                if let Some(c) = slot.connection_mut() {
-                    if c.status == Status::TentativeTombstone {
-                        c.status = status;
-                    }
-                    return Some((id, false));
-                }
-                debug_assert!(matches!(slot, Slot::Empty));
-                *slot = Slot::Connection(connection);
-            }
-        }
+        });
         // Both endpoints are nodes (read above).
         if let Some(parts) = self.map.get_mut(&source).and_then(Slot::parts_mut) {
             parts.insert(Participation {
