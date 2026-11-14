@@ -212,6 +212,14 @@ struct Slot {
 /// [`Graph::resolve_value`] (ref chain + transformations).
 pub trait ValueResolver {
     fn baseline_value(&self, id: &GhostId) -> Option<String>;
+
+    /// The value of [`ValueResolver::baseline_value`] borrowed, where
+    /// the resolver can lend it. `None` says nothing about the value:
+    /// the caller then asks `baseline_value`. The default lends
+    /// nothing.
+    fn baseline_str(&self, _id: &GhostId) -> Option<&str> {
+        None
+    }
 }
 
 /// Standalone original: values of the baseline leaves (e.g. from the
@@ -230,6 +238,10 @@ impl ValueStore {
 impl ValueResolver for ValueStore {
     fn baseline_value(&self, id: &GhostId) -> Option<String> {
         self.values.get(id).cloned()
+    }
+
+    fn baseline_str(&self, id: &GhostId) -> Option<&str> {
+        self.values.get(id).map(String::as_str)
     }
 }
 
@@ -833,6 +845,41 @@ impl Graph {
     /// Value resolution: follow the ref chain to the baseline leaf,
     /// then apply transformations forward. Values only exist here,
     /// transiently — never in the overlay.
+    /// Hands the value of `id` ([`Graph::resolve_value`]) to `f`. A
+    /// rule constant and a baseline leaf whose resolver lends its
+    /// value are passed borrowed, without building a `String`.
+    pub fn with_value<R>(
+        &self,
+        id: &GhostId,
+        resolver: &dyn ValueResolver,
+        f: impl FnOnce(Option<&str>) -> R,
+    ) -> R {
+        match self.node(id) {
+            Some(node) => self.with_node_value(node, resolver, f),
+            None => f(None),
+        }
+    }
+
+    /// [`Graph::with_value`] for a node already looked up.
+    pub fn with_node_value<R>(
+        &self,
+        node: &Node,
+        resolver: &dyn ValueResolver,
+        f: impl FnOnce(Option<&str>) -> R,
+    ) -> R {
+        if let Some(k) = node.konst {
+            trace!(value_resolutions);
+            return f(Some(self.konsts.value(k)));
+        }
+        if node.derived.is_none() {
+            if let Some(v) = resolver.baseline_str(&node.id) {
+                trace!(value_resolutions);
+                return f(Some(v));
+            }
+        }
+        f(self.resolve_value(&node.id, resolver).as_deref())
+    }
+
     pub fn resolve_value(&self, id: &GhostId, resolver: &dyn ValueResolver) -> Option<String> {
         trace!(value_resolutions);
         let mut chain: Vec<LeafTransform> = Vec::new();

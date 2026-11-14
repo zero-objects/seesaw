@@ -351,15 +351,16 @@ impl AnchorIndex {
                     self.enter(g, v, p.other, id, st);
                 }
                 if valued {
-                    let val = g.resolve_value(&p.other, v);
-                    if let Some(&id) = val.as_deref().and_then(|s| group.equals.get(s)) {
-                        self.enter(g, v, p.other, id, st);
-                    }
-                    for (_, pred, id) in &group.other {
-                        if pred.matches(val.as_deref()) {
-                            self.enter(g, v, p.other, *id, st);
+                    g.with_value(&p.other, v, |val| {
+                        if let Some(&id) = val.and_then(|s| group.equals.get(s)) {
+                            self.enter(g, v, p.other, id, st);
                         }
-                    }
+                        for (_, pred, id) in &group.other {
+                            if pred.matches(val) {
+                                self.enter(g, v, p.other, *id, st);
+                            }
+                        }
+                    });
                 }
             }
         }

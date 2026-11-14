@@ -197,7 +197,7 @@ fn node_ok(g: &Graph, resolver: &dyn ValueResolver, pn: &PatternNode, id: &Ghost
     }
     match &pn.value {
         None => true,
-        Some(p) => p.matches(g.resolve_value(id, resolver).as_deref()),
+        Some(p) => g.with_node_value(node, resolver, |v| p.matches(v)),
     }
 }
 
