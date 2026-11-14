@@ -124,6 +124,58 @@ fn todo_key(rank: u64, refs: &Refs, rule_ix: usize) -> TodoKey {
     )
 }
 
+/// A list of indices (into the match store or the cascade) kept per
+/// element. Most elements stand in a few matches and are produced by
+/// one entry, so up to [`IXS_INLINE`] indices are kept in place and
+/// only longer lists on the heap. Order of insertion.
+#[derive(Debug, Clone)]
+enum Ixs {
+    Inline { len: u8, ix: [u32; IXS_INLINE] },
+    Heap(Vec<u32>),
+}
+
+/// Indices an [`Ixs`] holds without an allocation.
+const IXS_INLINE: usize = 4;
+
+impl Default for Ixs {
+    fn default() -> Self {
+        Self::Inline {
+            len: 0,
+            ix: [0; IXS_INLINE],
+        }
+    }
+}
+
+impl Ixs {
+    fn push(&mut self, value: u32) {
+        match self {
+            Self::Inline { len, ix } => {
+                if (*len as usize) < IXS_INLINE {
+                    ix[*len as usize] = value;
+                    *len += 1;
+                } else {
+                    let mut v = Vec::with_capacity(2 * IXS_INLINE);
+                    v.extend_from_slice(&ix[..]);
+                    v.push(value);
+                    *self = Self::Heap(v);
+                }
+            }
+            Self::Heap(v) => v.push(value),
+        }
+    }
+
+    fn as_slice(&self) -> &[u32] {
+        match self {
+            Self::Inline { len, ix } => &ix[..*len as usize],
+            Self::Heap(v) => v,
+        }
+    }
+
+    fn to_vec(&self) -> Vec<u32> {
+        self.as_slice().to_vec()
+    }
+}
+
 /// The engine.
 pub struct Engine<'r> {
     pub rules: &'r [DirectedRule],
@@ -132,7 +184,7 @@ pub struct Engine<'r> {
     /// map).
     matches: Vec<MatchRec>,
     /// adj[k] → match refs (spec §1.6: "which matches contain k?").
-    by_element: crate::hash::FxHashMap<GhostId, Vec<u32>>,
+    by_element: crate::hash::FxHashMap<GhostId, Ixs>,
     /// Duplicate memory: ref sequences already applied per rule.
     applied: BTreeSet<(usize, Refs)>,
     todo: BTreeSet<TodoKey>,
@@ -148,7 +200,7 @@ pub struct Engine<'r> {
     /// correspondence built by the same entry is unreachable. Deleting
     /// a generated element then left a correspondence attesting a
     /// translation whose result no longer exists (measured 2026-08-11).
-    by_product: crate::hash::FxHashMap<GhostId, Vec<u32>>,
+    by_product: crate::hash::FxHashMap<GhostId, Ixs>,
     pub cascade: Vec<Entry>,
     /// Runtime activation (tool configuration, e.g. Benchmarx
     /// decisions): None = all active. Inactive candidates stay in the
@@ -701,7 +753,11 @@ impl<'r> Engine<'r> {
             // Two ways an element can justify further retraction.
             //
             // It PARTICIPATES in matches: those lose their ground.
-            let mixes: Vec<u32> = self.by_element.get(&id).cloned().unwrap_or_default();
+            let mixes: Vec<u32> = self
+                .by_element
+                .get(&id)
+                .map(Ixs::to_vec)
+                .unwrap_or_default();
             for mix in mixes {
                 self.retract_match(g, mix, queue);
             }
@@ -710,7 +766,11 @@ impl<'r> Engine<'r> {
             // above all. Without this direction a deleted product left
             // its correspondence standing, because a rule's match does
             // not contain what the rule creates (measured 2026-08-11).
-            let eixs: Vec<u32> = self.by_product.get(&id).cloned().unwrap_or_default();
+            let eixs: Vec<u32> = self
+                .by_product
+                .get(&id)
+                .map(Ixs::to_vec)
+                .unwrap_or_default();
             if !eixs.is_empty() {
                 // Die Ursache folgt dem PFAD, nicht dem Zeitraum. Durch
                 // eine Delete-Welle laufen auch Elemente, die selbst
@@ -885,8 +945,13 @@ impl<'r> Engine<'r> {
         let Some(in_b) = self.by_element.get(b) else {
             return;
         };
-        let set_b: BTreeSet<u32> = in_b.iter().copied().collect();
-        let mixes: Vec<u32> = in_a.iter().copied().filter(|m| set_b.contains(m)).collect();
+        let set_b: BTreeSet<u32> = in_b.as_slice().iter().copied().collect();
+        let mixes: Vec<u32> = in_a
+            .as_slice()
+            .iter()
+            .copied()
+            .filter(|m| set_b.contains(m))
+            .collect();
         let mut queue: Vec<GhostId> = Vec::new();
         for mix in mixes {
             self.retract_match(g, mix, &mut queue);
@@ -896,7 +961,7 @@ impl<'r> Engine<'r> {
 
     /// delete/modify (spec §1.6): EAGERLY kill the element's matches.
     pub fn element_removed(&mut self, id: &GhostId) {
-        let Some(refs) = self.by_element.get(id).cloned() else {
+        let Some(refs) = self.by_element.get(id).map(Ixs::to_vec) else {
             return;
         };
         for mix in refs {
