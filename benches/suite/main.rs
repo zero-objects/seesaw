@@ -17,6 +17,7 @@
 //! covers graph and cascade order and has to be the same for every
 //! build of the engine.
 
+mod f2p;
 mod fingerprint;
 mod langpack;
 mod measure;
@@ -79,6 +80,23 @@ fn cells() -> Vec<Cell> {
             format!("langpack/delta-delete/{size}/d200"),
             "200 deleted nodes, one wave each",
             Box::new(move || langpack::delta_delete(spec, 200)),
+        );
+    }
+    for families in [2_000, 20_000, 200_000] {
+        cell(
+            format!("f2p/batch/f{families}"),
+            "batch through run (seed and steps)",
+            Box::new(move || f2p::batch(families)),
+        );
+        cell(
+            format!("f2p/add/f{families}"),
+            "whole model as one add delta",
+            Box::new(move || f2p::add(families)),
+        );
+        cell(
+            format!("f2p/delta-add/f{families}/d1000"),
+            "1000 added families, one wave each",
+            Box::new(move || f2p::delta_add(families, 1000)),
         );
     }
     out
