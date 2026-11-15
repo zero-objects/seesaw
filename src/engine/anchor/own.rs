@@ -9,7 +9,7 @@
 //!   again by what an index reads from the rules (pattern nodes with
 //!   type and value predicate, links). An engine over a rule set the
 //!   process has seen takes the index that is there, also when the
-//!   rules were loaded anew. The last [`KEPT`] rule sets are kept.
+//!   rules were loaded anew. The last `KEPT` rule sets are kept.
 //!
 //! An index is a function of what it reads from the rules, so the index
 //! of an equal rule set answers the same. Equal means here: the same

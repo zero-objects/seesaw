@@ -4,10 +4,10 @@
 //! One private interface, two implementations, chosen by the feature
 //! `opt_f`:
 //!
-//! - Without it ([`plain`]) a value is its text. A lookup by value
+//! - Without it (`plain`) a value is its text. A lookup by value
 //!   hashes the text and compares it with the constant.
-//! - With it ([`numbered`]) every constant an `Equals` predicate of the
-//!   rule set compares with has a number in the [`ValueNumbers`] of the
+//! - With it (`numbered`) every constant an `Equals` predicate of the
+//!   rule set compares with has a number in the `ValueNumbers` of the
 //!   anchor index, and a stored value keeps, beside its text, the number
 //!   that text has there (a [`Cell`]). Index and search then compare
 //!   numbers. Stored values are the rule constants of the graph
