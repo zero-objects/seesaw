@@ -1,0 +1,25 @@
+# Differential test of the engine against the published 2.0.2.
+#
+# Not part of the `seesaw-tgg` package and not published: the crate
+# depends on two versions of the engine at once, the one in this
+# repository and the release it is compared with.
+#
+#   cd difftest && cargo test --release
+[package]
+name = "seesaw-difftest"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+# The engine of this repository.
+new = { package = "seesaw-tgg", path = ".." }
+# The release it has to agree with.
+old = { package = "seesaw-tgg", version = "=2.0.2" }
+
+[dev-dependencies]
+proptest = "1.5"
+serde_json = "1.0"
+
+# Keeps this crate out of a workspace a parent directory may define.
+[workspace]
