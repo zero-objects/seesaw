@@ -18,9 +18,14 @@ cell=$1
 lines=${2:-40}
 event=${3:-instructions:u}
 cd "$(dirname "$0")/../.."
-CARGO_PROFILE_BENCH_DEBUG=1 CARGO_TARGET_DIR=target/prof \
-    cargo bench -q --bench suite ${SUITE_FEATURES:+--features "$SUITE_FEATURES"} --no-run 2>/dev/null
-bin=$(ls -t target/prof/release/deps/suite-* | grep -v '\.d$' | head -1)
+# The binary of this set of features, from cargo's own output: a set
+# that is built already is not linked again, so the newest file in the
+# directory may belong to another set.
+bin=$(CARGO_PROFILE_BENCH_DEBUG=1 CARGO_TARGET_DIR=target/prof \
+    cargo bench -q --bench suite ${SUITE_FEATURES:+--features "$SUITE_FEATURES"} --no-run \
+    --message-format=json 2>/dev/null |
+    grep -o '"executable":"[^"]*/suite-[^"]*"' | tail -1 | sed 's/^"executable":"//; s/"$//')
+[ -x "$bin" ] || { echo "the suite did not build" >&2; exit 1; }
 data=$(mktemp /tmp/suite-perf.XXXXXX)
 case $event in
 instructions*) rate="-c 1000003" ;;

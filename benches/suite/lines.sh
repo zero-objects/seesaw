@@ -31,9 +31,14 @@ cache-misses*) rate="-c 10007" ;;
 *) rate="-F 4000" ;;
 esac
 cd "$(dirname "$0")/../.."
-CARGO_PROFILE_BENCH_DEBUG=1 CARGO_TARGET_DIR=target/prof \
-    cargo bench -q --bench suite ${SUITE_FEATURES:+--features "$SUITE_FEATURES"} --no-run 2>/dev/null
-bin=$(ls -t target/prof/release/deps/suite-* | grep -v '\.d$' | head -1)
+# The binary of this set of features, from cargo's own output: a set
+# that is built already is not linked again, so the newest file in the
+# directory may belong to another set.
+bin=$(CARGO_PROFILE_BENCH_DEBUG=1 CARGO_TARGET_DIR=target/prof \
+    cargo bench -q --bench suite ${SUITE_FEATURES:+--features "$SUITE_FEATURES"} --no-run \
+    --message-format=json 2>/dev/null |
+    grep -o '"executable":"[^"]*/suite-[^"]*"' | tail -1 | sed 's/^"executable":"//; s/"$//')
+[ -x "$bin" ] || { echo "the suite did not build" >&2; exit 1; }
 tmp=$(mktemp -d /tmp/suite-lines.XXXXXX)
 perf record -q --call-graph dwarf,16384 $rate -o "$tmp/data" -e "$event" \
     setarch "$(uname -m)" -R "$bin" run "$cell" --samples 1 >/dev/null 2>&1
