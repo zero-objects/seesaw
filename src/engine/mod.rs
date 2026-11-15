@@ -237,7 +237,16 @@ pub struct Engine<'r> {
     /// correspondence built by the same entry is unreachable. Deleting
     /// a generated element then left a correspondence attesting a
     /// translation whose result no longer exists (measured 2026-08-11).
+    ///
+    /// Filed here are the created NODES. The entries that produced a
+    /// created connection are found from its two ends when a deleted
+    /// connection asks for them ([`Engine::producers_of`]); filing
+    /// every connection was more than half of the entries.
     by_product: crate::hash::FxHashMap<GhostId, Ixs>,
+    /// Test check of [`Engine::producers_of`]: the created connections
+    /// filed as they were before.
+    #[cfg(any(test, seesaw_checks))]
+    by_product_filed: crate::hash::FxHashMap<GhostId, Ixs>,
     pub cascade: Vec<Entry>,
     /// Runtime activation (tool configuration, e.g. Benchmarx
     /// decisions): None = all active. Inactive candidates stay in the
@@ -538,6 +547,8 @@ impl<'r> Engine<'r> {
             todo: BTreeSet::new(),
             by_key: Default::default(),
             by_product: Default::default(),
+            #[cfg(any(test, seesaw_checks))]
+            by_product_filed: Default::default(),
             saw_contradiction: false,
             cascade: Vec::new(),
             active: None,
@@ -1061,6 +1072,62 @@ impl<'r> Engine<'r> {
         self.retract_wave(g, removed, deleting);
     }
 
+    /// The cascade entries that produced the element `id`, ascending.
+    ///
+    /// A node is filed in `by_product`. A connection is not: its
+    /// producer names it among its created edges, and it created or
+    /// matched one of the connection's ends (a link of a creation plan
+    /// joins matched and created nodes, and the connections of a
+    /// dynamic attribute correspondence start at the correspondence the
+    /// entry created). The producers of the ends and the entries of the
+    /// matches that bind an end are therefore all the candidates.
+    fn producers_of(&self, g: &Graph, id: &GhostId) -> Ixs {
+        match g.connection(id) {
+            None => self.by_product.get(id).cloned().unwrap_or_default(),
+            Some(c) => {
+                let mut eixs: Vec<u32> = Vec::new();
+                for end in [&c.source, &c.target] {
+                    if let Some(produced_by) = self.by_product.get(end) {
+                        eixs.extend_from_slice(produced_by.as_slice());
+                    }
+                    if let Some(bound_in) = self.by_element.get(end) {
+                        eixs.extend(
+                            bound_in
+                                .as_slice()
+                                .iter()
+                                .filter_map(|&mix| self.matches[mix as usize].entry),
+                        );
+                    }
+                }
+                eixs.sort_unstable();
+                eixs.dedup();
+                let mut producers = Ixs::default();
+                for eix in eixs {
+                    if self.cascade[eix as usize].created_edges.contains(id) {
+                        producers.push(eix);
+                    }
+                }
+                #[cfg(any(test, seesaw_checks))]
+                {
+                    let mut filed = self
+                        .by_product_filed
+                        .get(id)
+                        .map(|ixs| ixs.as_slice().to_vec())
+                        .unwrap_or_default();
+                    // An entry that names a connection twice was filed
+                    // twice.
+                    filed.dedup();
+                    assert_eq!(
+                        producers.as_slice(),
+                        filed.as_slice(),
+                        "the producers found from the ends differ from the filed ones"
+                    );
+                }
+                producers
+            }
+        }
+    }
+
     /// A single match loses its justification: invalidate it (dead +
     /// todo), forget the record (applied/by_key, reclaim ability) and
     /// — if it was applied — follow the provenance edge to its
@@ -1172,7 +1239,7 @@ impl<'r> Engine<'r> {
             // above all. Without this direction a deleted product left
             // its correspondence standing, because a rule's match does
             // not contain what the rule creates (measured 2026-08-11).
-            let eixs: Ixs = self.by_product.get(&id).cloned().unwrap_or_default();
+            let eixs = self.producers_of(g, &id);
             if !eixs.as_slice().is_empty() {
                 // Die Ursache folgt dem PFAD, nicht dem Zeitraum. Durch
                 // eine Delete-Welle laufen auch Elemente, die selbst
@@ -1461,10 +1528,15 @@ impl<'r> Engine<'r> {
             let (created, created_edges) = apply_creation_at(g, rule, &refs, Some(&ids));
             self.ids = ids;
             let eix = self.cascade.len() as u32;
-            // Provenance, product side: every node and edge this entry
-            // built points back at it.
-            for id in created.iter().chain(created_edges.iter()) {
+            // Provenance, product side: every node this entry built
+            // points back at it. Its edges are found from their ends
+            // (`producers_of`).
+            for id in &created {
                 self.by_product.entry(*id).or_default().push(eix);
+            }
+            #[cfg(any(test, seesaw_checks))]
+            for id in &created_edges {
+                self.by_product_filed.entry(*id).or_default().push(eix);
             }
             // The entry keeps `created`; the expansion below borrows
             // it back for its duration.
