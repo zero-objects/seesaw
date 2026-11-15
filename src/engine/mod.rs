@@ -172,11 +172,43 @@ fn todo_key(rank: u64, refs: &Refs, rule_ix: usize) -> TodoKey {
 #[derive(Debug, Clone)]
 enum Ixs {
     Inline { len: u8, ix: [u32; IXS_INLINE] },
-    Heap(Vec<u32>),
+    Heap(IxsLong),
 }
 
 /// Indices an [`Ixs`] holds without an allocation.
+#[cfg(not(feature = "opt_h"))]
 const IXS_INLINE: usize = 4;
+
+/// The list of an [`Ixs`] on the heap. With the vector in place an
+/// [`Ixs`] takes 32 bytes, an entry of a map from an id to it 64.
+#[cfg(not(feature = "opt_h"))]
+type IxsLong = Vec<u32>;
+
+#[cfg(not(feature = "opt_h"))]
+fn ixs_long(v: Vec<u32>) -> IxsLong {
+    v
+}
+
+/// Indices an [`Ixs`] holds without an allocation (`opt_h`: one less,
+/// so that the list fits 16 bytes).
+#[cfg(feature = "opt_h")]
+const IXS_INLINE: usize = 3;
+
+/// The list of an [`Ixs`] on the heap (`opt_h`): behind one pointer, so
+/// that an [`Ixs`] takes 16 bytes and an entry of a map from an id to
+/// it 48. A long list costs a second allocation and one more step to
+/// its indices.
+#[cfg(feature = "opt_h")]
+#[allow(clippy::box_collection)]
+type IxsLong = Box<Vec<u32>>;
+
+#[cfg(feature = "opt_h")]
+fn ixs_long(v: Vec<u32>) -> IxsLong {
+    Box::new(v)
+}
+
+/// Capacity of the list of an [`Ixs`] when it moves to the heap.
+const IXS_FIRST_ON_HEAP: usize = 8;
 
 impl Default for Ixs {
     fn default() -> Self {
@@ -195,10 +227,10 @@ impl Ixs {
                     ix[*len as usize] = value;
                     *len += 1;
                 } else {
-                    let mut v = Vec::with_capacity(2 * IXS_INLINE);
+                    let mut v = Vec::with_capacity(IXS_FIRST_ON_HEAP);
                     v.extend_from_slice(&ix[..]);
                     v.push(value);
-                    *self = Self::Heap(v);
+                    *self = Self::Heap(ixs_long(v));
                 }
             }
             Self::Heap(v) => v.push(value),
@@ -2404,11 +2436,18 @@ mod contract_tests {
             ("Stored", size_of::<Stored>()),
             ("Entry", size_of::<Entry>()),
         ];
+        // `opt_h` keeps one index less in place and the long list
+        // behind one pointer.
+        let (ixs, filed) = if cfg!(feature = "opt_h") {
+            (16, 48)
+        } else {
+            (32, 64)
+        };
         assert_eq!(
             sizes,
             [
-                ("Ixs", 32),
-                ("(GhostId, Ixs)", 64),
+                ("Ixs", ixs),
+                ("(GhostId, Ixs)", filed),
                 ("TodoKey", 48),
                 ("Stored", 40),
                 ("Entry", 88),
