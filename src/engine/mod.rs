@@ -135,6 +135,7 @@ pub struct SelectionBound {
 /// two heads differ, so it changes nothing about the order; it lets
 /// the todo compare two keys without following both sequences to the
 /// heap, which is where most comparisons of a lookup were decided.
+#[cfg_attr(feature = "opt_d", allow(dead_code))]
 type TodoKey = (
     std::cmp::Reverse<u64>,
     std::cmp::Reverse<u128>,
@@ -144,6 +145,7 @@ type TodoKey = (
 
 /// The first 16 bytes of the first id of a ref sequence, big-endian;
 /// 0 for an empty sequence. `head(a) < head(b)` implies `a < b`.
+#[cfg_attr(feature = "opt_d", allow(dead_code))]
 fn head(refs: &[GhostId]) -> u128 {
     refs.first().map_or(0, |id| {
         let mut b = [0u8; 16];
@@ -157,6 +159,7 @@ fn head(refs: &[GhostId]) -> u128 {
 /// set. Equality, order and hash are those of the sequence.
 type Refs = std::sync::Arc<[GhostId]>;
 
+#[cfg_attr(feature = "opt_d", allow(dead_code))]
 fn todo_key(rank: u64, refs: &Refs, rule_ix: usize) -> TodoKey {
     (
         std::cmp::Reverse(rank),
@@ -256,13 +259,15 @@ include!("links_filed.rs");
 include!("links_derived.rs");
 
 // The todo, in variants with the same interface (`Todo`, `Taken`,
-// `Carried`): an ordered set of keys, or an ordered map from the key
-// to the number of the match (`opt_e`). The files are part of this
-// module.
-#[cfg(not(feature = "opt_e"))]
+// `Carried`): an ordered set of keys, an ordered map from the key to
+// the number of the match (`opt_e`), or a heap (`opt_d`, with or
+// without `opt_e`). The files are part of this module.
+#[cfg(not(any(feature = "opt_d", feature = "opt_e")))]
 include!("todo_set.rs");
-#[cfg(feature = "opt_e")]
+#[cfg(all(feature = "opt_e", not(feature = "opt_d")))]
 include!("todo_map.rs");
+#[cfg(feature = "opt_d")]
+include!("todo_heap.rs");
 
 // What `step` knows of a pulled candidate, in two variants with the
 // same interface (`Recognised`, `recognise`, `Applied`,
