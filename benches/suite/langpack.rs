@@ -257,6 +257,47 @@ pub fn seed(spec: Spec) -> Outcome {
     outcome(&m.g, &e, &m.vs, steps, usage)
 }
 
+/// The seed alone on `threads` threads (`Engine::seed_with_threads`;
+/// one thread is `Engine::seed`). The steps to saturation follow after
+/// the measured section, so the fingerprint is that of [`seed`].
+#[cfg(feature = "opt_j")]
+pub fn seed_search(spec: Spec, threads: usize) -> Outcome {
+    let mut m = Model::new(spec);
+    let rules = load(spec, &mut m.g);
+    let mut e = Engine::new(&rules);
+    let ((), usage) = measure::section(|| e.seed_with_threads(&m.g, &m.vs, threads));
+    let steps = saturate(&mut e, &mut m.g, &m.vs);
+    outcome(&m.g, &e, &m.vs, steps, usage)
+}
+
+/// An engine that starts on a model that is already translated: a
+/// second engine seeds the synchronised model on `threads` threads.
+/// Measured is that seed alone; it finds the matches of every rule.
+#[cfg(feature = "opt_j")]
+pub fn reseed(spec: Spec, threads: usize) -> Outcome {
+    let (mut m, rules) = synchronised(spec);
+    let mut first = Engine::new(&rules);
+    first.elements_added(&m.g, &m.vs, &m.all);
+    saturate(&mut first, &mut m.g, &m.vs);
+    let mut e = Engine::new(&rules);
+    let ((), usage) = measure::section(|| e.seed_with_threads(&m.g, &m.vs, threads));
+    let steps = saturate(&mut e, &mut m.g, &m.vs);
+    outcome(&m.g, &e, &m.vs, steps, usage)
+}
+
+/// [`seed`] with the seed on `threads` threads.
+#[cfg(feature = "opt_j")]
+pub fn seed_par(spec: Spec, threads: usize) -> Outcome {
+    let mut m = Model::new(spec);
+    let rules = load(spec, &mut m.g);
+    let mut e = Engine::new(&rules);
+    let (steps, usage) = measure::section(|| {
+        e.seed_with_threads(&m.g, &m.vs, threads);
+        saturate(&mut e, &mut m.g, &m.vs)
+    });
+    outcome(&m.g, &e, &m.vs, steps, usage)
+}
+
 /// The whole model as one add delta (`elements_added`).
 pub fn add(spec: Spec) -> Outcome {
     let mut m = Model::new(spec);

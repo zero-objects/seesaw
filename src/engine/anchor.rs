@@ -720,7 +720,7 @@ impl AnchorIndex {
 // ══ Tests ═══════════════════════════════════════════════════════════════
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     //! Rule shapes of a language pack (one structural type per side, one
     //! node corr type for all rules, the distinguishing leaf values two
     //! to three links from the parent): root, child, grandchild with a
@@ -747,7 +747,7 @@ mod tests {
         n
     }
 
-    fn rules_json() -> String {
+    pub(crate) fn rules_json() -> String {
         let child = |name: &str, parent_rule: Option<&str>, rule: &str, feature: &str| {
             let mut left = vec![
                 serde_json::json!({"name": "sp", "type": "J"}),
@@ -821,8 +821,8 @@ mod tests {
     /// A language tree: per node the rule value, the parent (index) and
     /// whether it carries the flag leaf.
     #[derive(Debug, Clone)]
-    struct Tree {
-        nodes: Vec<(String, usize, Option<bool>)>,
+    pub(crate) struct Tree {
+        pub(crate) nodes: Vec<(String, usize, Option<bool>)>,
     }
 
     fn tree() -> impl Strategy<Value = Tree> {
@@ -845,7 +845,7 @@ mod tests {
     }
 
     /// Graph with file, root and the tree; returns the language nodes.
-    fn build(t: &Tree, g: &mut Graph, vs: &mut ValueStore) -> Vec<GhostId> {
+    pub(crate) fn build(t: &Tree, g: &mut Graph, vs: &mut ValueStore) -> Vec<GhostId> {
         let _p = g.add_baseline("project", "P");
         let f = g.add_baseline("file", "F");
         let root = g.add_baseline("n0", "J");

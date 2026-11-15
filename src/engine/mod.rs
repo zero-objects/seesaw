@@ -14,6 +14,8 @@
 
 pub(crate) mod anchor;
 pub mod matcher;
+#[cfg(all(feature = "opt_j", not(target_arch = "wasm32")))]
+mod par;
 
 pub use anchor::AnchorIndex;
 
