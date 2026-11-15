@@ -55,6 +55,9 @@ pub enum Op {
     ChangeValue(usize, usize),
     /// Deletes a node a cascade entry created (entry, node of the entry).
     DeleteProduct(usize, usize),
+    /// Deletes a connection a cascade entry created (entry, connection
+    /// of the entry).
+    DeleteProductEdge(usize, usize),
     Seed,
     /// `Engine::run` with a step budget.
     Run(usize),
@@ -477,6 +480,21 @@ macro_rules! driver {
                                 }
                             }
                         }
+                        Op::DeleteProductEdge(entry, edge) => {
+                            let product = (!e.cascade.is_empty())
+                                .then(|| &e.cascade[pick(*entry, e.cascade.len())].created_edges)
+                                .filter(|edges| !edges.is_empty())
+                                .map(|edges| edges[pick(*edge, edges.len())]);
+                            if let Some(id) = product {
+                                if m.g.connection(&id).is_some_and(|c| c.status.is_matchable()) {
+                                    m.g.set_connection_status(&id, Status::Tombstone);
+                                    admit(&mut e, true);
+                                    e.element_removed(&id);
+                                    e.element_deleted(&mut m.g, &id);
+                                    note = "product edge deleted".into();
+                                }
+                            }
+                        }
                         Op::Seed => {
                             if s.routed {
                                 e.admit_initial();
@@ -528,6 +546,7 @@ fn op() -> impl Strategy<Value = Op> {
         3 => n.clone().prop_map(Op::DeleteNode),
         3 => (n.clone(), n.clone()).prop_map(|(a, v)| Op::ChangeValue(a, v)),
         2 => (n.clone(), n.clone()).prop_map(|(e, c)| Op::DeleteProduct(e, c)),
+        2 => (n.clone(), n.clone()).prop_map(|(e, c)| Op::DeleteProductEdge(e, c)),
         2 => Just(Op::Seed),
         1 => (0usize..6).prop_map(Op::Run),
     ]

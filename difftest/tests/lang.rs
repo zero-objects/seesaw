@@ -38,6 +38,9 @@ pub enum Op {
     DeleteFlag(usize),
     /// Deletes a node a cascade entry created (entry, node of the entry).
     DeleteProduct(usize, usize),
+    /// Deletes a connection a cascade entry created (entry, connection
+    /// of the entry).
+    DeleteProductEdge(usize, usize),
     Seed,
 }
 
@@ -429,6 +432,22 @@ macro_rules! driver {
                                 }
                             }
                         }
+                        Op::DeleteProductEdge(entry, edge) => {
+                            let product = (!e.cascade.is_empty())
+                                .then(|| &e.cascade[pick(*entry, e.cascade.len())].created_edges)
+                                .filter(|edges| !edges.is_empty())
+                                .map(|edges| edges[pick(*edge, edges.len())]);
+                            if let Some(id) = product {
+                                if m.g.connection(&id).is_some_and(|c| c.status.is_matchable()) {
+                                    m.g.set_connection_status(&id, Status::Tombstone);
+                                    if s.routed {
+                                        e.admit_delta(&[DeltaDomain::Target]);
+                                    }
+                                    e.element_removed(&id);
+                                    e.element_deleted(&mut m.g, &id);
+                                }
+                            }
+                        }
                         Op::Seed => {
                             if s.routed {
                                 e.admit_initial();
@@ -468,6 +487,7 @@ fn op() -> impl Strategy<Value = Op> {
         2 => (0usize..64).prop_map(Op::DeleteNode),
         1 => (0usize..64).prop_map(Op::DeleteFlag),
         2 => (0usize..64, 0usize..64).prop_map(|(e, n)| Op::DeleteProduct(e, n)),
+        2 => (0usize..64, 0usize..64).prop_map(|(e, n)| Op::DeleteProductEdge(e, n)),
         1 => Just(Op::Seed),
     ]
 }
