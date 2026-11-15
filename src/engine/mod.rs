@@ -245,6 +245,15 @@ impl Ixs {
     }
 }
 
+// The registry of the links of a match, in two variants with the same
+// interface (`Links`, `file_links`, `Engine::filed_under`,
+// `Engine::removed_unfiled`, `Engine::settle_removed`). The files are
+// part of this module.
+#[cfg(not(feature = "opt_a"))]
+include!("links_filed.rs");
+#[cfg(feature = "opt_a")]
+include!("links_derived.rs");
+
 /// The engine.
 pub struct Engine<'r> {
     pub rules: &'r [DirectedRule],
@@ -254,6 +263,8 @@ pub struct Engine<'r> {
     matches: Vec<Stored>,
     /// adj[k] → match refs (spec §1.6: "which matches contain k?").
     by_element: crate::hash::FxHashMap<GhostId, Ixs>,
+    /// What the registry of links keeps beyond `by_element`.
+    links: Links,
     /// Duplicate memory: ref sequences already applied per rule.
     applied: std::collections::HashSet<(usize, Refs), crate::hash::FxBuildHasher>,
     todo: BTreeSet<TodoKey>,
@@ -575,6 +586,7 @@ impl<'r> Engine<'r> {
             rules,
             matches: Vec::new(),
             by_element: Default::default(),
+            links: Links::new(),
             applied: Default::default(),
             todo: BTreeSet::new(),
             by_key: Default::default(),
@@ -676,38 +688,14 @@ impl<'r> Engine<'r> {
         for id in refs.iter() {
             self.by_element.entry(*id).or_default().push(ix);
         }
-        // The match's LINKS belong in the registry too, not only its
-        // nodes. A match rests on the edges its pattern requires, so
-        // removing one has to kill it exactly as removing a node does.
-        //
-        // Until now `by_element` held nodes only, and a pure edge delta
-        // (an owner or super change) killed no match at all. That is
-        // why `link_removed` exists as an over-approximation, and why
-        // the ecore2sql ledger cannot express a super change as the
-        // edge delta it is and replaces the whole node instead — which
-        // leaves a leaf owned by two carriers for the duration of the
-        // move. Sandra ruled that state out on 2026-08-12: a delta
-        // changes or deletes, and a temporary multi-ownership makes no
-        // technical sense.
-        let pattern = &self.rules[rule_ix].pattern;
-        for l in &pattern.links {
-            // SameValue is a join over two leaf values, not an edge —
-            // there is no connection in the graph to index.
-            if l.kind == crate::engine::matcher::LinkKind::SameValue {
-                continue;
-            }
-            if let (Some(a), Some(b)) = (refs.get(l.from), refs.get(l.to)) {
-                // The id of the connection a→b: read from the graph
-                // where the connection exists, derived otherwise (a
-                // direction-free link the graph holds the other way
-                // round). Both are the same id.
-                // The type of `b` is that of its position.
-                let e = g
-                    .connection_id_typed(a, b, pattern.nodes[l.to].typ)
-                    .unwrap_or_else(|| crate::graph::preview_connection_id(a, b));
-                self.by_element.entry(e).or_default().push(ix);
-            }
-        }
+        file_links(
+            &mut self.by_element,
+            &mut self.links,
+            g,
+            &self.rules[rule_ix].pattern,
+            &refs,
+            ix,
+        );
         self.todo
             .insert(todo_key(self.rules[rule_ix].rank, &refs, rule_ix));
         slot.insert(ix);
@@ -728,6 +716,7 @@ impl<'r> Engine<'r> {
     /// fewer nodes; both find the same matches and record them in the
     /// same order.
     pub fn seed(&mut self, g: &Graph, resolver: &dyn ValueResolver) {
+        self.settle_removed(g);
         #[cfg(any(test, seesaw_checks))]
         self.check_seed(g, resolver);
         if self.seed_through_index(g) {
@@ -886,6 +875,7 @@ impl<'r> Engine<'r> {
         resolver: &dyn ValueResolver,
         new_nodes: &[GhostId],
     ) {
+        self.settle_removed(g);
         self.expand_at(g, resolver, new_nodes);
     }
 
@@ -1073,6 +1063,7 @@ impl<'r> Engine<'r> {
     ///
     /// Der Aufrufer hat den Tombstone bereits gesetzt.
     pub fn element_deleted(&mut self, g: &mut Graph, removed: &GhostId) {
+        self.settle_removed(g);
         self.deleted.insert(*removed);
         self.retract_wave(g, removed, true);
     }
@@ -1084,6 +1075,7 @@ impl<'r> Engine<'r> {
     /// verletzt, zieht sie samt Korrespondenz zurueck, macht daraus
     /// aber kein Delete der Gegenseite.
     pub fn element_changed(&mut self, g: &mut Graph, changed: &GhostId) {
+        self.settle_removed(g);
         self.retract_wave(g, changed, false);
     }
 
@@ -1097,6 +1089,7 @@ impl<'r> Engine<'r> {
     #[deprecated(note = "use element_deleted or element_changed — the delta type \
                          belongs to the call, not to a status check")]
     pub fn retract_for(&mut self, g: &mut Graph, removed: &GhostId) {
+        self.settle_removed(g);
         let deleting = !g.node(removed).is_some_and(|n| n.status.is_matchable());
         if deleting {
             self.deleted.insert(*removed);
@@ -1262,7 +1255,7 @@ impl<'r> Engine<'r> {
             // It PARTICIPATES in matches: those lose their ground.
             // A copy of the list (in place up to four entries): the
             // retraction below writes the engine.
-            let mixes: Ixs = self.by_element.get(&id).cloned().unwrap_or_default();
+            let mixes: Ixs = self.filed_under(g, &id);
             for &mix in mixes.as_slice() {
                 self.retract_match(g, mix, queue);
             }
@@ -1296,6 +1289,7 @@ impl<'r> Engine<'r> {
     /// new derivation has reclaimed the element (a reclaim resets the
     /// status in `insert_node`/`connect`).
     pub fn consolidate(&mut self, g: &mut Graph) {
+        self.settle_removed(g);
         // Processes ONLY the TT collected by retraction — no full
         // model scan. An element that was RECLAIMED in the meantime is
         // still in the list, but is no longer TT (connect set it to
@@ -1419,10 +1413,12 @@ impl<'r> Engine<'r> {
         a: &GhostId,
         b: &GhostId,
     ) {
+        self.settle_removed(g);
         self.expand_at(g, resolver, &[*a, *b]);
     }
 
     pub fn link_removed(&mut self, g: &mut Graph, a: &GhostId, b: &GhostId) {
+        self.settle_removed(g);
         let Some(in_a) = self.by_element.get(a) else {
             return;
         };
@@ -1446,9 +1442,15 @@ impl<'r> Engine<'r> {
     /// delete/modify (spec §1.6): EAGERLY kill the element's matches.
     pub fn element_removed(&mut self, id: &GhostId) {
         let Some(refs) = self.by_element.get(id).cloned() else {
+            self.removed_unfiled(id);
             return;
         };
-        for &mix in refs.as_slice() {
+        self.kill(refs.as_slice());
+    }
+
+    /// Kills matches eagerly: dead and out of the todo.
+    fn kill(&mut self, mixes: &[u32]) {
+        for &mix in mixes {
             let m = &mut self.matches[mix as usize];
             if !m.dead {
                 m.dead = true;
@@ -1468,6 +1470,7 @@ impl<'r> Engine<'r> {
         ceiling: Option<&SelectionBound>,
     ) -> Option<bool> {
         // `true` in Some = applied; None = no admitted todo below the bound.
+        self.settle_removed(g);
         loop {
             let filtered = self.active.is_some() || self.wave_directions.is_some();
             let key = match ceiling {
@@ -2098,6 +2101,104 @@ mod tests {
             "one application = dead candidates"
         );
         assert_eq!(e.cascade.len(), 1, "only f1 gets translated");
+    }
+
+    /// A removed connection kills the matches that rest on it, and
+    /// only those. The door `element_removed` does not get the graph;
+    /// what it cannot settle itself is settled by the next door that
+    /// does, here the step.
+    #[test]
+    fn a_removed_connection_kills_the_matches_resting_on_it() {
+        let (mut g, vs) = seed(2);
+        let fwd = father_rule(&mut g).remove(0);
+        let rules = vec![fwd];
+        let mut e = Engine::new(&rules);
+        e.seed(&g, &vs);
+        assert_eq!(e.todo.len(), 2);
+        let member = g
+            .iter_nodes()
+            .find(|n| g.types.name(n.typ) == "Member")
+            .unwrap()
+            .id;
+        let father = g
+            .parts(&member)
+            .find(|p| !p.outgoing)
+            .expect("the member hangs on a father")
+            .other;
+        let link = g.connection_id(&father, &member).expect("father → member");
+        // The connection the other way round is no element of the
+        // graph and no link of the pattern: nothing rests on it.
+        e.element_removed(&crate::graph::preview_connection_id(&member, &father));
+        g.set_connection_status(&link, Status::Tombstone);
+        e.element_removed(&link);
+        let _ = e.run_remaining(&mut g, &vs);
+        assert_eq!(e.cascade.len(), 1, "only the other family gets translated");
+    }
+
+    /// A match is filed under the connection of each of its links in
+    /// the direction the pattern names, also where the graph holds the
+    /// connection the other way round (a link to a context
+    /// correspondence is direction-free). Removing an element with that
+    /// id, which the graph does not know, kills the match.
+    #[test]
+    fn a_match_rests_on_the_named_direction_of_a_context_link() {
+        let file: RuleFile = serde_json::from_value(serde_json::json!({
+            "format": 3,
+            "name": "context_link",
+            "rules": [
+                {
+                    "name": "Root", "rank": 100,
+                    "left": {"anchor": "a", "nodes": [
+                        {"name": "a", "type": "A"}
+                    ]},
+                    "right": {"anchor": "b", "nodes": [
+                        {"name": "b", "type": "B"}
+                    ]},
+                    "corrs": [{"type": "AB", "left": "a", "right": "b",
+                               "role": "establishes"}]
+                },
+                {
+                    "name": "Child", "rank": 90,
+                    "left": {"anchor": "a", "nodes": [
+                        {"name": "a", "type": "A"},
+                        {"name": "x", "type": "X"}
+                    ], "links": [["a", "x"]]},
+                    "right": {"anchor": "b", "nodes": [
+                        {"name": "b", "type": "B"},
+                        {"name": "y", "type": "Y"}
+                    ], "links": [["b", "y"]]},
+                    "corrs": [
+                        {"type": "AB", "left": "a", "right": "b",
+                         "role": "references"},
+                        {"type": "XY", "left": "x", "right": "y",
+                         "role": "establishes"}
+                    ]
+                }
+            ]
+        }))
+        .expect("rule file parses");
+        let mut g = Graph::new();
+        let a = g.add_baseline("a", "A");
+        let x = g.add_baseline("a/x", "X");
+        g.connect(a, x, Status::Solid);
+        let rules = crate::rules::load_file(&file, &mut g).expect("rules lower");
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        // Root applies and creates the correspondence; the match of
+        // Child is found from it and waits in the todo.
+        assert_eq!(e.step(&mut g, &vs), Some(true));
+        assert_eq!(e.todo.len(), 1, "the candidate of Child");
+        let corr = g.iter_nodes().find(|n| n.is_corr).expect("AB").id;
+        // The graph holds a → corr. The pattern of Child names the
+        // link from the correspondence to its anchor.
+        assert!(g.connection_id(&a, &corr).is_some());
+        let named = crate::graph::preview_connection_id(&corr, &a);
+        assert!(g.connection(&named).is_none() && g.node(&named).is_none());
+        e.element_removed(&named);
+        assert_eq!(e.step(&mut g, &vs), None, "the candidate of Child is dead");
+        assert_eq!(e.cascade.len(), 1);
     }
 
     impl<'r> Engine<'r> {
