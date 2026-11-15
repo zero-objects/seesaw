@@ -18,12 +18,17 @@
 //! construction and rule loading are outside of it. The fingerprint
 //! covers graph and cascade order and has to be the same for every
 //! build of the engine.
+//!
+//! The cells `pde/...` replay records of a real host and exist only
+//! when `SEESAW_PDE_DUMP` names the directory that holds the records
+//! (see `pde.rs`).
 
 mod f2p;
 mod fingerprint;
 mod hints;
 mod langpack;
 mod measure;
+mod pde;
 
 use std::io::Write;
 
@@ -121,6 +126,24 @@ fn cells() -> Vec<Cell> {
             Box::new(move || f2p::delta_delete(families, 1000)),
         );
     }
+    for (name, path) in pde::records() {
+        for (part, part_name, about) in pde::Part::ALL {
+            let path = path.clone();
+            cell(
+                format!("pde/{part_name}/{name}"),
+                about,
+                Box::new(move || pde::replay(&path, part)),
+            );
+        }
+        if name.ends_with("-edit") {
+            let (part, part_name, about) = pde::Part::EDIT;
+            cell(
+                format!("pde/{part_name}/{name}"),
+                about,
+                Box::new(move || pde::replay(&path, part)),
+            );
+        }
+    }
     out
 }
 
@@ -158,7 +181,19 @@ fn main() {
                 }
             }
             let Some(cell) = cells.iter().find(|c| &c.name == name) else {
-                eprintln!("unknown cell {name}");
+                if name.starts_with("pde/") {
+                    match std::env::var(pde::DUMP) {
+                        Err(_) => eprintln!(
+                            "{name}: {} is not set. It has to name the directory with the \
+                             records (<name>.trace) of the host; they are not part of this \
+                             repository.",
+                            pde::DUMP
+                        ),
+                        Ok(dir) => eprintln!("{name}: no record of that name in {dir}"),
+                    }
+                } else {
+                    eprintln!("unknown cell {name}");
+                }
                 std::process::exit(2);
             };
             let line = run(cell, samples.max(1), &label);

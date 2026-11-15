@@ -1,0 +1,47 @@
+== pde/graph/java40, instructions:u: 602 of 24295 samples in the section
+-- inclusive, % of section
+100.00	suite::pde::World::run
+ 45.35	seesaw_tgg::graph::Graph::connect
+ 44.68	seesaw_tgg::graph::Graph::connect_reporting
+ 28.24	seesaw_tgg::graph::Graph::add_baseline
+ 15.78	blake3::Hasher::update
+ 13.95	seesaw_tgg::graph::Parts::insert
+ 11.46	blake3::ChunkState::update
+ 11.30	<core::ops::try_trait::Wrapped<T,A,F> as core::ops::function::FnMut<(A,)>>::call_mut
+ 10.47	[unknown]
+ 10.47	_ZN10seesaw_tgg5graph5Graph11insert_node17h38650a7eb2d94e0fE
+  7.81	_RNvXsZ_NtCslNYArtu3iFV_5alloc6stringNtB5_6StringNtNtCsgEmfK2I1SDS_4core3fmt5Write9write_str
+  7.64	_ZN5alloc7raw_vec20RawVecInner$LT$A$GT$11finish_grow17hf2ede5d1813ea6f8E
+  7.48	seesaw_tgg::graph::Graph::insert_connection
+  7.48	seesaw_tgg::graph::ident::connection
+  6.98	_int_malloc
+  6.81	__memmove_avx_unaligned_erms
+  6.64	hashbrown::map::HashMap<K,V,S,A>::insert
+  6.31	alloc::raw_vec::RawVecInner<A>::reserve::do_reserve_and_handle
+  5.98	_ZN5alloc7raw_vec20RawVecInner$LT$A$GT$11finish_grow17hdd39fb3c931a2077E
+  5.48	malloc
+  4.65	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  3.99	__memmove_avx_unaligned
+-- self, % of section
+ 11.30	<core::ops::try_trait::Wrapped<T,A,F> as core::ops::function::FnMut<(A,)>>::call_mut
+ 10.80	suite::pde::World::run
+ 10.47	[unknown]
+  7.81	blake3::ChunkState::update
+  6.81	_ZN10seesaw_tgg5graph5Graph11insert_node17h38650a7eb2d94e0fE
+  5.65	hashbrown::map::HashMap<K,V,S,A>::insert
+  4.98	seesaw_tgg::graph::Graph::insert_connection
+  4.65	seesaw_tgg::graph::Parts::insert
+  4.49	seesaw_tgg::graph::Graph::connect_reporting
+  3.99	__memmove_avx_unaligned
+  3.65	blake3::Hasher::update
+  2.99	_RNvCsfLfy6EI15iL_7___rustc12___rust_alloc
+  2.66	seesaw_tgg::graph::TypeTable::intern
+  2.49	_int_malloc
+  2.49	blake3::Hasher::new
+  1.99	blake3::Hasher::final_output
+  1.83	__memmove_avx_unaligned_erms
+  1.16	_RNvMsa_NtCsgEmfK2I1SDS_4core3fmtNtB5_9Formatter3pad
+  1.16	_ZN5alloc7raw_vec20RawVecInner$LT$A$GT$11finish_grow17hf2ede5d1813ea6f8E
+  1.16	seesaw_tgg::graph::Graph::add_baseline
+  1.00	unlink_chunk.isra.0
+  0.66	_RNvXsZ_NtCslNYArtu3iFV_5alloc6stringNtB5_6StringNtNtCsgEmfK2I1SDS_4core3fmt5Write9write_str
