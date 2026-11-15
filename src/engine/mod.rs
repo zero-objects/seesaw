@@ -271,6 +271,14 @@ include!("applied.rs");
 
 /// The engine.
 pub struct Engine<'r> {
+    /// The rules the engine runs.
+    ///
+    /// The matches the engine has recorded belong to these rules: what
+    /// a match rests on is read from the pattern of its rule, and its
+    /// place in the todo from the rule's rank. Do not set the field to
+    /// other rules while the engine holds matches. Rules of the same
+    /// content at another address are the same rules. For other rules
+    /// take a new engine.
     pub rules: &'r [DirectedRule],
     /// Match store (records logically live in the map; physically
     /// here, referenced from `by_element` — realization of the spec
