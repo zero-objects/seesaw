@@ -36,12 +36,22 @@ use crate::rules::transform::{Chain, ChainId, ChainTable};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeId(pub u32);
 
+// Which table instance a table is: `TableUid`. Empty without the
+// feature `opt_g`, a number per instance with it.
+#[cfg(not(feature = "opt_g"))]
+include!("graph/uid_plain.rs");
+#[cfg(feature = "opt_g")]
+include!("graph/uid_counted.rs");
+
 /// Type name ↔ [`TypeId`] interning (insert-only, deterministic in
 /// registration order).
 #[derive(Debug, Clone, Default)]
 pub struct TypeTable {
     by_name: FxHashMap<String, TypeId>,
     names: Vec<String>,
+    /// Which instance this is. Read with the feature `opt_g` only.
+    #[allow(dead_code)]
+    pub(crate) uid: TableUid,
 }
 
 impl TypeTable {
@@ -101,6 +111,9 @@ pub struct KonstId(pub u32);
 pub struct KonstTable {
     by_value: FxHashMap<String, KonstId>,
     values: Vec<String>,
+    /// Which instance this is. Read with the feature `opt_g` only.
+    #[allow(dead_code)]
+    pub(crate) uid: TableUid,
 }
 
 impl KonstTable {
@@ -1069,6 +1082,87 @@ impl Graph {
                 }
             }
         }
+    }
+}
+
+/// Creation and reading by type id (feature `opt_g`): what the
+/// functions that take a type name do after they resolved it.
+#[cfg(feature = "opt_g")]
+impl Graph {
+    /// [`Graph::add_corr_at`] for a type already interned.
+    pub(crate) fn add_corr_typed(&mut self, id: GhostId, typ: TypeId) -> GhostId {
+        self.store.insert_node(Node {
+            id,
+            typ,
+            status: Status::Ghost,
+            derived: None,
+            konst: None,
+            is_corr: true,
+        });
+        id
+    }
+
+    /// [`Graph::add_ghost_at`] for a type already interned.
+    pub(crate) fn add_ghost_typed(&mut self, id: GhostId, typ: TypeId) -> GhostId {
+        self.store.insert_node(Node {
+            id,
+            typ,
+            status: Status::Ghost,
+            derived: None,
+            konst: None,
+            is_corr: false,
+        });
+        id
+    }
+
+    /// [`Graph::add_derived_leaf_at`] for a type and a chain already
+    /// interned.
+    pub(crate) fn add_derived_leaf_typed(
+        &mut self,
+        id: GhostId,
+        typ: TypeId,
+        source: GhostId,
+        transform: LeafTransform,
+    ) -> GhostId {
+        self.store.insert_node(Node {
+            id,
+            typ,
+            status: Status::Ghost,
+            derived: Some(DerivedLeaf {
+                quelle: source,
+                transform,
+            }),
+            konst: None,
+            is_corr: false,
+        });
+        id
+    }
+
+    /// [`Graph::add_konst_leaf_at`] for a type and a constant already
+    /// interned.
+    pub(crate) fn add_konst_leaf_typed(
+        &mut self,
+        id: GhostId,
+        typ: TypeId,
+        konst: KonstId,
+    ) -> GhostId {
+        self.store.insert_node(Node {
+            id,
+            typ,
+            status: Status::Ghost,
+            derived: None,
+            konst: Some(konst),
+            is_corr: false,
+        });
+        id
+    }
+
+    /// [`Graph::child_leaf_of_type`] for a type already looked up.
+    pub(crate) fn child_leaf_of_typ(&self, anchor: &GhostId, typ: TypeId) -> Option<GhostId> {
+        self.parts_by_other_type(anchor, typ)
+            .filter(|p| p.outgoing)
+            .map(|p| p.other)
+            .find(|id| self.node(id).is_some_and(|n| n.status.is_matchable()))
     }
 }
 

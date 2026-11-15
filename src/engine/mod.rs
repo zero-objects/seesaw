@@ -28,7 +28,7 @@ use crate::ident::{GhostId, Status};
 use crate::engine::matcher::find_matches_with_fixed;
 use crate::engine::matcher::{find_matches, find_matches_planned, Bindings};
 use crate::graph::{Graph, ValueResolver};
-use crate::plan::{apply_creation_at, DirectedRule, Ref, RuleDirection};
+use crate::plan::{apply_creation_at, DirectedRule, Names, Ref, RuleDirection, RuleNames};
 
 fn self_node_tt(g: &Graph, id: &GhostId) -> bool {
     g.node(id)
@@ -296,6 +296,9 @@ pub struct Engine<'r> {
     scratch: crate::engine::matcher::Scratch,
     /// Working memory of a step: the identities of its plan's nodes.
     ids: Vec<GhostId>,
+    /// The names of the rules' plans and what they resolve to in the
+    /// graph at hand ([`Names`]).
+    names: Names,
 }
 
 /// Where the engine's [`AnchorIndex`] comes from.
@@ -414,10 +417,18 @@ fn index_seed(
 }
 
 /// Does `anchor` already carry a correspondence of type `typ` with a
-/// live counterpart of type `endpoint_typ`?
-fn anchor_translated(g: &Graph, typ: &str, endpoint_typ: &str, anchor: &GhostId) -> bool {
-    g.types.lookup(typ).is_some_and(|t| {
-        let ep = g.types.lookup(endpoint_typ);
+/// live counterpart of type `endpoint_typ`? `ix`: the entry of the
+/// rule's `corr_recognition` the two types come from.
+fn anchor_translated(
+    g: &Graph,
+    names: &mut RuleNames<'_>,
+    ix: usize,
+    typ: &str,
+    endpoint_typ: &str,
+    anchor: &GhostId,
+) -> bool {
+    names.corr_typ(g, ix, typ).is_some_and(|t| {
+        let ep = names.endpoint_typ(g, ix, endpoint_typ);
         g.parts_by_other_type(anchor, t).any(|p| {
             // TT does NOT count (M5 window): something tentatively
             // retracted doesn't suppress a new derivation.
@@ -441,12 +452,20 @@ fn anchor_translated(g: &Graph, typ: &str, endpoint_typ: &str, anchor: &GhostId)
 /// carries a corr of its type with a MATCHABLE counterpart — the
 /// element is translated, regardless of which direction/variant ⇒ a
 /// duplicate.
-fn is_translated(g: &Graph, rule: &DirectedRule, refs: &[GhostId]) -> bool {
+fn is_translated(
+    g: &Graph,
+    rule: &DirectedRule,
+    refs: &[GhostId],
+    names: &mut RuleNames<'_>,
+) -> bool {
     !rule.corr_recognition.is_empty()
         && rule
             .corr_recognition
             .iter()
-            .all(|(typ, pos, endpoint_typ)| anchor_translated(g, typ, endpoint_typ, &refs[*pos]))
+            .enumerate()
+            .all(|(ix, (typ, pos, endpoint_typ))| {
+                anchor_translated(g, names, ix, typ, endpoint_typ, &refs[*pos])
+            })
 }
 
 /// What the graph holds of a rule's creation plan for one match.
@@ -469,7 +488,13 @@ enum Planned {
 /// The duplicate check asks whether everything the plan would create
 /// already exists, matchable (ids are purely derivable). After a
 /// tombstone `ids` is incomplete.
-fn plan_of(g: &Graph, rule: &DirectedRule, refs: &[GhostId], ids: &mut Vec<GhostId>) -> Planned {
+fn plan_of(
+    g: &Graph,
+    rule: &DirectedRule,
+    refs: &[GhostId],
+    ids: &mut Vec<GhostId>,
+    names: &mut RuleNames<'_>,
+) -> Planned {
     ids.clear();
     let mut all_alive = true;
     for cn in &rule.create_nodes {
@@ -480,7 +505,7 @@ fn plan_of(g: &Graph, rule: &DirectedRule, refs: &[GhostId], ids: &mut Vec<Ghost
         let id = if cn.corr_full_match {
             crate::graph::preview_corr_id(&parent, &cn.typ, refs)
         } else if let Some((anchor, ref attr, ref t)) = cn.derived_dyn {
-            match g.child_leaf_of_type(&refs[anchor], attr) {
+            match names.child_leaf(g, ids.len(), &refs[anchor], attr) {
                 // apply-if-present: without a source nothing would be
                 // created.
                 None => {
@@ -564,6 +589,7 @@ impl<'r> Engine<'r> {
             walk: anchor::Walk::default(),
             scratch: Default::default(),
             ids: Vec::new(),
+            names: Default::default(),
         }
     }
 
@@ -1503,13 +1529,14 @@ impl<'r> Engine<'r> {
             // this type with a MATCHABLE counterpart — the element is
             // translated, regardless of which direction/variant ⇒ a
             // duplicate.
-            if is_translated(g, rule, &refs) {
+            let mut names = self.names.for_step(g, self.rules, rule_ix);
+            if is_translated(g, rule, &refs, &mut names) {
                 // Duplicate: nothing new — note it for the verdict.
                 self.applied.insert((rule_ix, refs));
                 return Some(false);
             }
             let mut ids = std::mem::take(&mut self.ids);
-            match plan_of(g, rule, &refs, &mut ids) {
+            match plan_of(g, rule, &refs, &mut ids, &mut names) {
                 Planned::Exists => {
                     // Duplicate as well: everything the plan would
                     // create is there.
@@ -1528,7 +1555,8 @@ impl<'r> Engine<'r> {
                 Planned::Missing => {}
             }
             trace!(steps_applied);
-            let (created, created_edges) = apply_creation_at(g, rule, &refs, Some(&ids));
+            let (created, created_edges) =
+                apply_creation_at(g, rule, &refs, Some(&ids), &mut names);
             self.ids = ids;
             let eix = self.cascade.len() as u32;
             // Provenance, product side: every node this entry built

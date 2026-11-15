@@ -13,7 +13,18 @@
 use crate::ident::{GhostId, Status};
 
 use crate::engine::matcher::{Bindings, Pattern};
-use crate::graph::{Graph, PlanTransform};
+use crate::graph::{Graph, PlanTransform, TypeId};
+
+// The names a rule's plan refers to and what they resolve to in a
+// graph: the types `Names` (one per engine), `RuleNames` (one rule of
+// it, for a step) and `OwnNames` (one rule outside an engine). Two
+// implementations of one interface: without `opt_g` every use resolves
+// the name, with it the id is kept after the first use.
+// Included, not modules of their own, like the stores of the graph.
+#[cfg(not(feature = "opt_g"))]
+include!("plan/names_plain.rs");
+#[cfg(feature = "opt_g")]
+include!("plan/names_kept.rs");
 
 // ── Spec (JSON) ────────────────────────────────────────────────────────────
 
@@ -131,18 +142,20 @@ pub fn apply_creation(
     rule: &DirectedRule,
     bindings: &Bindings,
 ) -> (Vec<GhostId>, Vec<GhostId>) {
-    apply_creation_at(g, rule, bindings, None)
+    apply_creation_at(g, rule, bindings, None, &mut OwnNames::of(rule).names())
 }
 
 /// [`apply_creation`], optionally with the identities of the plan's
 /// nodes already derived (`ids`, plan-indexed, as the engine derives
 /// them for its checks before it applies). An entry for a dynamic leaf
-/// without a source is not read.
+/// without a source is not read. `names`: the names of `rule`
+/// ([`RuleNames`]).
 pub(crate) fn apply_creation_at(
     g: &mut Graph,
     rule: &DirectedRule,
     bindings: &[GhostId],
     ids: Option<&[GhostId]>,
+    names: &mut RuleNames<'_>,
 ) -> (Vec<GhostId>, Vec<GhostId>) {
     // Plan-indexed; None = a dynamic leaf without a source (dropped).
     let mut slots: Vec<Option<GhostId>> = Vec::with_capacity(rule.create_nodes.len());
@@ -170,14 +183,15 @@ pub(crate) fn apply_creation_at(
                         ids[plan_ix],
                         crate::graph::preview_corr_id(&anchor, &cn.typ, bindings)
                     );
-                    g.add_corr_at(ids[plan_ix], &cn.typ)
+                    names.add_corr(g, plan_ix, ids[plan_ix], &cn.typ)
                 }
                 None => g.add_corr(&anchor, &cn.typ, bindings),
             })
         } else if let Some((anchor, ref attr, ref t)) = cn.derived_dyn {
-            g.child_leaf_of_type(&bindings[anchor], attr).map(|src| {
+            let source = names.child_leaf(g, plan_ix, &bindings[anchor], attr);
+            source.map(|src| {
                 let leaf = match ids {
-                    Some(ids) => g.add_derived_leaf_at(ids[plan_ix], &cn.typ, src, t),
+                    Some(ids) => names.add_derived_leaf(g, plan_ix, ids[plan_ix], &cn.typ, src, t),
                     None => g.add_derived_leaf(&parent, &cn.typ, src, t),
                 };
                 // Die Attribut-Korrespondenz des dynamischen Falls.
@@ -185,7 +199,7 @@ pub(crate) fn apply_creation_at(
                 // auch keine Korrespondenz -- apply-if-present gilt
                 // fuer beide.
                 if let Some(ct) = &cn.attr_corr {
-                    let ac = g.add_corr(&src, &format!("{ct}_{}", cn.typ), bindings);
+                    let ac = names.add_attr_corr(g, plan_ix, &src, ct, &cn.typ, bindings);
                     g.mark_corr(&ac);
                     dyn_corrs.push((ac, src, leaf));
                 }
@@ -193,11 +207,13 @@ pub(crate) fn apply_creation_at(
             })
         } else {
             Some(match (ids, &cn.konst, &cn.derived) {
-                (Some(ids), Some(v), _) => g.add_konst_leaf_at(ids[plan_ix], &cn.typ, v),
-                (Some(ids), None, Some((in_leaf, t))) => {
-                    g.add_derived_leaf_at(ids[plan_ix], &cn.typ, bindings[*in_leaf], t)
+                (Some(ids), Some(v), _) => {
+                    names.add_konst_leaf(g, plan_ix, ids[plan_ix], &cn.typ, v)
                 }
-                (Some(ids), None, None) => g.add_ghost_at(ids[plan_ix], &cn.typ),
+                (Some(ids), None, Some((in_leaf, t))) => {
+                    names.add_derived_leaf(g, plan_ix, ids[plan_ix], &cn.typ, bindings[*in_leaf], t)
+                }
+                (Some(ids), None, None) => names.add_ghost(g, plan_ix, ids[plan_ix], &cn.typ),
                 (None, Some(v), _) => {
                     g.add_konst_leaf(&parent, &cn.typ, &rule.name, plan_ix as u32, v)
                 }
@@ -465,5 +481,93 @@ mod tests {
             1,
             "Gleichheit gegen das Konstanten-Blatt greift"
         );
+    }
+
+    /// An engine that goes on with another graph names the types of
+    /// its plans in that graph's tables. The copy is taken before the
+    /// first step, where the correspondence type is not interned yet,
+    /// and gets another type first: the number the correspondence type
+    /// has in the original belongs to that other type in the copy.
+    #[test]
+    fn a_plan_names_its_types_in_the_graph_at_hand() {
+        let (mut a, vs) = seed(2);
+        let rules = load(serde_json::json!([father_rule()]), &mut a);
+        assert!(
+            a.types.lookup("PersonCorr").is_none(),
+            "the correspondence type is interned by the first step"
+        );
+        let mut b = a.clone();
+        let zebra = b.types.intern("Zebra");
+
+        let mut e = Engine::new(&rules);
+        e.seed(&a, &vs);
+        assert_eq!(e.step(&mut a, &vs), Some(true));
+        assert_eq!(a.types.lookup("PersonCorr"), Some(zebra), "same number");
+
+        // The rest of the cascade, in the copy.
+        while e.step(&mut b, &vs).is_some() {}
+        let corr = b.types.lookup("PersonCorr").expect("created in the copy");
+        assert_ne!(corr, zebra);
+        assert!(b.type_count(corr) >= 1);
+        assert_eq!(b.type_count(zebra), 0, "no node is a Zebra");
+    }
+
+    /// The ids kept for the names of a rule belong to one set of
+    /// tables and one rule slice; for others they are dropped.
+    #[cfg(feature = "opt_g")]
+    #[test]
+    fn kept_ids_are_dropped_for_other_tables_and_other_rules() {
+        let (mut a, _vs) = seed(1);
+        let rules = load(serde_json::json!([father_rule()]), &mut a);
+        let id = |n: u8| GhostId::from_raw([n; 32]);
+        let mut names = Names::default();
+
+        // A copy before the type is interned, with another type at
+        // the number it gets in the original.
+        let mut b = a.clone();
+        assert_ne!(
+            a.types.uid.get(),
+            b.types.uid.get(),
+            "a copy is another table"
+        );
+        let other = b.types.intern("Other");
+
+        // Rule 1 (the backward plan), plan position 1.
+        let place = |names: &Names| names.create[names.starts[1].0 as usize + 1].typ;
+        names
+            .for_step(&a, &rules, 1)
+            .add_ghost(&mut a, 1, id(1), "Fresh");
+        let in_a = a.types.lookup("Fresh").unwrap();
+        assert_eq!(in_a, other, "same number");
+        assert_eq!(a.node(&id(1)).unwrap().typ, in_a);
+        // Kept: the second node of the same plan position.
+        names
+            .for_step(&a, &rules, 1)
+            .add_ghost(&mut a, 1, id(2), "Fresh");
+        assert_eq!(a.node(&id(2)).unwrap().typ, in_a);
+        assert_eq!(place(&names), Some(in_a));
+        // The places of the other rule are its own.
+        assert_eq!(names.create[names.starts[0].0 as usize + 1].typ, None);
+
+        // The copy: resolved again, in its tables.
+        names
+            .for_step(&b, &rules, 1)
+            .add_ghost(&mut b, 1, id(1), "Fresh");
+        let in_b = b.types.lookup("Fresh").unwrap();
+        assert_ne!(in_b, in_a);
+        assert_eq!(b.node(&id(1)).unwrap().typ, in_b);
+        assert_eq!(b.types.name(b.node(&id(1)).unwrap().typ), "Fresh");
+
+        // And the original again.
+        names
+            .for_step(&a, &rules, 1)
+            .add_ghost(&mut a, 1, id(3), "Fresh");
+        assert_eq!(a.node(&id(3)).unwrap().typ, in_a);
+
+        // Another rule slice: nothing of the first is kept.
+        let copy = rules.clone();
+        names.for_step(&a, &copy, 1);
+        assert_eq!(names.rules, (copy.as_ptr() as usize, copy.len()));
+        assert_eq!(place(&names), None);
     }
 }
