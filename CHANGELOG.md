@@ -173,20 +173,25 @@ anchor index alone, "now" all of the above. In millions of instructions:
 | `f2p/add/f20000` | 14 855 | 13 404 | 3 515 |
 | `f2p/delta-add/f20000/d1000` | 610 | 565 | 197 |
 
-Time, where it was measured against 2.0.2: the forward runs of the 34
-dry-cleaner fixtures (17 rule sets, 4 006 rules in sum, engine and
-rules new per run) took 130 ms instead of 370 ms (minimum of five,
-measured four commits before the last).
+Time against 2.0.2, both states measured in alternation (user CPU of
+the measured section, minimum per state): `langpack/add/k700/n2000`
+20 899 ms → 37.9 ms, `langpack/backward/k700/n2000` 9 503 ms → 26.4 ms,
+`langpack/seed/k700/n2000` 12 146 ms → 31.7 ms, `f2p/add/f20000`
+3 014 ms → 1 135 ms, `f2p/batch/f20000` 2 110 ms → 1 085 ms. In `f2p`
+the gain in time is smaller than the gain in instructions: the cell
+retires 0.68 instructions per cycle (2.0.2: 1.17), it waits for memory.
+The forward runs of the 34 dry-cleaner fixtures (17 rule sets, 4 006
+rules in sum, engine and rules new per run) took 131 ms instead of
+377 ms (minimum of five).
 
 Peak memory at the end of the measured section of `f2p/add/f20000`
-(580 006 nodes): 745 MiB. 2.0.2 was measured as the peak of the whole
-process, which includes the fingerprint: 1 514 MB.
+(580 006 nodes): 745 MiB, with 2.0.2 and the same suite 1 372 MiB.
 
 Graph and cascade of every cell are those of 2.0.2 where 2.0.2 was run
-(six of the cells above and thirteen cells of the sizes `k50/n2000` and
-`f2000`, among them the cells that change and delete), and equal
-between all states otherwise. The same fingerprints come out on a
-big-endian target (s390x under qemu).
+(seven of the cells of these sizes and thirteen cells of the sizes
+`k50/n2000` and `f2000`, among them the cells that change and delete),
+and equal between all states otherwise. The same fingerprints come out
+on a big-endian target (s390x under qemu).
 
 `langpack` is a synthetic rule set in the shape of a language pack
 (1 401 rules over one structural type per side), not the Java pack

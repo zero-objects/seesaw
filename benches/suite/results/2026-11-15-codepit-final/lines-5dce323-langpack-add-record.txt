@@ -1,0 +1,40 @@
+== langpack/add/k700/n20000, instructions:u, self of /Engine::record/: 16.39 % of the section (140 of 854 samples)
+-- innermost inlined function, % of section
+  5.97	seesaw_tgg::engine::Ixs::push
+  3.28	<T as core::array::equality::SpecArrayEq<U,_>>::spec_eq
+  2.46	core::ptr::write
+  2.11	core::core_arch::x86::sse2::_mm_movemask_epi8
+  0.94	seesaw_tgg::engine::Engine::record
+  0.70	core::ptr::copy_nonoverlapping
+  0.23	alloc::vec::Vec<T,A>::push_mut
+  0.12	<hashbrown::control::bitmask::BitMask>::lowest_set_bit
+  0.12	<hashbrown::control::tag::Tag>::full
+  0.12	<hashbrown::raw::RawTableInner>::find_inner
+  0.12	<hashbrown::raw::RawTableInner>::probe_seq
+  0.12	core::intrinsics::unlikely
+  0.12	core::sync::atomic::atomic_add
+-- source line, % of section
+  5.85	src/engine/mod.rs:192
+  3.28	src/array/equality.rs:157
+  2.46	src/ptr/mod.rs:1917
+  2.11	src/x86/sse2.rs:1563
+  0.82	src/engine/mod.rs:664
+  0.70	src/ptr/mod.rs:547
+  0.12	src/control/bitmask.rs:50
+  0.12	src/control/tag.rs:48
+  0.12	src/engine/mod.rs:194
+  0.12	src/engine/mod.rs:633
+  0.12	src/intrinsics/mod.rs:457
+  0.12	src/raw/mod.rs:2073
+  0.12	src/raw/mod.rs:2492
+  0.12	src/sync/atomic.rs:3923
+  0.12	src/vec/mod.rs:1029
+  0.12	src/vec/mod.rs:1034
+-- source line of the function it was inlined into, % of section
+  9.13	src/engine/mod.rs:676
+  4.92	src/engine/mod.rs:645
+  1.05	src/engine/mod.rs:682
+  0.82	src/engine/mod.rs:664
+  0.23	src/engine/mod.rs:681
+  0.12	src/engine/mod.rs:633
+  0.12	src/engine/mod.rs:680

@@ -1,0 +1,46 @@
+== langpack/add/k700/n20000, instructions:u, self of /step_with_limit/: 9.42 % of the section (80 of 849 samples)
+-- innermost inlined function, % of section
+  2.24	seesaw_tgg::engine::Ixs::push
+  1.30	<alloc::sync::Arc<T,A> as core::clone::Clone>::clone
+  1.18	core::ptr::write
+  1.06	<T as core::array::equality::SpecArrayEq<U,_>>::spec_eq
+  0.82	core::core_arch::x86::sse2::_mm_movemask_epi8
+  0.71	seesaw_tgg::engine::plan_of
+  0.59	seesaw_tgg::engine::Engine::step_with_limit::{{closure}}
+  0.47	<hashbrown::raw::RawTableInner>::probe_seq
+  0.12	<core::slice::iter::Iter<T> as core::iter::traits::iterator::Iterator>::next
+  0.12	<hashbrown::control::bitmask::BitMask>::lowest_set_bit
+  0.12	<seesaw_tgg::ident::GhostId as core::hash::Hash>::hash
+  0.12	alloc::collections::btree::map::entry::OccupiedEntry<K,V,A>::remove_entry
+  0.12	alloc::collections::btree::node::NodeRef<BorrowType,K,V,alloc::collections::btree::node::m
+  0.12	alloc::vec::Vec<T,A>::as_mut_slice
+  0.12	core::ptr::mut_ptr::::sub
+  0.12	hashbrown::rustc_entry::>::rustc_entry
+-- source line, % of section
+  2.12	src/engine/mod.rs:192
+  1.18	src/ptr/mod.rs:1917
+  1.18	src/sync.rs:2405
+  1.06	src/array/equality.rs:157
+  0.82	src/x86/sse2.rs:1563
+  0.59	src/engine/mod.rs:1494
+  0.47	src/engine/mod.rs:473
+  0.47	src/raw/mod.rs:2492
+  0.24	src/engine/mod.rs:477
+  0.12	src/collections/btree/map/entry.rs:477
+  0.12	src/collections/btree/node.rs:731
+  0.12	src/control/bitmask.rs:50
+  0.12	src/engine/mod.rs:1440
+  0.12	src/engine/mod.rs:196
+  0.12	src/ident.rs:79
+  0.12	src/ptr/mut_ptr.rs:1072
+-- source line of the function it was inlined into, % of section
+  4.24	src/engine/mod.rs:1535
+  1.53	src/engine/mod.rs:1553
+  1.18	src/engine/mod.rs:1494
+  1.06	src/engine/mod.rs:1509
+  0.59	src/engine/mod.rs:1482
+  0.24	src/engine/mod.rs:1444
+  0.24	src/engine/mod.rs:1543
+  0.12	src/engine/mod.rs:1440
+  0.12	src/engine/mod.rs:1550
+  0.12	src/engine/mod.rs:1557

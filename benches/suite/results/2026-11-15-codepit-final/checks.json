@@ -1,0 +1,67 @@
+[
+ {
+  "name": "<code>cargo fmt --check</code>, <code>cargo clippy --all-targets -- -D warnings</code>",
+  "at": "5dce323",
+  "result": "rc 0"
+ },
+ {
+  "name": "<code>cargo test</code>",
+  "at": "5dce323",
+  "result": "188 bestanden, 0 fehlgeschlagen, 7 ignoriert (18 Gruppen)"
+ },
+ {
+  "name": "<code>cargo test --features perf_trace</code>",
+  "at": "5dce323",
+  "result": "188 bestanden, 0 fehlgeschlagen, 7 ignoriert"
+ },
+ {
+  "name": "<code>RUSTFLAGS=\"--cfg seesaw_checks\" cargo test</code> (Integrationstests unter den Prüfungen des Index)",
+  "at": "5dce323",
+  "result": "188 bestanden, 0 fehlgeschlagen, 7 ignoriert"
+ },
+ {
+  "name": "Schritte, angewandte Schritte, Knotenzahl und Fingerprint gegen 2.0.2, gleiche Suite",
+  "at": "5dce323",
+  "result": "gleich in 20 Zellen: sieben der Größen <code>k700/n2000</code> und <code>f20000</code>, dreizehn der Größen <code>k50/n2000</code> und <code>f2000</code>, darunter Ändern und Löschen"
+ },
+ {
+  "name": "Differenztest <code>difftest/</code>: Zufallsszenarien durch 2.0.2 aus der Registry und durch den Endstand, Vergleich von Graph, Kaskade, <code>step</code>-Folge und <code>run</code>-Urteil",
+  "at": "5dce323",
+  "result": "alle sieben Eigenschaften bestanden: sechs mit je 1 500 Fällen, <code>family_agrees</code> mit 400. Die neue Operation <code>DeleteProductEdge</code> ist enthalten"
+ },
+ {
+  "name": "<code>cargo +1.88.0 check --lib --target wasm32-unknown-unknown</code>",
+  "at": "5dce323",
+  "result": "rc 0"
+ },
+ {
+  "name": "Rust 1.88 mit <code>-D warnings</code>: <code>cargo +1.88.0 test</code>, <code>clippy --all-targets</code>",
+  "at": "5dce323",
+  "result": "188 bestanden, 0 fehlgeschlagen, 7 ignoriert, clippy rc 0"
+ },
+ {
+  "name": "<code>cargo doc --no-deps</code> mit <code>-D warnings</code>, <code>cargo publish --dry-run</code>",
+  "at": "5dce323",
+  "result": "rc 0. 88 Dateien gepackt, nichts hochgeladen"
+ },
+ {
+  "name": "Java-Tests (<code>mvn test</code> in <code>java/</code>)",
+  "at": "5dce323",
+  "result": "129 gelaufen, 0 Fehlschläge, 0 Fehler, 3 übersprungen"
+ },
+ {
+  "name": "s390x unter qemu (Big Endian)",
+  "at": "5dce323",
+  "result": "188 bestanden, 0 fehlgeschlagen, 7 ignoriert. Sechs Fingerprints gleich x86_64"
+ },
+ {
+  "name": "Konsumenten: Dev-Kopie <code>pilot/crates/seesaw-core</code> mit dry-cleaner-Fixtures, dry-cleaner-Crates, <code>gate_sample</code>",
+  "at": "5dce323",
+  "result": "Dev-Kopie: 190 bestanden, 0 fehlgeschlagen, 9 ignoriert (mit 2.0.2: 175, der Rest sind Tests der Engine), Roundtrip 2 bestanden. dry-cleaner: neun Schritte (hub-ir, tgg-seeder, pipeline-forward in drei Teilen, render, recipe, chaos-generator, ffi) und <code>gate_sample</code> je mit den Zahlen von 2.0.2, 0 fehlgeschlagen"
+ },
+ {
+  "name": "Tests von zerodds-pde gegen <code>perf/main</code>",
+  "at": "–",
+  "result": "nicht gelaufen. pde baut gegen einen Abzug von <code>perf/expand-at-index</code> in <code>patches/seesaw-tgg</code>, der Arbeitsbaum dort hat 420 offene Änderungen einer anderen Sitzung"
+ }
+]

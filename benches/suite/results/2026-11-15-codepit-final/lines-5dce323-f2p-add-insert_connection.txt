@@ -1,0 +1,23 @@
+== f2p/add/f20000, instructions:u, self of /insert_connection/: 8.97 % of the section (227 of 2531 samples)
+-- innermost inlined function, % of section
+  4.27	core::core_arch::x86::sse2::_mm_movemask_epi8
+  3.24	core::ptr::write
+  1.19	<T as core::array::equality::SpecArrayEq<U,_>>::spec_eq
+  0.08	<hashbrown::control::bitmask::BitMask>::lowest_set_bit
+  0.08	seesaw_tgg::graph::Graph::insert_connection
+  0.04	<hashbrown::raw::RawTableInner>::find_inner
+  0.04	<hashbrown::raw::RawTableInner>::probe_seq
+  0.04	core::intrinsics::unlikely
+-- source line, % of section
+  4.27	src/x86/sse2.rs:1563
+  3.24	src/ptr/mod.rs:1917
+  1.19	src/array/equality.rs:157
+  0.08	src/control/bitmask.rs:50
+  0.08	src/graph.rs:870
+  0.04	src/intrinsics/mod.rs:457
+  0.04	src/raw/mod.rs:2073
+  0.04	src/raw/mod.rs:2492
+-- source line of the function it was inlined into, % of section
+  5.61	src/graph.rs:883
+  3.28	src/graph.rs:885
+  0.08	src/graph.rs:870

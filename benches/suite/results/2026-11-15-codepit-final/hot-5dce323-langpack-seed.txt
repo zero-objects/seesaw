@@ -1,0 +1,55 @@
+== langpack/seed/k700/n2000, instructions:u: 145 of 639 samples in the section
+-- inclusive, % of section
+ 64.83	seesaw_tgg::engine::Engine::step_with_limit
+ 40.00	seesaw_tgg::engine::Engine::expand_at
+ 35.17	seesaw_tgg::engine::Engine::seed
+ 30.34	seesaw_tgg::engine::Engine::take_index
+ 30.34	seesaw_tgg::engine::anchor::AnchorIndex::build
+ 19.31	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+ 14.48	seesaw_tgg::engine::Engine::record
+ 12.41	seesaw_tgg::plan::apply_creation_at
+ 11.72	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h7c0465d8d7eb97aeE
+  9.66	seesaw_tgg::graph::Graph::connect_reporting
+  8.28	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  8.28	seesaw_tgg::engine::matcher::find_matches_planned
+  7.59	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  6.90	hashbrown::map::HashMap<K,V,S,A>::insert
+  6.21	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  4.14	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk28_$u7b$$u7b$closure$u7d$$u7d$17h30a4399e5fa48d17E
+  3.45	[unknown]
+  3.45	malloc
+  3.45	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closur
+  3.45	seesaw_tgg::graph::ident::connection
+  2.76	__memcmp_avx2_movbe
+  2.76	__memmove_avx_unaligned_erms
+  2.76	_int_malloc
+  2.76	alloc::raw_vec::RawVec<T,A>::grow_one
+  2.76	blake3::ChunkState::update
+  2.76	blake3::Hasher::update
+-- self, % of section
+ 22.07	seesaw_tgg::engine::anchor::AnchorIndex::build
+  8.28	seesaw_tgg::engine::Engine::record
+  7.59	seesaw_tgg::engine::Engine::step_with_limit
+  5.52	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h7c0465d8d7eb97aeE
+  4.14	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  3.45	[unknown]
+  3.45	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  3.45	hashbrown::map::HashMap<K,V,S,A>::insert
+  3.45	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  3.45	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  3.45	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closur
+  2.76	__memcmp_avx2_movbe
+  2.76	_int_malloc
+  2.07	__memmove_avx_unaligned_erms
+  2.07	seesaw_tgg::graph::Graph::connect_reporting
+  2.07	seesaw_tgg::graph::Graph::connection_id_typed
+  2.07	seesaw_tgg::graph::Parts::of_type
+  2.07	seesaw_tgg::graph::ident::connection
+  1.38	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  1.38	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk28_$u7b$$u7b$closure$u7d$$u7d$17h30a4399e5fa48d17E
+  1.38	_ZN10seesaw_tgg6engine7matcher10build_plan17h59dd8d460f9d2125E
+  1.38	blake3::ChunkState::update
+  0.69	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter::SpecFromIter<T,I>>::from_iter
+  0.69	<core::ops::try_trait::Wrapped<T,A,F> as core::ops::function::FnMut<(A,)>>::call_mut
+  0.69	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_str
+  0.69	_RNvCsfLfy6EI15iL_7___rustc35___rust_no_alloc_shim_is_unstable_v2

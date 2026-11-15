@@ -1,0 +1,52 @@
+== f2p/add/f20000, cache-misses:u, self of /step_with_limit/: 14.17 % of the section (521 of 3677 samples)
+-- innermost inlined function, % of section
+  3.83	<T as core::array::equality::SpecArrayEq<U,_>>::spec_eq
+  3.15	core::core_arch::x86::sse2::_mm_movemask_epi8
+  2.86	<alloc::sync::Arc<T,A> as core::clone::Clone>::clone
+  1.41	seesaw_tgg::engine::Ixs::push
+  0.54	core::tuple::::eq
+  0.41	core::ptr::write
+  0.33	seesaw_tgg::engine::Engine::step_with_limit
+  0.27	<alloc::sync::Arc<T,A> as core::ops::drop::Drop>::drop
+  0.24	<hashbrown::raw::RawTableInner>::probe_seq
+  0.16	alloc::collections::btree::node::NodeRef<BorrowType,K,V,alloc::collections::btree::node::m
+  0.14	<core::slice::iter::Iter<T> as core::iter::traits::iterator::Iterator>::any
+  0.08	<seesaw_tgg::ident::GhostId as core::hash::Hash>::hash
+  0.08	alloc::collections::btree::map::entry::OccupiedEntry<K,V,A>::remove_entry
+  0.05	<A as core::slice::cmp::SlicePartialEq<B>>::equal_same_length
+  0.05	<hashbrown::control::bitmask::BitMask>::lowest_set_bit
+  0.05	<hashbrown::control::tag::Tag>::full
+-- source line, % of section
+  3.83	src/array/equality.rs:157
+  3.15	src/x86/sse2.rs:1563
+  2.86	src/sync.rs:2405
+  1.41	src/engine/mod.rs:192
+  0.54	src/tuple.rs:31
+  0.41	src/ptr/mod.rs:1917
+  0.27	src/sync.rs:2811
+  0.24	src/raw/mod.rs:2492
+  0.16	src/collections/btree/node.rs:731
+  0.11	src/slice/iter/macros.rs:332
+  0.08	src/collections/btree/map/entry.rs:477
+  0.08	src/engine/mod.rs:1482
+  0.08	src/engine/mod.rs:1554
+  0.08	src/ident.rs:79
+  0.05	src/control/bitmask.rs:50
+  0.05	src/control/tag.rs:48
+-- source line of the function it was inlined into, % of section
+  4.11	src/engine/mod.rs:1494
+  2.69	src/engine/mod.rs:1535
+  2.61	src/engine/mod.rs:1509
+  2.42	src/engine/mod.rs:1482
+  1.39	src/engine/mod.rs:1553
+  0.30	src/engine/mod.rs:1444
+  0.27	src/engine/mod.rs:1555
+  0.08	src/engine/mod.rs:1554
+  0.05	src/engine/mod.rs:1528
+  0.03	src/engine/mod.rs:1432
+  0.03	src/engine/mod.rs:1440
+  0.03	src/engine/mod.rs:1481
+  0.03	src/engine/mod.rs:1503
+  0.03	src/engine/mod.rs:1534
+  0.03	src/engine/mod.rs:1543
+  0.03	src/engine/mod.rs:1546

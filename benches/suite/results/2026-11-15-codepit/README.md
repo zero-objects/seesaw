@@ -51,11 +51,7 @@ Die erste Spalte jeder Zeile nennt den Commit des Engine-Codes. Die Suite
 
 ## Nicht in dieser Reihe
 
-- Der Differenztest (`difftest/`) lief zuletzt auf e9e69cd: sechs von
-  sieben Eigenschaften mit je 1 500 Fällen bestanden, `family_agrees` lief
-  dabei in die Zeitgrenze (mit 400 Fällen auf 62310fb bestanden). Auf den
-  Ständen danach und mit der Operation `DeleteProductEdge` ist er noch
-  nicht gelaufen.
-- Rust 1.88 mit `-D warnings`, `--features perf_trace`, `cargo doc`,
-  `cargo publish --dry-run` und die Java-Tests liefen zuletzt auf 32f0aee.
-- Zeit je Zelle am Endstand ist nicht gemessen.
+Der Differenztest mit `DeleteProductEdge`, Rust 1.88 mit `-D warnings`,
+`--features perf_trace`, `cargo doc`, `cargo publish --dry-run`, die
+Java-Tests, die Zeit je Zelle und die Konsumenten auf dem Endstand
+stehen in `../2026-11-15-codepit-final/`.

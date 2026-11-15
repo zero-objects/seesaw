@@ -1,0 +1,46 @@
+== f2p/add/f20000, cache-misses:u, self of /Engine::record/: 13.76 % of the section (476 of 3459 samples)
+-- innermost inlined function, % of section
+  4.97	seesaw_tgg::engine::Ixs::push
+  4.51	core::ptr::write
+  1.99	core::core_arch::x86::sse2::_mm_movemask_epi8
+  0.93	<T as core::array::equality::SpecArrayEq<U,_>>::spec_eq
+  0.32	hashbrown::rustc_entry::>::rustc_entry
+  0.23	<hashbrown::control::bitmask::BitMask>::lowest_set_bit
+  0.12	seesaw_tgg::engine::Engine::record
+  0.09	<hashbrown::raw::RawTableInner>::probe_seq
+  0.06	<hashbrown::raw::RawTableInner>::find_inner
+  0.06	core::intrinsics::unlikely
+  0.06	core::ptr::mut_ptr::::sub
+  0.06	hashbrown::raw::RawTable<T,A>::insert_no_grow
+  0.06	hashbrown::raw::RawTable<T,A>::reserve
+  0.06	std::collections::hash::map::map_entry
+  0.03	<alloc::sync::Arc<T,A> as core::clone::Clone>::clone
+  0.03	<hashbrown::control::tag::Tag>::full
+-- source line, % of section
+  4.91	src/engine/mod.rs:192
+  4.51	src/ptr/mod.rs:1917
+  1.99	src/x86/sse2.rs:1563
+  0.93	src/array/equality.rs:157
+  0.32	src/rustc_entry.rs:47
+  0.23	src/control/bitmask.rs:50
+  0.09	src/raw/mod.rs:2492
+  0.06	src/collections/hash/map.rs:2981
+  0.06	src/engine/mod.rs:196
+  0.06	src/intrinsics/mod.rs:457
+  0.06	src/ptr/mut_ptr.rs:1072
+  0.06	src/raw/mod.rs:1123
+  0.06	src/raw/mod.rs:956
+  0.06	src/slice/iter/macros.rs:?
+  0.03	src/alloc.rs:95
+  0.03	src/control/tag.rs:48
+-- source line of the function it was inlined into, % of section
+  5.90	src/engine/mod.rs:676
+  4.91	src/engine/mod.rs:645
+  2.23	src/engine/mod.rs:682
+  0.43	src/engine/mod.rs:681
+  0.09	src/engine/mod.rs:636
+  0.06	src/engine/mod.rs:635
+  0.06	src/slice/iter/macros.rs:?
+  0.03	src/engine/mod.rs:633
+  0.03	src/engine/mod.rs:675
+  0.03	src/engine/mod.rs:?
