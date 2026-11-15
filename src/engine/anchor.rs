@@ -38,6 +38,10 @@ use crate::plan::DirectedRule;
 use crate::rules::predicate::Predicate;
 use crate::values::{self, ByValue, Numbers, NumbersMut, Seen};
 
+mod own;
+
+pub(crate) use own::Own;
+
 /// Longest path read from a position (links). Paths are cut there; a
 /// cut path is still a necessary condition.
 const MAX_DEPTH: usize = 6;
@@ -53,34 +57,40 @@ const VISITED_KEEP: usize = 1024;
 /// Digest of what the index reads from a rule set: per rule the pattern
 /// nodes (type, value predicate) and the links.
 fn shape(rules: &[DirectedRule]) -> u64 {
-    use std::hash::{Hash, Hasher};
+    use std::hash::Hasher;
     let mut h = crate::hash::FxHasher::default();
-    rules.len().hash(&mut h);
+    feed(rules, &mut h);
+    h.finish()
+}
+
+/// Feeds a hasher what the index reads from a rule set ([`shape`]).
+fn feed<H: std::hash::Hasher>(rules: &[DirectedRule], h: &mut H) {
+    use std::hash::Hash;
+    rules.len().hash(h);
     for rule in rules {
         let pattern = &rule.pattern;
-        pattern.nodes.len().hash(&mut h);
+        pattern.nodes.len().hash(h);
         for n in &pattern.nodes {
-            n.typ.hash(&mut h);
+            n.typ.hash(h);
             match &n.value {
-                None => 0u8.hash(&mut h),
-                Some(Predicate::Exists) => 1u8.hash(&mut h),
+                None => 0u8.hash(h),
+                Some(Predicate::Exists) => 1u8.hash(h),
                 // The length first: the hasher pads the last word of a
                 // text with zeros, so a text and the same text with
                 // trailing NUL characters would hash alike.
-                Some(Predicate::Equals(v)) => (2u8, v.len(), v).hash(&mut h),
-                Some(Predicate::Prefix(p)) => (3u8, p.len(), p).hash(&mut h),
-                Some(Predicate::Regex(r)) => (4u8, r.as_str().len(), r.as_str()).hash(&mut h),
+                Some(Predicate::Equals(v)) => (2u8, v.len(), v).hash(h),
+                Some(Predicate::Prefix(p)) => (3u8, p.len(), p).hash(h),
+                Some(Predicate::Regex(r)) => (4u8, r.as_str().len(), r.as_str()).hash(h),
                 Some(Predicate::NumericRange { min, max }) => {
-                    (5u8, min.to_bits(), max.to_bits()).hash(&mut h);
+                    (5u8, min.to_bits(), max.to_bits()).hash(h);
                 }
             }
         }
-        pattern.links.len().hash(&mut h);
+        pattern.links.len().hash(h);
         for l in &pattern.links {
-            (l.from, l.to, l.kind as u8).hash(&mut h);
+            (l.from, l.to, l.kind as u8).hash(h);
         }
     }
-    h.finish()
 }
 
 /// Children of a prefix-tree node that share direction and type: one

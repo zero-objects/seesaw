@@ -269,6 +269,65 @@ pub fn add(spec: Spec) -> Outcome {
     outcome(&m.g, &e, &m.vs, steps, usage)
 }
 
+/// `engines` batches one after the other in one process, each with a
+/// model, a rule set and an engine of its own: a caller that loads the
+/// rules and builds an engine per input. Models and rules are built
+/// before the measured section; the fingerprint covers all runs.
+pub fn engines(spec: Spec, engines: usize) -> Outcome {
+    let mut models = Vec::with_capacity(engines);
+    let mut rule_sets = Vec::with_capacity(engines);
+    for _ in 0..engines {
+        let mut m = Model::new(spec);
+        rule_sets.push(load(spec, &mut m.g));
+        models.push(m);
+    }
+    let mut runs: Vec<Engine<'_>> = Vec::with_capacity(engines);
+    let (steps, usage) = measure::section(|| {
+        let mut steps = 0;
+        for (m, rules) in models.iter_mut().zip(&rule_sets) {
+            let mut e = Engine::new(rules);
+            e.seed(&m.g, &m.vs);
+            steps += saturate(&mut e, &mut m.g, &m.vs);
+            runs.push(e);
+        }
+        steps
+    });
+    let mut all = String::new();
+    let (mut applied, mut nodes) = (0, 0);
+    for (m, e) in models.iter().zip(&runs) {
+        applied += e.cascade.len() as u64;
+        nodes += m.g.node_count() as u64;
+        all.push_str(&fingerprint::of(&m.g, e, &m.vs));
+    }
+    Outcome {
+        usage,
+        steps,
+        applied,
+        nodes,
+        fingerprint: fingerprint::of_text(&all),
+    }
+}
+
+/// `engines` engines one after the other, each over rules loaded anew,
+/// each with one expansion that finds nothing: what it costs an engine
+/// to come by its anchor index.
+pub fn index_only(spec: Spec, engines: usize) -> Outcome {
+    let mut g = Graph::new();
+    let vs = ValueStore::default();
+    let lone = g.add_baseline("lone", "Lone");
+    let rule_sets: Vec<Vec<DirectedRule>> = (0..engines).map(|_| load(spec, &mut g)).collect();
+    let mut runs: Vec<Engine<'_>> = Vec::with_capacity(engines);
+    let ((), usage) = measure::section(|| {
+        for rules in &rule_sets {
+            let mut e = Engine::new(rules);
+            e.elements_added(&g, &vs, &[lone]);
+            runs.push(e);
+        }
+    });
+    let e = runs.last().expect("at least one engine");
+    outcome(&g, e, &vs, 0, usage)
+}
+
 /// A synchronised model and engine, as the start of the delta cells.
 fn synchronised(spec: Spec) -> (Model, Vec<DirectedRule>) {
     let mut m = Model::new(spec);

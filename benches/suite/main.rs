@@ -96,6 +96,27 @@ fn cells() -> Vec<Cell> {
             Box::new(move || langpack::delta_delete(spec, 2000)),
         );
     }
+    for (kinds, nodes, engines) in [(700, 2_000, 10), (700, 200, 34)] {
+        let spec = Spec { kinds, nodes };
+        cell(
+            format!("langpack/engines/k{kinds}/n{nodes}/e{engines}"),
+            "batches one after the other, model, rules and engine new for each",
+            Box::new(move || langpack::engines(spec, engines)),
+        );
+    }
+    cell(
+        "langpack/index/k700/e100".to_string(),
+        "100 engines over rules loaded anew, one empty expansion each",
+        Box::new(move || {
+            langpack::index_only(
+                Spec {
+                    kinds: 700,
+                    nodes: 0,
+                },
+                100,
+            )
+        }),
+    );
     // 200 000 families (the 10^6 anchor of the report) need more than
     // 10 GB at about 2.8 KB per node and are not a cell.
     for families in [2_000, 20_000, 60_000] {

@@ -299,8 +299,9 @@ pub struct Engine<'r> {
 enum AnchorSlot<'r> {
     /// Not built yet ([`Engine::new`]: built on first use).
     Unbuilt,
-    /// Built by the engine itself.
-    Owned(Box<AnchorIndex>),
+    /// Built by the engine itself, or taken from the indices the
+    /// process keeps ([`anchor::Own`]).
+    Owned(anchor::Own),
     /// Handed in by the host ([`Engine::with_anchor_index`]), with the
     /// rule slice (address, length) it was accepted for.
     Shared(&'r AnchorIndex, (usize, usize)),
@@ -821,13 +822,13 @@ impl<'r> Engine<'r> {
         let rules = self.rules;
         let usable = match &self.anchor {
             AnchorSlot::Unbuilt => false,
-            AnchorSlot::Owned(a) => a.built_for(rules),
+            AnchorSlot::Owned(a) => a.accepts(rules),
             // Accepted for the slice the engine was created with; the
             // field `rules` is public and may have been set since.
             AnchorSlot::Shared(_, accepted) => *accepted == slice_of(rules),
         };
         if !usable {
-            self.anchor = AnchorSlot::Owned(Box::new(AnchorIndex::build(rules)));
+            self.anchor = AnchorSlot::Owned(anchor::Own::for_rules(rules));
         }
         std::mem::replace(&mut self.anchor, AnchorSlot::Unbuilt)
     }
