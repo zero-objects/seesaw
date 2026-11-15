@@ -42,6 +42,13 @@ impl AnchorIndex {
             }
             return;
         }
+        debug_assert_eq!(node.by_typ.len(), groups.len(), "groups not filed by type");
+        // Test check: the pass visits as many pairs as the ranges hold.
+        // A pair is a group and a participation of the group's type,
+        // and neither way visits one twice, so equal counts are equal
+        // sets.
+        #[cfg(any(test, seesaw_checks))]
+        let mut pairs = 0usize;
         let mut typ: Option<TypeId> = None;
         let mut of: &[(TypeId, u32)] = &[];
         for p in parts.iter() {
@@ -53,10 +60,24 @@ impl AnchorIndex {
             }
             for &(_, gi) in of {
                 let group = &groups[gi as usize];
+                debug_assert_eq!(group.typ, p.other_typ);
+                #[cfg(any(test, seesaw_checks))]
+                {
+                    pairs += 1;
+                }
                 let valued = !group.equals.is_empty() || !group.other.is_empty();
                 self.pair(g, v, group, valued, p, st, skip);
             }
         }
+        #[cfg(any(test, seesaw_checks))]
+        assert_eq!(
+            pairs,
+            groups
+                .iter()
+                .map(|group| parts.of_type(group.typ).count())
+                .sum::<usize>(),
+            "the pass over the participation list visits other pairs than the ranges"
+        );
     }
 
     /// Files the groups of every prefix-tree node by type. Called once,

@@ -937,22 +937,30 @@ pub(crate) mod tests {
     }
 
     /// Rules that hang many different types below one type: the
-    /// prefix-tree node of `Item` has one group per rule. Items with
-    /// two leaves and one item with more leaves than a pass over the
-    /// list takes (`opt_m`) give the same matches by delta, by seed
-    /// through the index and by scan.
+    /// prefix-tree node of `Item` has two groups per rule, one for the
+    /// leaf the rule asks for and one for the item it hangs under.
+    /// Items with a short participation list, one with a list long
+    /// enough to be a B-tree and still short enough for a pass over it
+    /// (`opt_m`), and one with a list beyond that give the same
+    /// matches by delta, by seed through the index and by scan.
     #[test]
     fn the_index_keeps_the_matches_under_many_groups() {
-        const KINDS: usize = 6;
+        const KINDS: usize = 8;
         const ITEMS: usize = 10;
+        // Entries of the middle list: a B-tree (more than 48), and at
+        // most eight per group of the sixteen groups.
+        const MIDDLE: usize = 60;
+        // Entries of the long list: more than eight per group.
+        const LONG: usize = 2 * KINDS * 8 + 20;
         let rules: Vec<String> = (0..KINDS)
             .map(|k| {
                 format!(
                     r#"{{"name":"R{k}","rank":1,
                     "left":{{"anchor":"item","nodes":[
                         {{"name":"item","type":"Item"}},
-                        {{"name":"attr","type":"Attr{k}","context":true}}],
-                      "links":[["item","attr"]]}},
+                        {{"name":"attr","type":"Attr{k}","context":true}},
+                        {{"name":"over","type":"Over{k}","context":true}}],
+                      "links":[["item","attr"],["over","item"]]}},
                     "right":{{"anchor":"marker","nodes":[{{"name":"marker","type":"Marker{k}"}}]}},
                     "corrs":[{{"type":"C{k}","left":"item","right":"marker","role":"establishes"}}]}}"#
                 )
@@ -966,31 +974,26 @@ pub(crate) mod tests {
             let mut g = Graph::new();
             let vs = ValueStore::default();
             let mut all = Vec::new();
-            let leaf = |g: &mut Graph, owner: GhostId, name: String, typ: String| {
-                let l = g.add_baseline(&name, &typ);
-                g.connect(owner, l, Status::Solid);
-                l
-            };
-            // One leaf a rule asks for and one no rule knows.
+            // An item of kind `k` with `others` leaves no rule knows.
+            let mut item =
+                |g: &mut Graph, all: &mut Vec<GhostId>, name: &str, k: usize, others: usize| {
+                    let item = g.add_baseline(name, "Item");
+                    let attr = g.add_baseline(&format!("{name}/a"), &format!("Attr{k}"));
+                    let over = g.add_baseline(&format!("{name}/up"), &format!("Over{k}"));
+                    g.connect(item, attr, Status::Solid);
+                    g.connect(over, item, Status::Solid);
+                    all.extend([item, attr, over]);
+                    for n in 0..others {
+                        let l = g.add_baseline(&format!("{name}/o{n}"), &format!("Other{}", n % 7));
+                        g.connect(item, l, Status::Solid);
+                        all.push(l);
+                    }
+                };
             for j in 0..ITEMS {
-                let item = g.add_baseline(&format!("item{j}"), "Item");
-                all.push(item);
-                let k = j % KINDS;
-                all.push(leaf(&mut g, item, format!("item{j}/a"), format!("Attr{k}")));
-                all.push(leaf(&mut g, item, format!("item{j}/o"), "Other0".into()));
+                item(&mut g, &mut all, &format!("item{j}"), j % KINDS, 1);
             }
-            // A hub: one leaf a rule asks for among many it does not.
-            let hub = g.add_baseline("hub", "Item");
-            all.push(hub);
-            for n in 0..KINDS * 8 + 12 {
-                all.push(leaf(
-                    &mut g,
-                    hub,
-                    format!("hub/o{n}"),
-                    format!("Other{}", n % 7),
-                ));
-            }
-            all.push(leaf(&mut g, hub, "hub/a".into(), "Attr4".into()));
+            item(&mut g, &mut all, "middle", 3, MIDDLE - 2);
+            item(&mut g, &mut all, "long", 5, LONG - 2);
             let rules = crate::rules::load(&json, &mut g).expect("rules load");
             let mut e = Engine::new(&rules);
             match mode {
@@ -1001,10 +1004,10 @@ pub(crate) mod tests {
             while e.step(&mut g, &vs).is_some() {}
             e.cascade.len()
         };
-        // One applied step per item and one for the hub.
-        assert_eq!(run(0), ITEMS + 1);
-        assert_eq!(run(1), ITEMS + 1);
-        assert_eq!(run(2), ITEMS + 1);
+        // One applied step per item.
+        assert_eq!(run(0), ITEMS + 2);
+        assert_eq!(run(1), ITEMS + 2);
+        assert_eq!(run(2), ITEMS + 2);
     }
 
     /// One rule: an `Item` with a context leaf `Attr` that carries the
