@@ -114,7 +114,6 @@ struct PathNode {
     groups: Vec<Group>,
     /// The groups by type, ascending: (type, index into `groups`).
     /// Filled once the tree is complete (`AnchorIndex::index_groups`).
-    #[cfg(feature = "opt_m")]
     by_typ: Vec<(TypeId, u32)>,
 }
 
@@ -296,17 +295,9 @@ impl Tree {
     }
 }
 
-// The walk over the prefix tree (`AnchorIndex::walk`) in two forms.
-// Without the feature `opt_m` it asks the participation list of the
-// graph node for one range per group of the prefix-tree node. With it,
-// a prefix-tree node with many groups is served by one pass over the
-// list instead. Both visit the same pairs of group and participation,
-// in another order; the marks of a walk do not depend on the order.
-// The files are part of this module.
-#[cfg(not(feature = "opt_m"))]
-include!("anchor/walk_by_group.rs");
-#[cfg(feature = "opt_m")]
-include!("anchor/walk_by_part.rs");
+// The walk over the prefix tree (`AnchorIndex::walk`). The file is
+// part of this module.
+include!("anchor/walk.rs");
 
 impl AnchorIndex {
     /// Reads the paths from every position of the directed rules.
@@ -465,6 +456,20 @@ impl AnchorIndex {
     /// the pattern of rule `rule` of the rules the index was built for.
     pub(crate) fn plan(&self, rule: usize, pos: usize, pattern: &Pattern) -> &Plan {
         self.plans[self.plan_at[rule] + pos].get_or_init(|| plan_anchored(pattern, pos))
+    }
+
+    /// Drops the indices the process keeps for the engines that were
+    /// handed none.
+    ///
+    /// An engine made with [`Engine::new`](crate::engine::Engine::new)
+    /// takes the index of its rule set from a store of the process and
+    /// builds it only if no engine over a rule set of the same content
+    /// has done so before. The store holds the indices of the last 32
+    /// rule sets and is not emptied on its own. A host that is done
+    /// with its rule sets gives the memory back with this call. Engines
+    /// alive keep their index.
+    pub fn forget_shared() {
+        own::forget();
     }
 
     /// Was the index built from this very rule slice (same address and
@@ -928,7 +933,7 @@ pub(crate) mod tests {
     /// leaf the rule asks for and one for the item it hangs under.
     /// Items with a short participation list, one with a list long
     /// enough to be a B-tree and still short enough for a pass over it
-    /// (`opt_m`), and one with a list beyond that give the same
+    /// and one with a list beyond that give the same
     /// matches by delta, by seed through the index and by scan.
     #[test]
     fn the_index_keeps_the_matches_under_many_groups() {

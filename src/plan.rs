@@ -17,14 +17,10 @@ use crate::graph::{Graph, PlanTransform, TypeId};
 
 // The names a rule's plan refers to and what they resolve to in a
 // graph: the types `Names` (one per engine), `RuleNames` (one rule of
-// it, for a step) and `OwnNames` (one rule outside an engine). Two
-// implementations of one interface: without `opt_g` every use resolves
-// the name, with it the id is kept after the first use.
-// Included, not modules of their own, like the stores of the graph.
-#[cfg(not(feature = "opt_g"))]
-include!("plan/names_plain.rs");
-#[cfg(feature = "opt_g")]
-include!("plan/names_kept.rs");
+// it, for a step) and `OwnNames` (one rule outside an engine). The id
+// a name resolves to is kept after the first use. The file is part of
+// this module.
+include!("plan/names.rs");
 
 // ── Spec (JSON) ────────────────────────────────────────────────────────────
 
@@ -514,7 +510,6 @@ mod tests {
 
     /// The ids kept for the names of a rule belong to one set of
     /// tables and one rule slice; for others they are dropped.
-    #[cfg(feature = "opt_g")]
     #[test]
     fn kept_ids_are_dropped_for_other_tables_and_other_rules() {
         let (mut a, _vs) = seed(1);

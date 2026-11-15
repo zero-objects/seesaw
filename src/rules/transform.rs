@@ -197,8 +197,7 @@ pub struct ChainId(pub u32);
 pub struct ChainTable {
     by_chain: FxHashMap<Chain, ChainId>,
     chains: Vec<Chain>,
-    /// Which instance this is. Read with the feature `opt_g` only.
-    #[allow(dead_code)]
+    /// Which instance this is.
     pub(crate) uid: crate::graph::TableUid,
 }
 

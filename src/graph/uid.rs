@@ -1,10 +1,10 @@
-// Which table instance a table is (feature `opt_g`): a number of its
-// own for every table that is created, and for every copy.
+// Which table instance a table is: a number of its own for every
+// table that is created, and for every copy.
 
 /// The identity of one table instance.
 ///
-/// With `opt_g` the engine keeps the ids a rule's names resolved to in
-/// a table and has to know whether the table at hand is that table.
+/// The engine keeps the ids a rule's names resolved to in a table and
+/// has to know whether the table at hand is that table.
 /// The tables only grow, so what was resolved in an instance stays
 /// true for it. A copy gets a number of its own: copy and original
 /// can receive different entries afterwards.

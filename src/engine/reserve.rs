@@ -1,18 +1,18 @@
-//! Room in the stores of graph and engine before a run (feature
-//! `opt_b`).
+//! Room in the stores of graph and engine before a run.
 //!
 //! The maps and vectors of graph and engine grow by doubling, and a
-//! map that doubles moves every entry it holds. With `opt_b` a host
-//! that knows how large a run gets says so before it starts
-//! ([`Engine::reserve`], [`Graph::reserve`]; [`Engine::sizes`] tells
-//! what a run reached), and the engine makes room for what the matches
-//! it has recorded and not yet applied would create
-//! ([`Engine::reserve_for_recorded`]).
-//! `run` does the latter between the seed and the first step. Without
-//! the feature none of this exists and `run` reserves nothing.
+//! map that doubles moves every entry it holds. A host that knows how
+//! large a run gets says so before it starts ([`Engine::reserve`],
+//! [`Graph::reserve`]; [`Engine::sizes`] tells what a run reached). A
+//! host that has seeded and is about to step can have the engine make
+//! room for what the recorded matches would create
+//! ([`Engine::reserve_for_recorded`]). The engine reserves nothing on
+//! its own.
 //!
 //! Capacity is not part of what the engine does: graph, cascade and
-//! verdicts are the same with and without a hint.
+//! verdicts are the same with and without a hint. [`Graph::nodes`]
+//! follows the map of the graph and has no particular order; a hint
+//! can change the order it has.
 
 use super::Engine;
 use crate::graph::Graph;
@@ -20,16 +20,12 @@ use crate::graph::Graph;
 /// Sizes of the engine's stores: what a run reached
 /// ([`Engine::sizes`]), or what a host expects a run to add
 /// ([`Engine::reserve`]).
-#[cfg(feature = "opt_b")]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct Sizes {
     /// Matches recorded, whether applied, recognised as duplicates,
     /// dead or still to do.
     pub matches: usize,
-    /// Elements under which recorded matches are filed: the nodes of
-    /// the matches and, without the feature `opt_a`, the connections
-    /// their patterns ask for. A value read with one setting of
-    /// `opt_a` is a hint of the wrong size for the other.
+    /// Nodes that stand in a recorded match.
     pub elements: usize,
     /// Nodes created by applied steps.
     pub products: usize,
@@ -37,7 +33,6 @@ pub struct Sizes {
     pub steps: usize,
 }
 
-#[cfg(feature = "opt_b")]
 impl Engine<'_> {
     /// The sizes the engine's stores have reached. After a run they
     /// are the hint for the next run of the same rules over a model of
@@ -69,6 +64,13 @@ impl Engine<'_> {
     /// the todo would create if every one of them were applied: the
     /// nodes and connections of their rules' plans and one cascade
     /// entry each. Reads the todo once.
+    ///
+    /// A match that turns out to be a duplicate when it is pulled
+    /// creates nothing, and room is made for it all the same. After a
+    /// seed over a model that is translated already nearly every match
+    /// is a duplicate: the call then asks for about as much room again
+    /// as the graph has, for nothing. It fits the first run over a
+    /// model that is not translated.
     pub fn reserve_for_recorded(&mut self, g: &mut Graph) {
         // As at every door with a graph: what `element_removed` left
         // open comes first, so that the todo counted below is the one
@@ -109,21 +111,7 @@ impl Engine<'_> {
     }
 }
 
-impl Engine<'_> {
-    /// What `run` does between the seed and the first step.
-    #[cfg(feature = "opt_b")]
-    #[inline]
-    pub(super) fn room_after_seed(&mut self, g: &mut Graph) {
-        self.reserve_for_recorded(g);
-    }
-
-    /// What `run` does between the seed and the first step: nothing.
-    #[cfg(not(feature = "opt_b"))]
-    #[inline(always)]
-    pub(super) fn room_after_seed(&mut self, _g: &mut Graph) {}
-}
-
-#[cfg(all(test, feature = "opt_b"))]
+#[cfg(test)]
 mod tests {
     use super::Sizes;
     use crate::engine::{Engine, Termination};

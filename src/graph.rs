@@ -36,12 +36,9 @@ use crate::rules::transform::{Chain, ChainId, ChainTable};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeId(pub u32);
 
-// Which table instance a table is: `TableUid`. Empty without the
-// feature `opt_g`, a number per instance with it.
-#[cfg(not(feature = "opt_g"))]
-include!("graph/uid_plain.rs");
-#[cfg(feature = "opt_g")]
-include!("graph/uid_counted.rs");
+// Which table instance a table is: `TableUid`, a number per instance.
+// The file is part of this module.
+include!("graph/uid.rs");
 
 /// Type name ↔ [`TypeId`] interning (insert-only, deterministic in
 /// registration order).
@@ -49,8 +46,7 @@ include!("graph/uid_counted.rs");
 pub struct TypeTable {
     by_name: FxHashMap<String, TypeId>,
     names: Vec<String>,
-    /// Which instance this is. Read with the feature `opt_g` only.
-    #[allow(dead_code)]
+    /// Which instance this is.
     pub(crate) uid: TableUid,
 }
 
@@ -209,13 +205,14 @@ pub struct Participation {
 }
 
 // Where the participants live: the type `Store`. Two implementations
-// of one interface: the map of slots of 2.0.2, and with `opt_c` a map
-// of numbers into dense vectors of nodes and connections. The files
-// are included, not modules of their own, so that the code of the
-// first stays in this module's unit of compilation as it was.
-#[cfg(not(feature = "opt_c"))]
+// of one interface: the map of slots of 2.0.2, and with the feature
+// `low_memory` a map of numbers into dense vectors of nodes and
+// connections. The files are included, not modules of their own, so
+// that the code of the first stays in this module's unit of
+// compilation as it was.
+#[cfg(not(feature = "low_memory"))]
 include!("graph/store_map.rs");
-#[cfg(feature = "opt_c")]
+#[cfg(feature = "low_memory")]
 include!("graph/store_dense.rs");
 
 /// The participation list of one participant: a set, in the order of
@@ -306,7 +303,6 @@ impl Parts {
     }
 
     /// Number of entries.
-    #[cfg(feature = "opt_m")]
     pub(crate) fn len(&self) -> usize {
         match self {
             Self::Flat(v) => v.len(),
@@ -1094,9 +1090,8 @@ impl Graph {
     }
 }
 
-/// Creation and reading by type id (feature `opt_g`): what the
+/// Creation and reading by type id: what the
 /// functions that take a type name do after they resolved it.
-#[cfg(feature = "opt_g")]
 impl Graph {
     /// [`Graph::add_corr_at`] for a type already interned.
     pub(crate) fn add_corr_typed(&mut self, id: GhostId, typ: TypeId) -> GhostId {
@@ -1175,7 +1170,6 @@ impl Graph {
     }
 }
 
-#[cfg(feature = "opt_b")]
 impl Graph {
     /// Makes room for `nodes` further nodes and `connections` further
     /// connections, so that the graph's stores do not grow step by

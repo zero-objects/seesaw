@@ -1,8 +1,17 @@
-// `AnchorIndex::walk` with the feature `opt_m`: a prefix-tree node with
-// many groups is served by one pass over the participation list.
+// Part of `anchor` (included by `anchor.rs`): `AnchorIndex::walk`.
+//
+// A walk stands at a graph node and a prefix-tree node and visits the
+// pairs of a group of the tree node and a participation of the graph
+// node with the group's type. It finds them in one of two ways: one
+// range of the participation list per group, or one pass over the list
+// that looks the groups of each type up in the tree node. The second
+// is cheaper where the tree node has many groups and the list is
+// short, which is the shape of rule sets with many node types. Both
+// visit the same pairs, in another order; the marks of a walk do not
+// depend on the order.
 
 /// A prefix-tree node with fewer groups than this asks for one range
-/// per group, as without the feature.
+/// per group.
 const PASS_FROM_GROUPS: usize = 4;
 
 /// The pass is taken while the list has at most this many entries per

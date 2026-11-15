@@ -14,12 +14,11 @@
 
 pub(crate) mod anchor;
 pub mod matcher;
-#[cfg(all(feature = "opt_j", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "parallel_seed", not(target_arch = "wasm32")))]
 mod par;
 mod reserve;
 
 pub use anchor::AnchorIndex;
-#[cfg(feature = "opt_b")]
 pub use reserve::Sizes;
 
 use std::collections::BTreeSet;
@@ -32,7 +31,10 @@ use crate::engine::matcher::{find_matches, find_matches_planned, Bindings};
 use crate::graph::{Graph, ValueResolver};
 use crate::plan::{apply_creation_at, DirectedRule, Names, Ref, RuleDirection, RuleNames};
 
-#[cfg_attr(feature = "opt_e", allow(dead_code))]
+/// Is the node tentatively retracted? `step` reads that together with
+/// the participations of the node (`recognise`); this is the form the
+/// test checks compare with.
+#[cfg(any(test, seesaw_checks))]
 fn self_node_tt(g: &Graph, id: &GhostId) -> bool {
     g.node(id)
         .is_some_and(|n| n.status == Status::TentativeTombstone)
@@ -140,7 +142,6 @@ pub struct SelectionBound {
 /// two heads differ, so it changes nothing about the order; it lets
 /// the todo compare two keys without following both sequences to the
 /// heap, which is where most comparisons of a lookup were decided.
-#[cfg_attr(feature = "opt_d", allow(dead_code))]
 type TodoKey = (
     std::cmp::Reverse<u64>,
     std::cmp::Reverse<u128>,
@@ -150,7 +151,6 @@ type TodoKey = (
 
 /// The first 16 bytes of the first id of a ref sequence, big-endian;
 /// 0 for an empty sequence. `head(a) < head(b)` implies `a < b`.
-#[cfg_attr(feature = "opt_d", allow(dead_code))]
 fn head(refs: &[GhostId]) -> u128 {
     refs.first().map_or(0, |id| {
         let mut b = [0u8; 16];
@@ -164,7 +164,6 @@ fn head(refs: &[GhostId]) -> u128 {
 /// set. Equality, order and hash are those of the sequence.
 type Refs = std::sync::Arc<[GhostId]>;
 
-#[cfg_attr(feature = "opt_d", allow(dead_code))]
 fn todo_key(rank: u64, refs: &Refs, rule_ix: usize) -> TodoKey {
     (
         std::cmp::Reverse(rank),
@@ -185,33 +184,33 @@ enum Ixs {
 }
 
 /// Indices an [`Ixs`] holds without an allocation.
-#[cfg(not(feature = "opt_h"))]
+#[cfg(not(feature = "low_memory"))]
 const IXS_INLINE: usize = 4;
 
 /// The list of an [`Ixs`] on the heap. With the vector in place an
 /// [`Ixs`] takes 32 bytes, an entry of a map from an id to it 64.
-#[cfg(not(feature = "opt_h"))]
+#[cfg(not(feature = "low_memory"))]
 type IxsLong = Vec<u32>;
 
-#[cfg(not(feature = "opt_h"))]
+#[cfg(not(feature = "low_memory"))]
 fn ixs_long(v: Vec<u32>) -> IxsLong {
     v
 }
 
-/// Indices an [`Ixs`] holds without an allocation (`opt_h`: one less,
-/// so that the list fits 16 bytes).
-#[cfg(feature = "opt_h")]
+/// Indices an [`Ixs`] holds without an allocation, with the feature
+/// `low_memory`: one less, so that the list fits 16 bytes.
+#[cfg(feature = "low_memory")]
 const IXS_INLINE: usize = 3;
 
-/// The list of an [`Ixs`] on the heap (`opt_h`): behind one pointer, so
-/// that an [`Ixs`] takes 16 bytes and an entry of a map from an id to
-/// it 48. A long list costs a second allocation and one more step to
-/// its indices.
-#[cfg(feature = "opt_h")]
+/// The list of an [`Ixs`] on the heap, with the feature `low_memory`:
+/// behind one pointer, so that an [`Ixs`] takes 16 bytes and an entry
+/// of a map from an id to it 48. A long list costs a second allocation
+/// and one more step to its indices.
+#[cfg(feature = "low_memory")]
 #[allow(clippy::box_collection)]
 type IxsLong = Box<Vec<u32>>;
 
-#[cfg(feature = "opt_h")]
+#[cfg(feature = "low_memory")]
 fn ixs_long(v: Vec<u32>) -> IxsLong {
     Box::new(v)
 }
@@ -254,35 +253,21 @@ impl Ixs {
     }
 }
 
-// The registry of the links of a match, in two variants with the same
-// interface (`Links`, `file_links`, `Engine::filed_under`,
-// `Engine::removed_unfiled`, `Engine::settle_removed`). The files are
-// part of this module.
-#[cfg(not(feature = "opt_a"))]
-include!("links_filed.rs");
-#[cfg(feature = "opt_a")]
-include!("links_derived.rs");
+// Three parts of the engine in files of their own. They are included,
+// not modules: each implements private parts of `Engine` and reads
+// the types above.
+//
+// The matches that rest on a connection (`Links`, `file_links`,
+// `Engine::filed_under`, `Engine::removed_unfiled`,
+// `Engine::settle_removed`).
+include!("links.rs");
 
-// The todo, in variants with the same interface (`Todo`, `Taken`,
-// `Carried`): an ordered set of keys, an ordered map from the key to
-// the number of the match (`opt_e`), or a heap (`opt_d`, with or
-// without `opt_e`). The files are part of this module.
-#[cfg(not(any(feature = "opt_d", feature = "opt_e")))]
-include!("todo_set.rs");
-#[cfg(all(feature = "opt_e", not(feature = "opt_d")))]
-include!("todo_map.rs");
-#[cfg(feature = "opt_d")]
-include!("todo_heap.rs");
+// The todo (`Todo`, `Taken`, `Carried`).
+include!("todo.rs");
 
-// What `step` knows of a pulled candidate, in two variants with the
-// same interface (`Recognised`, `recognise`, `Applied`,
-// `Engine::pulled_match`): looked up by the key of the candidate, or
-// hung on the number of its match (`opt_e`). The files are part of
-// this module.
-#[cfg(not(feature = "opt_e"))]
-include!("applied_set.rs");
-#[cfg(feature = "opt_e")]
-include!("applied_marks.rs");
+// What `step` knows of a pulled candidate (`Recognised`, `recognise`,
+// `Applied`, `Engine::pulled_match`).
+include!("applied.rs");
 
 /// The engine.
 pub struct Engine<'r> {
@@ -490,7 +475,11 @@ fn index_seed(
 /// Does `anchor` already carry a correspondence of type `typ` with a
 /// live counterpart of type `endpoint_typ`? `ix`: the entry of the
 /// rule's `corr_recognition` the two types come from.
-#[cfg_attr(feature = "opt_e", allow(dead_code))]
+///
+/// `step` asks this with the participations of the anchor at hand
+/// (`anchor_translated_in`); this is the form the test checks compare
+/// with.
+#[cfg(any(test, seesaw_checks))]
 fn anchor_translated(
     g: &Graph,
     names: &mut RuleNames<'_>,
@@ -524,7 +513,7 @@ fn anchor_translated(
 /// carries a corr of its type with a MATCHABLE counterpart — the
 /// element is translated, regardless of which direction/variant ⇒ a
 /// duplicate.
-#[cfg_attr(feature = "opt_e", allow(dead_code))]
+#[cfg(any(test, seesaw_checks))]
 fn is_translated(
     g: &Graph,
     rule: &DirectedRule,
@@ -747,14 +736,7 @@ impl<'r> Engine<'r> {
         for id in refs.iter() {
             self.by_element.entry(*id).or_default().push(ix);
         }
-        file_links(
-            &mut self.by_element,
-            &mut self.links,
-            g,
-            &self.rules[rule_ix].pattern,
-            &refs,
-            ix,
-        );
+        file_links(&mut self.links, g, &self.rules[rule_ix].pattern, &refs, ix);
         self.todo
             .insert(self.rules[rule_ix].rank, &refs, rule_ix, ix);
         slot.insert(ix);
@@ -947,7 +929,7 @@ impl<'r> Engine<'r> {
     /// order are those of anchoring at every position of the same type.
     ///
     /// Every match found is recorded, also one whose anchor is already
-    /// translated ([`is_translated`]): `step` decides that when it
+    /// translated: `step` decides that when it
     /// pulls the match, on the graph as it is then, and the match store
     /// keeps the duplicate so that a retraction of one of its elements
     /// makes it a candidate again.
@@ -1672,7 +1654,6 @@ impl<'r> Engine<'r> {
         max_steps: usize,
     ) -> Termination {
         self.seed(g, resolver);
-        self.room_after_seed(g);
         for _ in 0..max_steps {
             if self.step(g, resolver).is_none() {
                 return self.verdict();
@@ -2193,14 +2174,13 @@ mod tests {
         assert_eq!(e.cascade.len(), 1, "only the other family gets translated");
     }
 
-    /// A match is filed under the connection of each of its links in
-    /// the direction the pattern names, also where the graph holds the
-    /// connection the other way round (a link to a context
-    /// correspondence is direction-free). Removing an element with that
-    /// id, which the graph does not know, kills the match.
-    #[test]
-    fn a_match_rests_on_the_named_direction_of_a_context_link() {
-        let file: RuleFile = serde_json::from_value(serde_json::json!({
+    /// Two rules: `Root` relates an `A` to a `B`, `Child` relates an
+    /// `X` under the `A` to a `Y` under the `B` and reads the
+    /// correspondence of `Root` as context. The pattern of `Child`
+    /// names the link from that correspondence to the `A`; the graph
+    /// holds the connection the other way round.
+    fn context_link_rules() -> RuleFile {
+        serde_json::from_value(serde_json::json!({
             "format": 3,
             "name": "context_link",
             "rules": [
@@ -2234,7 +2214,17 @@ mod tests {
                 }
             ]
         }))
-        .expect("rule file parses");
+        .expect("rule file parses")
+    }
+
+    /// A match is filed under the connection of each of its links in
+    /// the direction the pattern names, also where the graph holds the
+    /// connection the other way round (a link to a context
+    /// correspondence is direction-free). Removing an element with that
+    /// id, which the graph does not know, kills the match.
+    #[test]
+    fn a_match_rests_on_the_named_direction_of_a_context_link() {
+        let file = context_link_rules();
         let mut g = Graph::new();
         let a = g.add_baseline("a", "A");
         let x = g.add_baseline("a/x", "X");
@@ -2257,6 +2247,129 @@ mod tests {
         e.element_removed(&named);
         assert_eq!(e.step(&mut g, &vs), None, "the candidate of Child is dead");
         assert_eq!(e.cascade.len(), 1);
+    }
+
+    /// An id the graph does not know is answered from the index of
+    /// unheld links. The index is built at the first such question and
+    /// kept up by `record`; for another graph it is built anew. An id
+    /// noted twice kills once.
+    #[test]
+    fn an_unknown_id_is_answered_from_the_unheld_links() {
+        let file = context_link_rules();
+        let mut g = Graph::new();
+        let a = g.add_baseline("a", "A");
+        let mut xs = Vec::new();
+        for i in 0..3 {
+            let x = g.add_baseline(&format!("a/x{i}"), "X");
+            g.connect(a, x, Status::Solid);
+            xs.push(x);
+        }
+        let rules = crate::rules::load_file(&file, &mut g).expect("rules lower");
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        assert_eq!(e.step(&mut g, &vs), Some(true), "Root");
+        assert_eq!(e.todo.len(), 3, "the candidates of Child");
+        let corr = g.iter_nodes().find(|n| n.is_corr).expect("AB").id;
+        assert!(e.links.unheld.is_none(), "no question yet, no index");
+        // An id nothing rests on: the question builds the index and
+        // kills nothing.
+        let nothing = crate::graph::preview_connection_id(&xs[0], &xs[1]);
+        e.element_removed(&nothing);
+        assert_eq!(e.step(&mut g, &vs), Some(true), "one Child");
+        assert_eq!(
+            e.links.unheld.as_ref().map(|u| u.graph),
+            Some(g.types.uid.get()),
+            "an index for this graph"
+        );
+        assert_eq!(e.todo.len(), 2);
+        // A match recorded from here on is filed in the index.
+        let x = g.add_baseline("a/x3", "X");
+        g.connect(a, x, Status::Solid);
+        e.elements_added(&g, &vs, &[x]);
+        assert_eq!(e.todo.len(), 3);
+        let named = crate::graph::preview_connection_id(&corr, &a);
+        let filed = |e: &Engine<'_>| {
+            e.links
+                .unheld
+                .as_ref()
+                .and_then(|u| u.by_id.get(&named))
+                .map_or(0, |ixs| ixs.as_slice().len())
+        };
+        assert_eq!(filed(&e), 4, "every match of Child rests on the named link");
+        // The host goes on with a copy: the index is about the other
+        // graph and is dropped, the next question builds one for the
+        // copy.
+        let mut copy = g.clone();
+        let x = copy.add_baseline("a/x4", "X");
+        copy.connect(a, x, Status::Solid);
+        e.elements_added(&copy, &vs, &[x]);
+        assert!(
+            e.links.unheld.is_none(),
+            "the index was about the other graph"
+        );
+        assert_eq!(e.todo.len(), 4);
+        e.element_removed(&named);
+        e.element_removed(&named);
+        assert_eq!(
+            e.step(&mut copy, &vs),
+            None,
+            "the candidates of Child are dead"
+        );
+        assert_eq!(
+            e.links.unheld.as_ref().map(|u| u.graph),
+            Some(copy.types.uid.get()),
+            "an index for the copy"
+        );
+        assert_eq!(filed(&e), 5);
+        assert_eq!(e.cascade.len(), 2);
+    }
+
+    /// A graph the host has replaced by its materialized copy: the
+    /// copy leaves the tombstones out, and a later retraction asks for
+    /// them by id.
+    #[test]
+    fn an_id_the_materialized_copy_left_out_is_answered() {
+        let file = context_link_rules();
+        let mut g = Graph::new();
+        let a = g.add_baseline("a", "A");
+        let mut xs = Vec::new();
+        for i in 0..3 {
+            let x = g.add_baseline(&format!("a/x{i}"), "X");
+            g.connect(a, x, Status::Solid);
+            xs.push(x);
+        }
+        let rules = crate::rules::load_file(&file, &mut g).expect("rules lower");
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        while e.step(&mut g, &vs).is_some() {}
+        assert_eq!(e.cascade.len(), 4, "Root and three Child");
+        // x0 goes: what its Child created is retracted and becomes a
+        // tombstone.
+        g.set_node_status(&xs[0], Status::Tombstone);
+        e.element_deleted(&mut g, &xs[0]);
+        e.consolidate(&mut g);
+        let gone: Vec<GhostId> = e.cascade[1..]
+            .iter()
+            .flat_map(|c| c.created.iter().copied())
+            .filter(|id| g.node(id).is_some_and(|n| n.status == Status::Tombstone))
+            .collect();
+        assert!(!gone.is_empty(), "the products of one Child are tombstones");
+        let mut copy = g.materialize();
+        assert!(gone.iter().all(|id| copy.node(id).is_none()));
+        // `a` goes. The retraction comes by the dead match of x0 again
+        // and asks for its products, which the copy does not hold.
+        copy.set_node_status(&a, Status::Tombstone);
+        e.element_deleted(&mut copy, &a);
+        e.consolidate(&mut copy);
+        assert_eq!(
+            e.links.unheld.as_ref().map(|u| u.graph),
+            Some(copy.types.uid.get()),
+            "an index for the copy"
+        );
     }
 
     impl<'r> Engine<'r> {
@@ -2595,9 +2708,9 @@ mod contract_tests {
             ("Stored", size_of::<Stored>()),
             ("Entry", size_of::<Entry>()),
         ];
-        // `opt_h` keeps one index less in place and the long list
+        // `low_memory` keeps one index less in place and the long list
         // behind one pointer.
-        let (ixs, filed) = if cfg!(feature = "opt_h") {
+        let (ixs, filed) = if cfg!(feature = "low_memory") {
             (16, 48)
         } else {
             (32, 64)

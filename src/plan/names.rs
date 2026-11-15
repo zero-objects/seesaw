@@ -1,13 +1,13 @@
-// The names a rule's plan refers to, with the ids they resolved to
-// (feature `opt_g`): the type of every node a rule creates, the
-// constant and the transformation chain of its leaves and the types of
-// its correspondence recognition are resolved in a graph's tables once
-// and kept per rule. Without the feature `names_plain.rs` stands here
-// and resolves them at every use.
+// Part of `plan` (included by `plan.rs`): the names a rule's plan
+// refers to, with the ids they resolved to. The type of every node a
+// rule creates, the constant and the transformation chain of its
+// leaves and the types of its correspondence recognition are resolved
+// in a graph's tables once and kept per rule. 2.0.2 resolved them at
+// every use.
 //
-// A name is resolved at the moment it would have been resolved without
-// the feature, the first time, so the tables receive their entries in
-// the same order and every id is the same. What is kept is a fact
+// A name is resolved at the moment 2.0.2 resolved it, the first time,
+// so the tables receive their entries in the same order and every id
+// is the same. What is kept is a fact
 // about one table: the tables only grow, and each table instance
 // carries a number of its own (`TableUid`), a copy another one. The
 // ids are dropped when the graph at hand has other tables or the

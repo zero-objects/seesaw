@@ -193,23 +193,23 @@ pub fn rules_json(late_context: bool) -> String {
 }
 
 /// How a driver seeds and what it does with a fresh engine. The
-/// released engine and the engine of this repository without features
-/// do it plainly. With the feature `opt_j` the engine of this
-/// repository seeds on three threads, with `opt_b` graph and engine
-/// get a capacity hint first: both are other ways to the same result,
-/// and this is where they are held against the release.
+/// released engine does it plainly. The engine of this repository
+/// gets a capacity hint for graph and engine first, and with the
+/// feature `parallel_seed` it seeds on three threads: both are other
+/// ways to the same result, and this is where they are held against
+/// the release.
 macro_rules! plain_seed {
     ($e:expr, $g:expr, $vs:expr) => {
         $e.seed($g, $vs)
     };
 }
-#[cfg(not(feature = "opt_j"))]
+#[cfg(not(feature = "parallel_seed"))]
 macro_rules! tuned_seed {
     ($e:expr, $g:expr, $vs:expr) => {
         $e.seed($g, $vs)
     };
 }
-#[cfg(feature = "opt_j")]
+#[cfg(feature = "parallel_seed")]
 macro_rules! tuned_seed {
     ($e:expr, $g:expr, $vs:expr) => {
         $e.seed_with_threads($g, $vs, 3)
@@ -218,11 +218,6 @@ macro_rules! tuned_seed {
 macro_rules! plain_start {
     ($e:expr, $g:expr) => {};
 }
-#[cfg(not(feature = "opt_b"))]
-macro_rules! tuned_start {
-    ($e:expr, $g:expr) => {};
-}
-#[cfg(feature = "opt_b")]
 macro_rules! tuned_start {
     ($e:expr, $g:expr) => {
         $g.reserve(48, 96);

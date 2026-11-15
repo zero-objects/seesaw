@@ -1,4 +1,5 @@
-// Where the participants of a graph live, with the feature `opt_c`:
+// Where the participants of a graph live, with the feature
+// `low_memory`:
 // the map holds one number per participant id, and the nodes and the
 // connections stand in two vectors in insertion order. A map entry is
 // 36 bytes instead of the 152 to 160 of a slot that holds the
@@ -222,7 +223,6 @@ impl Store {
 
     /// Room for `nodes` further nodes and `connections` further
     /// connections.
-    #[cfg(feature = "opt_b")]
     fn reserve(&mut self, nodes: usize, connections: usize) {
         self.index.reserve(nodes + connections);
         self.nodes.reserve(nodes);

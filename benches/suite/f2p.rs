@@ -175,7 +175,7 @@ pub fn batch(families: usize) -> Outcome {
 /// The seed alone on `threads` threads (`Engine::seed_with_threads`;
 /// one thread is `Engine::seed`). The steps to saturation follow after
 /// the measured section; graph and cascade are those of [`batch`].
-#[cfg(feature = "opt_j")]
+#[cfg(feature = "parallel_seed")]
 pub fn seed_search(families: usize, threads: usize) -> Outcome {
     let mut m = Model::new(families);
     let rules = rules(&mut m.g);
@@ -195,7 +195,7 @@ pub fn seed_search(families: usize, threads: usize) -> Outcome {
 /// An engine that starts on a model that is already translated: a
 /// second engine seeds the synchronised model on `threads` threads.
 /// Measured is that seed alone.
-#[cfg(feature = "opt_j")]
+#[cfg(feature = "parallel_seed")]
 pub fn reseed(families: usize, threads: usize) -> Outcome {
     let mut m = Model::new(families);
     let rules = rules(&mut m.g);

@@ -1,12 +1,12 @@
-// Part of `engine` (included by `mod.rs` with `opt_e`): what `step`
-// knows of a pulled candidate hangs on the number of its match, which
-// the candidate carries. Nothing is looked up by the ref sequence.
+// Part of `engine` (included by `mod.rs`): what `step` knows of a
+// pulled candidate hangs on the number of its match, which the
+// candidate carries. Nothing is looked up by the ref sequence.
 //
-// Without `opt_e`, `step` hashes the ref sequence of every candidate it
-// pulls: for the question whether it is applied already, to note it as
-// applied, and to find its match for the provenance edge. All three
-// are about the match filed under the key (rule, ref sequence) in
-// `by_key`, and the candidate carries that match:
+// 2.0.2 hashed the ref sequence of every candidate `step` pulled: for
+// the question whether it is applied already, to note it as applied,
+// and to find its match for the provenance edge. All three are about
+// the match filed under the key (rule, ref sequence) in `by_key`, and
+// the candidate carries that match:
 //
 // - `record` enters a candidate when no match is filed under its key,
 //   and files its match there. The key is taken out of `by_key` by a
@@ -27,13 +27,13 @@ enum Recognised {
     /// An anchor is tentatively retracted.
     Tentative,
     /// Every anchor carries its correspondence already
-    /// ([`is_translated`]).
+    /// (`is_translated`).
     Translated,
     /// Neither.
     Open,
 }
 
-/// [`anchor_translated`] for an anchor whose participations are at
+/// `anchor_translated` for an anchor whose participations are at
 /// hand.
 fn anchor_translated_in(
     g: &Graph,
@@ -129,7 +129,7 @@ struct Applied {
     marked: Vec<u64>,
     /// Number of marks.
     count: usize,
-    /// Test check: the applied keys, as they are kept without `opt_e`.
+    /// Test check: the applied keys, as 2.0.2 kept them.
     #[cfg(any(test, seesaw_checks))]
     check: std::collections::HashSet<(usize, Refs), crate::hash::FxBuildHasher>,
 }
@@ -145,7 +145,6 @@ impl Applied {
     }
 
     /// Makes room for the marks of `more` matches.
-    #[cfg(feature = "opt_b")]
     fn reserve(&mut self, more: usize) {
         self.marked.reserve(more.div_ceil(64));
     }

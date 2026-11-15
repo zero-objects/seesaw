@@ -1,6 +1,6 @@
 // Where the participants of a graph live: one map from participant
 // id to slot, the nodes' insertion order and the type index beside
-// it. This is the store without the feature `opt_c`; with it the
+// it. This is the store without the feature `low_memory`; with it the
 // module `store_dense` takes its place behind the same interface.
 
 /// Slot of one participant in the global map.
@@ -255,7 +255,6 @@ impl Store {
 
     /// Room for `nodes` further nodes and `connections` further
     /// connections.
-    #[cfg(feature = "opt_b")]
     fn reserve(&mut self, nodes: usize, connections: usize) {
         self.map.reserve(nodes + connections);
         self.node_order.reserve(nodes);

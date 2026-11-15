@@ -123,9 +123,10 @@ fn cells() -> Vec<Cell> {
             )
         }),
     );
-    // The seed with its search on several threads (`opt_j`). `t1` is
+    // The seed with its search on several threads (feature
+    // `parallel_seed`). `t1` is
     // `Engine::seed`.
-    #[cfg(feature = "opt_j")]
+    #[cfg(feature = "parallel_seed")]
     {
         let spec = Spec {
             kinds: 700,

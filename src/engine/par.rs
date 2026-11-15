@@ -1,5 +1,5 @@
-//! The seed with its search on several threads (feature `opt_j`, not
-//! on wasm32).
+//! The seed with its search on several threads (feature
+//! `parallel_seed`, not on wasm32).
 //!
 //! [`Engine::seed`] searches and records in turn, but no search reads
 //! what a record writes: the searches read the graph, the rules and the
