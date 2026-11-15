@@ -21,6 +21,7 @@
 
 mod f2p;
 mod fingerprint;
+mod hints;
 mod langpack;
 mod measure;
 

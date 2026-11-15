@@ -14,8 +14,11 @@
 
 pub(crate) mod anchor;
 pub mod matcher;
+mod reserve;
 
 pub use anchor::AnchorIndex;
+#[cfg(feature = "opt_b")]
+pub use reserve::Sizes;
 
 use std::collections::BTreeSet;
 
@@ -1580,6 +1583,7 @@ impl<'r> Engine<'r> {
         max_steps: usize,
     ) -> Termination {
         self.seed(g, resolver);
+        self.room_after_seed(g);
         for _ in 0..max_steps {
             if self.step(g, resolver).is_none() {
                 return self.verdict();

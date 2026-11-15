@@ -1072,6 +1072,20 @@ impl Graph {
     }
 }
 
+#[cfg(feature = "opt_b")]
+impl Graph {
+    /// Makes room for `nodes` further nodes and `connections` further
+    /// connections, so that the graph's stores do not grow step by
+    /// step while they are added. A hint: fewer or more may follow.
+    ///
+    /// [`Graph::nodes`] has no particular order; the order it has can
+    /// differ from that of a graph that grew without the hint. Every
+    /// ordered reading of the graph is the same.
+    pub fn reserve(&mut self, nodes: usize, connections: usize) {
+        self.store.reserve(nodes, connections);
+    }
+}
+
 impl Graph {
     /// First matchable child leaf of an anchor with the given type
     /// (deterministic: participation order) — source of dynamic

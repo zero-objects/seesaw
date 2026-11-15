@@ -219,6 +219,15 @@ impl Store {
     fn type_count(&self, typ: TypeId) -> usize {
         self.by_type.get(typ.0 as usize).map_or(0, Vec::len)
     }
+
+    /// Room for `nodes` further nodes and `connections` further
+    /// connections.
+    #[cfg(feature = "opt_b")]
+    fn reserve(&mut self, nodes: usize, connections: usize) {
+        self.index.reserve(nodes + connections);
+        self.nodes.reserve(nodes);
+        self.connections.reserve(connections);
+    }
 }
 
 #[cfg(test)]

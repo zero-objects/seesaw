@@ -11,6 +11,7 @@ use seesaw_tgg::ident::{GhostId, Status};
 use seesaw_tgg::plan::DirectedRule;
 
 use crate::fingerprint;
+use crate::hints;
 use crate::measure;
 use crate::Outcome;
 
@@ -98,6 +99,8 @@ struct Model {
 impl Model {
     fn new(families: usize) -> Self {
         let mut g = Graph::new();
+        // 13 nodes and 13 connections per family, and the register.
+        hints::graph(&mut g, 13 * families + 2, 13 * families + 1, &hints::F2P);
         let mut vs = ValueStore::default();
         let reg = g.add_baseline("reg", "FamilyRegister");
         let regname = g.add_baseline("reg/name", "regName");
@@ -155,9 +158,11 @@ pub fn batch(families: usize) -> Outcome {
     let mut m = Model::new(families);
     let rules = rules(&mut m.g);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::F2P);
     let (t, usage) = measure::section(|| e.run(&mut m.g, &m.vs, 100_000_000));
     assert_eq!(t, Termination::Duplication);
     assert_eq!(e.cascade.len(), 4 * families + 1);
+    hints::report("f2p/batch", &m.g, &e, m.all.len());
     Outcome {
         usage,
         steps: e.cascade.len() as u64,
@@ -172,11 +177,13 @@ pub fn add(families: usize) -> Outcome {
     let mut m = Model::new(families);
     let rules = rules(&mut m.g);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::F2P);
     let (steps, usage) = measure::section(|| {
         e.elements_added(&m.g, &m.vs, &m.all);
         saturate(&mut e, &mut m.g, &m.vs)
     });
     assert_eq!(e.cascade.len(), 4 * families + 1);
+    hints::report("f2p/add", &m.g, &e, m.all.len());
     Outcome {
         usage,
         steps,
@@ -191,6 +198,7 @@ pub fn delta_add(families: usize, delta: usize) -> Outcome {
     let mut m = Model::new(families);
     let rules = rules(&mut m.g);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::F2P);
     e.elements_added(&m.g, &m.vs, &m.all);
     saturate(&mut e, &mut m.g, &m.vs);
     let (steps, usage) = measure::section(|| {
@@ -220,6 +228,7 @@ pub fn delta_delete(families: usize, delta: usize) -> Outcome {
     let mut m = Model::new(families);
     let rules = rules(&mut m.g);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::F2P);
     e.elements_added(&m.g, &m.vs, &m.all);
     saturate(&mut e, &mut m.g, &m.vs);
     let stride = (m.members.len() / delta).max(1);
