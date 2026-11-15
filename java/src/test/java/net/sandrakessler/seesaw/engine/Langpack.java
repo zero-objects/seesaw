@@ -7,6 +7,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
+import net.sandrakessler.seesaw.bench.Counters;
+import net.sandrakessler.seesaw.bench.Section;
 import net.sandrakessler.seesaw.graph.Conn;
 import net.sandrakessler.seesaw.graph.Graph;
 import net.sandrakessler.seesaw.graph.Node;
@@ -31,22 +33,29 @@ import net.sandrakessler.seesaw.rules.Rules;
  * gleiche Schritte, gleiche Knotenzahl, gleicher Fingerprint heißt,
  * Java und Rust haben denselben Graphen mit derselben Kaskade in
  * derselben Reihenfolge erzeugt.
+ *
+ * <p>Öffentlich für die Messstrecke {@code bench.JavaSuite}. Jede Zelle
+ * gibt es auch mit einer {@link Section}, die der Aufrufer anlegt und
+ * nach dem Lauf ausliest. Die Messstrecke läuft gegen die Hauptklassen
+ * älterer Stände; deshalb nutzt diese Klasse nur öffentliche API der
+ * Engine und liest die paket-privaten Zähler über {@link Counters}.
  */
-final class Langpack {
+public final class Langpack {
     private Langpack() {}
 
     /** {@code kinds}: Zahl der Arten, der Regelsatz hat
      *  {@code 2 * kinds + 1} Regeln. {@code nodes}: Sprachknoten unter
      *  der Wurzel. */
-    record Spec(int kinds, int nodes) {}
+    public record Spec(int kinds, int nodes) {}
 
     /** Ergebnis eines Laufs: Rückgaben von {@code step}, Einträge der
-     *  Kaskade, Knoten des Graphen, Fingerprint, Zeit der Messstrecke,
-     *  davon die Zeit des ersten Aufrufs ({@code seed} oder
+     *  Kaskade, Knoten des Graphen, Fingerprint, Wall-Zeit der
+     *  Messstrecke, davon die Zeit des ersten Aufrufs ({@code seed} oder
      *  {@code elementsAdded}; 0, wo die Zelle sie nicht trennt), dazu
      *  die Zahl der gestarteten Suchen und der Seeds über den Index
-     *  (ganzer Lauf, auch außerhalb der Messstrecke). */
-    record Outcome(long steps, long applied, long nodes, String fingerprint, long nanos,
+     *  (ganzer Lauf, auch außerhalb der Messstrecke; -1, wo der Stand
+     *  den Zähler nicht hat). */
+    public record Outcome(long steps, long applied, long nodes, String fingerprint, long nanos,
             long firstNanos, long searches, long seedsByIndex) {}
 
     /** xorshift64 mit festem Startwert: dasselbe Modell wie in Rust. */
@@ -192,38 +201,51 @@ final class Langpack {
         return steps;
     }
 
-    private static Outcome outcome(Graph g, Engine e, Map<Id, String> vs, long steps, long nanos) {
-        return outcome(g, e, vs, steps, nanos, 0);
+    /** Ergebnis nach der beendeten Messstrecke {@code measured}. */
+    public static Outcome outcome(Graph g, Engine e, Map<Id, String> vs, long steps,
+            Section measured) {
+        return outcome(g, e, vs, steps, measured, 0);
     }
 
-    private static Outcome outcome(Graph g, Engine e, Map<Id, String> vs, long steps, long nanos,
-            long firstNanos) {
-        return new Outcome(steps, e.cascade.size(), g.allNodes().size(), fingerprint(g, e, vs), nanos,
-                firstNanos, e.searches, e.seedsByIndex);
+    private static Outcome outcome(Graph g, Engine e, Map<Id, String> vs, long steps,
+            Section measured, long firstNanos) {
+        return new Outcome(steps, e.cascade.size(), g.allNodes().size(), fingerprint(g, e, vs),
+                measured.wallNanos(), firstNanos, Counters.of(e, "searches"),
+                Counters.of(e, "seedsByIndex"));
     }
 
     /** Batch über das ganze Modell durch {@code seed}. */
     static Outcome seed(Spec spec, boolean useIndex) {
+        return seed(spec, useIndex, new Section());
+    }
+
+    public static Outcome seed(Spec spec, boolean useIndex, Section measured) {
         Model m = new Model(spec);
         List<Rule> rules = Rules.load(rulesJson(spec.kinds()), m.g);
         Engine e = new Engine(rules, useIndex);
-        long t0 = System.nanoTime();
+        measured.start();
         e.seed(m.g, m.vs);
-        long t1 = System.nanoTime();
+        long first = measured.elapsedNanos();
         long steps = saturate(e, m.g, m.vs);
-        return outcome(m.g, e, m.vs, steps, System.nanoTime() - t0, t1 - t0);
+        measured.stop();
+        return outcome(m.g, e, m.vs, steps, measured, first);
     }
 
     /** Das ganze Modell als ein Add-Delta ({@code elementsAdded}). */
     static Outcome add(Spec spec, boolean useIndex) {
+        return add(spec, useIndex, new Section());
+    }
+
+    public static Outcome add(Spec spec, boolean useIndex, Section measured) {
         Model m = new Model(spec);
         List<Rule> rules = Rules.load(rulesJson(spec.kinds()), m.g);
         Engine e = new Engine(rules, useIndex);
-        long t0 = System.nanoTime();
+        measured.start();
         e.elementsAdded(m.g, m.vs, m.all);
-        long t1 = System.nanoTime();
+        long first = measured.elapsedNanos();
         long steps = saturate(e, m.g, m.vs);
-        return outcome(m.g, e, m.vs, steps, System.nanoTime() - t0, t1 - t0);
+        measured.stop();
+        return outcome(m.g, e, m.vs, steps, measured, first);
     }
 
     /** Ein synchronisiertes Modell mit Engine, Ausgang der Delta-Zellen. */
@@ -238,9 +260,13 @@ final class Langpack {
     /** {@code delta} neue Knoten auf einem synchronisierten Modell, eine
      *  Welle je Knoten. */
     static Outcome deltaAdd(Spec spec, int delta, boolean useIndex) {
+        return deltaAdd(spec, delta, useIndex, new Section());
+    }
+
+    public static Outcome deltaAdd(Spec spec, int delta, boolean useIndex, Section measured) {
         Model m = new Model(spec);
         Engine e = synchronised(m, useIndex);
-        long t0 = System.nanoTime();
+        measured.start();
         long steps = 0;
         for (int i = 0; i < delta; i++) {
             List<Id> fresh = m.grow();
@@ -249,16 +275,21 @@ final class Langpack {
             steps += saturate(e, m.g, m.vs);
             e.consolidate(m.g);
         }
-        return outcome(m.g, e, m.vs, steps, System.nanoTime() - t0);
+        measured.stop();
+        return outcome(m.g, e, m.vs, steps, measured);
     }
 
     /** {@code delta} Wertänderungen eines {@code rule}-Blatts (der
      *  Knoten wechselt seine Art), eine Welle je Änderung. */
     static Outcome deltaChange(Spec spec, int delta, boolean useIndex) {
+        return deltaChange(spec, delta, useIndex, new Section());
+    }
+
+    public static Outcome deltaChange(Spec spec, int delta, boolean useIndex, Section measured) {
         Model m = new Model(spec);
         Engine e = synchronised(m, useIndex);
         int half = spec.kinds() / 2;
-        long t0 = System.nanoTime();
+        measured.start();
         long steps = 0;
         for (int i = 0; i < delta; i++) {
             int ix = 1 + m.rng.below(m.lang.size() - 1);
@@ -274,15 +305,20 @@ final class Langpack {
             steps += saturate(e, m.g, m.vs);
             e.consolidate(m.g);
         }
-        return outcome(m.g, e, m.vs, steps, System.nanoTime() - t0);
+        measured.stop();
+        return outcome(m.g, e, m.vs, steps, measured);
     }
 
     /** {@code delta} Löschungen eines Sprachknotens, eine Welle je
      *  Löschung. */
     static Outcome deltaDelete(Spec spec, int delta, boolean useIndex) {
+        return deltaDelete(spec, delta, useIndex, new Section());
+    }
+
+    public static Outcome deltaDelete(Spec spec, int delta, boolean useIndex, Section measured) {
         Model m = new Model(spec);
         Engine e = synchronised(m, useIndex);
-        long t0 = System.nanoTime();
+        measured.start();
         long steps = 0;
         for (int i = 0; i < delta; i++) {
             int ix = 1 + m.rng.below(m.lang.size() - 1);
@@ -296,7 +332,8 @@ final class Langpack {
             steps += saturate(e, m.g, m.vs);
             e.consolidate(m.g);
         }
-        return outcome(m.g, e, m.vs, steps, System.nanoTime() - t0);
+        measured.stop();
+        return outcome(m.g, e, m.vs, steps, measured);
     }
 
     private static String fullHex(Id id) {
@@ -310,6 +347,10 @@ final class Langpack {
     /** Das Vorwärtsergebnis als Baseline eines zweiten Graphen, dann die
      *  ganze Zielseite als ein Add-Delta: die Rückwärtswelle. */
     static Outcome backward(Spec spec, boolean useIndex) {
+        return backward(spec, useIndex, new Section());
+    }
+
+    public static Outcome backward(Spec spec, boolean useIndex, Section measured) {
         // Einmal vorwärts (nicht gemessen) für ein Zielmodell.
         Model m = new Model(spec);
         synchronised(m, useIndex);
@@ -343,12 +384,13 @@ final class Langpack {
         }
         List<Rule> rules = Rules.load(rulesJson(spec.kinds()), g);
         Engine e = new Engine(rules, useIndex);
-        long t0 = System.nanoTime();
+        measured.start();
         e.admitDelta(List.of(Engine.DeltaDomain.TARGET));
         e.elementsAdded(g, vs, all);
-        long t1 = System.nanoTime();
+        long first = measured.elapsedNanos();
         long steps = saturate(e, g, vs);
-        return outcome(g, e, vs, steps, System.nanoTime() - t0, t1 - t0);
+        measured.stop();
+        return outcome(g, e, vs, steps, measured, first);
     }
 
     // ── Fingerprint wie benches/suite/fingerprint.rs ──
@@ -382,7 +424,7 @@ final class Langpack {
      * Verbindungen (Id, Status) und die Einträge der Kaskade in ihrer
      * Reihenfolge. Die ersten 16 Hex-Zeichen von blake3.
      */
-    static String fingerprint(Graph g, Engine e, Map<Id, String> vals) {
+    public static String fingerprint(Graph g, Engine e, Map<Id, String> vals) {
         Blake3 h = new Blake3();
         List<Node> nodes = g.allNodes();
         nodes.sort((x, y) -> x.id.compareTo(y.id));
