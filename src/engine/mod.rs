@@ -27,6 +27,7 @@ use crate::engine::matcher::{find_matches, find_matches_planned, Bindings};
 use crate::graph::{Graph, ValueResolver};
 use crate::plan::{apply_creation_at, DirectedRule, Ref, RuleDirection};
 
+#[cfg_attr(feature = "opt_e", allow(dead_code))]
 fn self_node_tt(g: &Graph, id: &GhostId) -> bool {
     g.node(id)
         .is_some_and(|n| n.status == Status::TentativeTombstone)
@@ -254,6 +255,25 @@ include!("links_filed.rs");
 #[cfg(feature = "opt_a")]
 include!("links_derived.rs");
 
+// The todo, in variants with the same interface (`Todo`, `Taken`,
+// `Carried`): an ordered set of keys, or an ordered map from the key
+// to the number of the match (`opt_e`). The files are part of this
+// module.
+#[cfg(not(feature = "opt_e"))]
+include!("todo_set.rs");
+#[cfg(feature = "opt_e")]
+include!("todo_map.rs");
+
+// What `step` knows of a pulled candidate, in two variants with the
+// same interface (`Recognised`, `recognise`, `Applied`,
+// `Engine::pulled_match`): looked up by the key of the candidate, or
+// hung on the number of its match (`opt_e`). The files are part of
+// this module.
+#[cfg(not(feature = "opt_e"))]
+include!("applied_set.rs");
+#[cfg(feature = "opt_e")]
+include!("applied_marks.rs");
+
 /// The engine.
 pub struct Engine<'r> {
     pub rules: &'r [DirectedRule],
@@ -265,9 +285,9 @@ pub struct Engine<'r> {
     by_element: crate::hash::FxHashMap<GhostId, Ixs>,
     /// What the registry of links keeps beyond `by_element`.
     links: Links,
-    /// Duplicate memory: ref sequences already applied per rule.
-    applied: std::collections::HashSet<(usize, Refs), crate::hash::FxBuildHasher>,
-    todo: BTreeSet<TodoKey>,
+    /// Duplicate memory: what was applied already.
+    applied: Applied,
+    todo: Todo,
     pub saw_contradiction: bool,
     /// (rule_ix, refs) → match store index for todo resolution.
     by_key: crate::hash::FxHashMap<(usize, Refs), u32>,
@@ -455,6 +475,7 @@ fn index_seed(
 
 /// Does `anchor` already carry a correspondence of type `typ` with a
 /// live counterpart of type `endpoint_typ`?
+#[cfg_attr(feature = "opt_e", allow(dead_code))]
 fn anchor_translated(g: &Graph, typ: &str, endpoint_typ: &str, anchor: &GhostId) -> bool {
     g.types.lookup(typ).is_some_and(|t| {
         let ep = g.types.lookup(endpoint_typ);
@@ -481,6 +502,7 @@ fn anchor_translated(g: &Graph, typ: &str, endpoint_typ: &str, anchor: &GhostId)
 /// carries a corr of its type with a MATCHABLE counterpart — the
 /// element is translated, regardless of which direction/variant ⇒ a
 /// duplicate.
+#[cfg_attr(feature = "opt_e", allow(dead_code))]
 fn is_translated(g: &Graph, rule: &DirectedRule, refs: &[GhostId]) -> bool {
     !rule.corr_recognition.is_empty()
         && rule
@@ -587,8 +609,8 @@ impl<'r> Engine<'r> {
             matches: Vec::new(),
             by_element: Default::default(),
             links: Links::new(),
-            applied: Default::default(),
-            todo: BTreeSet::new(),
+            applied: Applied::new(),
+            todo: Todo::new(),
             by_key: Default::default(),
             by_product: Default::default(),
             #[cfg(any(test, seesaw_checks))]
@@ -697,7 +719,7 @@ impl<'r> Engine<'r> {
             ix,
         );
         self.todo
-            .insert(todo_key(self.rules[rule_ix].rank, &refs, rule_ix));
+            .insert(self.rules[rule_ix].rank, &refs, rule_ix, ix);
         slot.insert(ix);
         self.matches.push(Stored {
             rule_ix,
@@ -1181,14 +1203,15 @@ impl<'r> Engine<'r> {
         if !was_dead {
             self.matches[mix as usize].dead = true;
             self.todo
-                .remove(&todo_key(self.rules[rule_ix].rank, &refs, rule_ix));
+                .remove(self.rules[rule_ix].rank, &refs, rule_ix, mix);
         }
         // Reclaim ability: FORGET the record (applied/by_key), so an
         // identical re-derivation can APPLY again and thereby
         // resurrect (M5 reclaim via insert_node/connect).
         let key = (rule_ix, refs);
-        self.applied.remove(&key);
-        self.by_key.remove(&key);
+        self.applied.forget(&key);
+        let current = self.by_key.remove(&key);
+        self.applied.forget_match(current);
         // If the match WAS APPLIED (provenance edge set), follow it:
         // tentatively tombstone its products and continue via the
         // queue. The next by_element lookup finds the children for
@@ -1455,7 +1478,7 @@ impl<'r> Engine<'r> {
             if !m.dead {
                 m.dead = true;
                 self.todo
-                    .remove(&todo_key(self.rules[m.rule_ix].rank, &m.refs, m.rule_ix));
+                    .remove(self.rules[m.rule_ix].rank, &m.refs, m.rule_ix, mix);
             }
         }
     }
@@ -1473,72 +1496,67 @@ impl<'r> Engine<'r> {
         self.settle_removed(g);
         loop {
             let filtered = self.active.is_some() || self.wave_directions.is_some();
-            let key = match ceiling {
+            let taken = match ceiling {
                 None if !filtered => {
                     trace!(todo_scanned);
                     self.todo.pop_first()
                 }
                 None => {
-                    let key = self
-                        .todo
-                        .iter()
-                        .find(|k| {
-                            trace!(todo_scanned);
-                            self.rule_active(k.3)
-                        })
-                        .cloned();
-                    if let Some(key) = &key {
-                        self.todo.remove(key);
-                    }
-                    key
+                    let (active, directions, rules) =
+                        (self.active.as_ref(), self.wave_directions, self.rules);
+                    self.todo.take_first(|rule_ix| {
+                        trace!(todo_scanned);
+                        rule_admitted(active, directions, &rules[rule_ix], rule_ix)
+                    })
                 }
                 Some(b) => {
-                    // Strictly below the bound = in the BTreeSet
-                    // strictly AFTER the bound key (reverse order).
-                    let bound = todo_key(b.rank, &Refs::from(b.refs.as_slice()), 0);
-                    let key = self
-                        .todo
-                        .range(bound.clone()..)
-                        .find(|k| {
+                    // Strictly below the bound: from the position of
+                    // the bound on, but not at that position itself.
+                    let (active, directions, rules) =
+                        (self.active.as_ref(), self.wave_directions, self.rules);
+                    self.todo.take_from(
+                        b.rank,
+                        &Refs::from(b.refs.as_slice()),
+                        |at_bound, rule_ix| {
                             trace!(todo_scanned);
-                            !(k.0 == bound.0 && k.2 == bound.2)
-                                && (!filtered || self.rule_active(k.3))
-                        })
-                        .cloned();
-                    if let Some(key) = &key {
-                        self.todo.remove(key);
-                    }
-                    key
+                            !at_bound
+                                && (!filtered
+                                    || rule_admitted(active, directions, &rules[rule_ix], rule_ix))
+                        },
+                    )
                 }
             };
-            let key = key?;
-            let (rule_ix, refs) = (key.3, (key.2).0);
+            let Taken {
+                rule_ix,
+                refs,
+                carried,
+            } = taken?;
             let rule = &self.rules[rule_ix];
-            if self.applied.contains(&(rule_ix, refs.clone())) {
+            if self.applied.contains(rule_ix, &refs, carried) {
                 continue;
             }
-            // TT ANCHORS don't fire: the resurrection window keeps TT
-            // matchable for re-derivations (context reclaim) — but as
-            // an ESTABLISHES anchor, something retracted doesn't work
-            // (otherwise reclaim zombies). Context refs may be TT
-            // (reclaim through use). A forgotten match is found again
-            // by the next seed, if resurrected.
-            if rule
-                .corr_recognition
-                .iter()
-                .any(|(_, pos, _)| self_node_tt(g, &refs[*pos]))
-            {
-                self.by_key.remove(&(rule_ix, refs));
-                continue;
-            }
-            // rc8-#2: the anchor already carries a corr of
-            // this type with a MATCHABLE counterpart — the element is
-            // translated, regardless of which direction/variant ⇒ a
-            // duplicate.
-            if is_translated(g, rule, &refs) {
-                // Duplicate: nothing new — note it for the verdict.
-                self.applied.insert((rule_ix, refs));
-                return Some(false);
+            match recognise(g, rule, &refs) {
+                // TT ANCHORS don't fire: the resurrection window keeps
+                // TT matchable for re-derivations (context reclaim) —
+                // but as an ESTABLISHES anchor, something retracted
+                // doesn't work (otherwise reclaim zombies). Context
+                // refs may be TT (reclaim through use). A forgotten
+                // match is found again by the next seed, if
+                // resurrected.
+                Recognised::Tentative => {
+                    self.by_key.remove(&(rule_ix, refs));
+                    continue;
+                }
+                // rc8-#2: the anchor already carries a corr of
+                // this type with a MATCHABLE counterpart — the element
+                // is translated, regardless of which direction/variant
+                // ⇒ a duplicate.
+                Recognised::Translated => {
+                    // Duplicate: nothing new — note it for the verdict.
+                    self.applied.insert_owned(rule_ix, refs, carried);
+                    return Some(false);
+                }
+                Recognised::Open => {}
             }
             let mut ids = std::mem::take(&mut self.ids);
             match plan_of(g, rule, &refs, &mut ids) {
@@ -1546,7 +1564,7 @@ impl<'r> Engine<'r> {
                     // Duplicate as well: everything the plan would
                     // create is there.
                     self.ids = ids;
-                    self.applied.insert((rule_ix, refs));
+                    self.applied.insert_owned(rule_ix, refs, carried);
                     return Some(false);
                 }
                 Planned::Tombstone => {
@@ -1582,10 +1600,10 @@ impl<'r> Engine<'r> {
                 created: Vec::new(),
                 created_edges,
             });
-            self.applied.insert((rule_ix, refs.clone()));
+            self.applied.insert(rule_ix, &refs, carried);
             // Materialize the provenance edge: the applied match points
             // at its cascade entry (so `retract_for` needs no scan).
-            if let Some(&mix) = self.by_key.get(&(rule_ix, refs.clone())) {
+            if let Some(mix) = self.pulled_match(rule_ix, &refs, carried) {
                 self.matches[mix as usize].entry = Some(eix);
             }
             self.expand_at(g, resolver, &created);
@@ -2430,10 +2448,10 @@ mod tests {
         let bound = {
             let high = e
                 .todo
-                .iter()
+                .keys()
+                .into_iter()
                 .find(|k| k.3 == 1)
-                .expect("der hochrangige steht in der Queue")
-                .clone();
+                .expect("der hochrangige steht in der Queue");
             SelectionBound {
                 rank: (bound_rank(&high)),
                 refs: (bound_refs(&high)),
