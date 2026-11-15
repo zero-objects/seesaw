@@ -29,12 +29,12 @@ pub struct Factors {
 /// Families to Persons, forward (read off `f2p/add/f20000`). Per
 /// family the model has 13 nodes and the cascade applies four steps,
 /// each of which creates four nodes and five connections; twelve
-/// matches are recorded over 37 nodes and connections.
+/// matches are recorded over 21 nodes.
 pub const F2P: Factors = Factors {
     nodes: 1231,
     connections: 1539,
     matches: 924,
-    elements: 2847,
+    elements: 1616,
     steps: 308,
 };
 
@@ -44,7 +44,7 @@ pub const LANGPACK: Factors = Factors {
     nodes: 1375,
     connections: 1875,
     matches: 1000,
-    elements: 4286,
+    elements: 2013,
     steps: 500,
 };
 
@@ -53,7 +53,7 @@ pub const LANGPACK_BACKWARD: Factors = Factors {
     nodes: 1571,
     connections: 2142,
     matches: 571,
-    elements: 3621,
+    elements: 1809,
     steps: 571,
 };
 
