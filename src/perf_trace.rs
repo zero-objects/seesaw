@@ -29,12 +29,6 @@ pub struct Trace {
     pub anchored_searches: u64,
     /// Matches the anchored searches returned.
     pub anchored_found: u64,
-    /// Anchored searches left out because the anchor is already
-    /// translated.
-    pub translated_skipped: u64,
-    /// Matches of anchored searches not recorded because they are
-    /// already translated.
-    pub translated_dropped: u64,
     /// Graph nodes entered by the walks of the anchor index.
     pub anchor_walk_visits: u64,
     /// Places (rule, position) the anchor index compared against a
@@ -57,7 +51,7 @@ pub struct Trace {
 impl Trace {
     /// Field names and values in declaration order (for tables).
     #[must_use]
-    pub fn fields(&self) -> [(&'static str, u64); 17] {
+    pub fn fields(&self) -> [(&'static str, u64); 15] {
         [
             ("steps_applied", self.steps_applied),
             ("todo_scanned", self.todo_scanned),
@@ -66,8 +60,6 @@ impl Trace {
             ("seed_searches", self.seed_searches),
             ("anchored_searches", self.anchored_searches),
             ("anchored_found", self.anchored_found),
-            ("translated_skipped", self.translated_skipped),
-            ("translated_dropped", self.translated_dropped),
             ("anchor_walk_visits", self.anchor_walk_visits),
             ("anchor_places", self.anchor_places),
             ("plan_builds", self.plan_builds),

@@ -717,7 +717,7 @@ impl<'r> Engine<'r> {
         resolver: &dyn ValueResolver,
         new_nodes: &[GhostId],
     ) {
-        self.expand_at(g, resolver, new_nodes, false);
+        self.expand_at(g, resolver, new_nodes);
     }
 
     /// Delta-local expansion: anchor new elements (spec §1.6 add).
@@ -728,21 +728,12 @@ impl<'r> Engine<'r> {
     /// rules, nodes and positions, so the recorded matches and their
     /// order are those of anchoring at every position of the same type.
     ///
-    /// `own`: the new nodes are the ones a step of this engine has just
-    /// created (as opposed to a delta of the host). A match found there
-    /// that is already translated ([`is_translated`]) is not recorded:
-    /// `step` would pull it later only to find the same and count a
-    /// duplicate. These are above all the matches of the opposite
-    /// direction over what the step has just built, in a wave without a
-    /// route. Where the rule has one establishes corr and the search
-    /// would be anchored at its anchor, the search itself is left out.
-    fn expand_at(
-        &mut self,
-        g: &Graph,
-        resolver: &dyn ValueResolver,
-        new_nodes: &[GhostId],
-        own: bool,
-    ) {
+    /// Every match found is recorded, also one whose anchor is already
+    /// translated ([`is_translated`]): `step` decides that when it
+    /// pulls the match, on the graph as it is then, and the match store
+    /// keeps the duplicate so that a retraction of one of its elements
+    /// makes it a candidate again.
+    fn expand_at(&mut self, g: &Graph, resolver: &dyn ValueResolver, new_nodes: &[GhostId]) {
         if new_nodes.is_empty() {
             return;
         }
@@ -787,17 +778,7 @@ impl<'r> Engine<'r> {
                 // The same node again: searched at its first index.
                 continue;
             }
-            let rule = &rules[ri];
-            if own {
-                if let [(typ, anchor_pos, endpoint_typ)] = rule.corr_recognition.as_slice() {
-                    if *anchor_pos == pos && anchor_translated(g, typ, endpoint_typ, &new_nodes[ni])
-                    {
-                        trace!(translated_skipped);
-                        continue;
-                    }
-                }
-            }
-            let pattern = &rule.pattern;
+            let pattern = &rules[ri].pattern;
             let plan = index.plan(ri, pos, pattern);
             trace!(anchored_searches);
             find_matches_planned(
@@ -812,17 +793,13 @@ impl<'r> Engine<'r> {
             );
             for m in scratch.matches(pattern) {
                 trace!(anchored_found);
-                if own && is_translated(g, rule, m) {
-                    trace!(translated_dropped);
-                    continue;
-                }
                 self.record(g, ri, m);
             }
         }
         self.scratch = scratch;
         self.anchor = anchor;
         #[cfg(test)]
-        self.check_recorded(g, resolver, new_nodes, own);
+        self.check_recorded(g, resolver, new_nodes);
     }
 
     /// Test check of the expansion as a whole: every match the
@@ -830,13 +807,7 @@ impl<'r> Engine<'r> {
     /// position of its type, no node left out) is in the match store
     /// afterwards.
     #[cfg(test)]
-    fn check_recorded(
-        &self,
-        g: &Graph,
-        resolver: &dyn ValueResolver,
-        new_nodes: &[GhostId],
-        own: bool,
-    ) {
+    fn check_recorded(&self, g: &Graph, resolver: &dyn ValueResolver, new_nodes: &[GhostId]) {
         for (ri, rule) in self.rules.iter().enumerate() {
             if !self.rule_active(ri) {
                 continue;
@@ -850,11 +821,6 @@ impl<'r> Engine<'r> {
                     let mut fixed = vec![None; rule.pattern.nodes.len()];
                     fixed[pos] = Some(*id);
                     for m in find_matches_with_fixed(g, resolver, &rule.pattern, &fixed) {
-                        // On a step's own nodes a translated match is
-                        // left out on purpose.
-                        if own && is_translated(g, rule, &m) {
-                            continue;
-                        }
                         assert!(
                             self.by_key.contains_key(&(ri, Refs::from(m))),
                             "expansion drops a match: rule {} position {pos}",
@@ -1231,7 +1197,7 @@ impl<'r> Engine<'r> {
         a: &GhostId,
         b: &GhostId,
     ) {
-        self.expand_at(g, resolver, &[*a, *b], false);
+        self.expand_at(g, resolver, &[*a, *b]);
     }
 
     pub fn link_removed(&mut self, g: &mut Graph, a: &GhostId, b: &GhostId) {
@@ -1474,7 +1440,7 @@ impl<'r> Engine<'r> {
             if let Some(&mix) = self.by_key.get(&(rule_ix, refs.clone())) {
                 self.matches[mix as usize].entry = Some(eix);
             }
-            self.expand_at(g, resolver, &created, true);
+            self.expand_at(g, resolver, &created);
             self.cascade[eix as usize].created = created;
             return Some(true);
         }
