@@ -98,7 +98,7 @@ impl Engine<'_> {
 
     /// The rule of every match in the todo.
     fn pending_rules(&self) -> impl Iterator<Item = usize> + '_ {
-        self.todo.iter().map(|key| key.3)
+        self.todo.rules()
     }
 }
 

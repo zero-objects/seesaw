@@ -30,6 +30,7 @@ use crate::engine::matcher::{find_matches, find_matches_planned, Bindings};
 use crate::graph::{Graph, ValueResolver};
 use crate::plan::{apply_creation_at, DirectedRule, Names, Ref, RuleDirection, RuleNames};
 
+#[cfg_attr(feature = "opt_e", allow(dead_code))]
 fn self_node_tt(g: &Graph, id: &GhostId) -> bool {
     g.node(id)
         .is_some_and(|n| n.status == Status::TentativeTombstone)
@@ -137,6 +138,7 @@ pub struct SelectionBound {
 /// two heads differ, so it changes nothing about the order; it lets
 /// the todo compare two keys without following both sequences to the
 /// heap, which is where most comparisons of a lookup were decided.
+#[cfg_attr(feature = "opt_d", allow(dead_code))]
 type TodoKey = (
     std::cmp::Reverse<u64>,
     std::cmp::Reverse<u128>,
@@ -146,6 +148,7 @@ type TodoKey = (
 
 /// The first 16 bytes of the first id of a ref sequence, big-endian;
 /// 0 for an empty sequence. `head(a) < head(b)` implies `a < b`.
+#[cfg_attr(feature = "opt_d", allow(dead_code))]
 fn head(refs: &[GhostId]) -> u128 {
     refs.first().map_or(0, |id| {
         let mut b = [0u8; 16];
@@ -159,6 +162,7 @@ fn head(refs: &[GhostId]) -> u128 {
 /// set. Equality, order and hash are those of the sequence.
 type Refs = std::sync::Arc<[GhostId]>;
 
+#[cfg_attr(feature = "opt_d", allow(dead_code))]
 fn todo_key(rank: u64, refs: &Refs, rule_ix: usize) -> TodoKey {
     (
         std::cmp::Reverse(rank),
@@ -175,11 +179,43 @@ fn todo_key(rank: u64, refs: &Refs, rule_ix: usize) -> TodoKey {
 #[derive(Debug, Clone)]
 enum Ixs {
     Inline { len: u8, ix: [u32; IXS_INLINE] },
-    Heap(Vec<u32>),
+    Heap(IxsLong),
 }
 
 /// Indices an [`Ixs`] holds without an allocation.
+#[cfg(not(feature = "opt_h"))]
 const IXS_INLINE: usize = 4;
+
+/// The list of an [`Ixs`] on the heap. With the vector in place an
+/// [`Ixs`] takes 32 bytes, an entry of a map from an id to it 64.
+#[cfg(not(feature = "opt_h"))]
+type IxsLong = Vec<u32>;
+
+#[cfg(not(feature = "opt_h"))]
+fn ixs_long(v: Vec<u32>) -> IxsLong {
+    v
+}
+
+/// Indices an [`Ixs`] holds without an allocation (`opt_h`: one less,
+/// so that the list fits 16 bytes).
+#[cfg(feature = "opt_h")]
+const IXS_INLINE: usize = 3;
+
+/// The list of an [`Ixs`] on the heap (`opt_h`): behind one pointer, so
+/// that an [`Ixs`] takes 16 bytes and an entry of a map from an id to
+/// it 48. A long list costs a second allocation and one more step to
+/// its indices.
+#[cfg(feature = "opt_h")]
+#[allow(clippy::box_collection)]
+type IxsLong = Box<Vec<u32>>;
+
+#[cfg(feature = "opt_h")]
+fn ixs_long(v: Vec<u32>) -> IxsLong {
+    Box::new(v)
+}
+
+/// Capacity of the list of an [`Ixs`] when it moves to the heap.
+const IXS_FIRST_ON_HEAP: usize = 8;
 
 impl Default for Ixs {
     fn default() -> Self {
@@ -198,10 +234,10 @@ impl Ixs {
                     ix[*len as usize] = value;
                     *len += 1;
                 } else {
-                    let mut v = Vec::with_capacity(2 * IXS_INLINE);
+                    let mut v = Vec::with_capacity(IXS_FIRST_ON_HEAP);
                     v.extend_from_slice(&ix[..]);
                     v.push(value);
-                    *self = Self::Heap(v);
+                    *self = Self::Heap(ixs_long(v));
                 }
             }
             Self::Heap(v) => v.push(value),
@@ -216,6 +252,36 @@ impl Ixs {
     }
 }
 
+// The registry of the links of a match, in two variants with the same
+// interface (`Links`, `file_links`, `Engine::filed_under`,
+// `Engine::removed_unfiled`, `Engine::settle_removed`). The files are
+// part of this module.
+#[cfg(not(feature = "opt_a"))]
+include!("links_filed.rs");
+#[cfg(feature = "opt_a")]
+include!("links_derived.rs");
+
+// The todo, in variants with the same interface (`Todo`, `Taken`,
+// `Carried`): an ordered set of keys, an ordered map from the key to
+// the number of the match (`opt_e`), or a heap (`opt_d`, with or
+// without `opt_e`). The files are part of this module.
+#[cfg(not(any(feature = "opt_d", feature = "opt_e")))]
+include!("todo_set.rs");
+#[cfg(all(feature = "opt_e", not(feature = "opt_d")))]
+include!("todo_map.rs");
+#[cfg(feature = "opt_d")]
+include!("todo_heap.rs");
+
+// What `step` knows of a pulled candidate, in two variants with the
+// same interface (`Recognised`, `recognise`, `Applied`,
+// `Engine::pulled_match`): looked up by the key of the candidate, or
+// hung on the number of its match (`opt_e`). The files are part of
+// this module.
+#[cfg(not(feature = "opt_e"))]
+include!("applied_set.rs");
+#[cfg(feature = "opt_e")]
+include!("applied_marks.rs");
+
 /// The engine.
 pub struct Engine<'r> {
     pub rules: &'r [DirectedRule],
@@ -225,9 +291,11 @@ pub struct Engine<'r> {
     matches: Vec<Stored>,
     /// adj[k] → match refs (spec §1.6: "which matches contain k?").
     by_element: crate::hash::FxHashMap<GhostId, Ixs>,
-    /// Duplicate memory: ref sequences already applied per rule.
-    applied: std::collections::HashSet<(usize, Refs), crate::hash::FxBuildHasher>,
-    todo: BTreeSet<TodoKey>,
+    /// What the registry of links keeps beyond `by_element`.
+    links: Links,
+    /// Duplicate memory: what was applied already.
+    applied: Applied,
+    todo: Todo,
     pub saw_contradiction: bool,
     /// (rule_ix, refs) → match store index for todo resolution.
     by_key: crate::hash::FxHashMap<(usize, Refs), u32>,
@@ -419,6 +487,7 @@ fn index_seed(
 /// Does `anchor` already carry a correspondence of type `typ` with a
 /// live counterpart of type `endpoint_typ`? `ix`: the entry of the
 /// rule's `corr_recognition` the two types come from.
+#[cfg_attr(feature = "opt_e", allow(dead_code))]
 fn anchor_translated(
     g: &Graph,
     names: &mut RuleNames<'_>,
@@ -452,6 +521,7 @@ fn anchor_translated(
 /// carries a corr of its type with a MATCHABLE counterpart — the
 /// element is translated, regardless of which direction/variant ⇒ a
 /// duplicate.
+#[cfg_attr(feature = "opt_e", allow(dead_code))]
 fn is_translated(
     g: &Graph,
     rule: &DirectedRule,
@@ -571,8 +641,9 @@ impl<'r> Engine<'r> {
             rules,
             matches: Vec::new(),
             by_element: Default::default(),
-            applied: Default::default(),
-            todo: BTreeSet::new(),
+            links: Links::new(),
+            applied: Applied::new(),
+            todo: Todo::new(),
             by_key: Default::default(),
             by_product: Default::default(),
             #[cfg(any(test, seesaw_checks))]
@@ -673,40 +744,16 @@ impl<'r> Engine<'r> {
         for id in refs.iter() {
             self.by_element.entry(*id).or_default().push(ix);
         }
-        // The match's LINKS belong in the registry too, not only its
-        // nodes. A match rests on the edges its pattern requires, so
-        // removing one has to kill it exactly as removing a node does.
-        //
-        // Until now `by_element` held nodes only, and a pure edge delta
-        // (an owner or super change) killed no match at all. That is
-        // why `link_removed` exists as an over-approximation, and why
-        // the ecore2sql ledger cannot express a super change as the
-        // edge delta it is and replaces the whole node instead — which
-        // leaves a leaf owned by two carriers for the duration of the
-        // move. Sandra ruled that state out on 2026-08-12: a delta
-        // changes or deletes, and a temporary multi-ownership makes no
-        // technical sense.
-        let pattern = &self.rules[rule_ix].pattern;
-        for l in &pattern.links {
-            // SameValue is a join over two leaf values, not an edge —
-            // there is no connection in the graph to index.
-            if l.kind == crate::engine::matcher::LinkKind::SameValue {
-                continue;
-            }
-            if let (Some(a), Some(b)) = (refs.get(l.from), refs.get(l.to)) {
-                // The id of the connection a→b: read from the graph
-                // where the connection exists, derived otherwise (a
-                // direction-free link the graph holds the other way
-                // round). Both are the same id.
-                // The type of `b` is that of its position.
-                let e = g
-                    .connection_id_typed(a, b, pattern.nodes[l.to].typ)
-                    .unwrap_or_else(|| crate::graph::preview_connection_id(a, b));
-                self.by_element.entry(e).or_default().push(ix);
-            }
-        }
+        file_links(
+            &mut self.by_element,
+            &mut self.links,
+            g,
+            &self.rules[rule_ix].pattern,
+            &refs,
+            ix,
+        );
         self.todo
-            .insert(todo_key(self.rules[rule_ix].rank, &refs, rule_ix));
+            .insert(self.rules[rule_ix].rank, &refs, rule_ix, ix);
         slot.insert(ix);
         self.matches.push(Stored {
             rule_ix,
@@ -725,6 +772,7 @@ impl<'r> Engine<'r> {
     /// fewer nodes; both find the same matches and record them in the
     /// same order.
     pub fn seed(&mut self, g: &Graph, resolver: &dyn ValueResolver) {
+        self.settle_removed(g);
         #[cfg(any(test, seesaw_checks))]
         self.check_seed(g, resolver);
         if self.seed_through_index(g) {
@@ -883,6 +931,7 @@ impl<'r> Engine<'r> {
         resolver: &dyn ValueResolver,
         new_nodes: &[GhostId],
     ) {
+        self.settle_removed(g);
         self.expand_at(g, resolver, new_nodes);
     }
 
@@ -1070,6 +1119,7 @@ impl<'r> Engine<'r> {
     ///
     /// Der Aufrufer hat den Tombstone bereits gesetzt.
     pub fn element_deleted(&mut self, g: &mut Graph, removed: &GhostId) {
+        self.settle_removed(g);
         self.deleted.insert(*removed);
         self.retract_wave(g, removed, true);
     }
@@ -1081,6 +1131,7 @@ impl<'r> Engine<'r> {
     /// verletzt, zieht sie samt Korrespondenz zurueck, macht daraus
     /// aber kein Delete der Gegenseite.
     pub fn element_changed(&mut self, g: &mut Graph, changed: &GhostId) {
+        self.settle_removed(g);
         self.retract_wave(g, changed, false);
     }
 
@@ -1094,6 +1145,7 @@ impl<'r> Engine<'r> {
     #[deprecated(note = "use element_deleted or element_changed — the delta type \
                          belongs to the call, not to a status check")]
     pub fn retract_for(&mut self, g: &mut Graph, removed: &GhostId) {
+        self.settle_removed(g);
         let deleting = !g.node(removed).is_some_and(|n| n.status.is_matchable());
         if deleting {
             self.deleted.insert(*removed);
@@ -1185,14 +1237,15 @@ impl<'r> Engine<'r> {
         if !was_dead {
             self.matches[mix as usize].dead = true;
             self.todo
-                .remove(&todo_key(self.rules[rule_ix].rank, &refs, rule_ix));
+                .remove(self.rules[rule_ix].rank, &refs, rule_ix, mix);
         }
         // Reclaim ability: FORGET the record (applied/by_key), so an
         // identical re-derivation can APPLY again and thereby
         // resurrect (M5 reclaim via insert_node/connect).
         let key = (rule_ix, refs);
-        self.applied.remove(&key);
-        self.by_key.remove(&key);
+        self.applied.forget(&key);
+        let current = self.by_key.remove(&key);
+        self.applied.forget_match(current);
         // If the match WAS APPLIED (provenance edge set), follow it:
         // tentatively tombstone its products and continue via the
         // queue. The next by_element lookup finds the children for
@@ -1259,7 +1312,7 @@ impl<'r> Engine<'r> {
             // It PARTICIPATES in matches: those lose their ground.
             // A copy of the list (in place up to four entries): the
             // retraction below writes the engine.
-            let mixes: Ixs = self.by_element.get(&id).cloned().unwrap_or_default();
+            let mixes: Ixs = self.filed_under(g, &id);
             for &mix in mixes.as_slice() {
                 self.retract_match(g, mix, queue);
             }
@@ -1293,6 +1346,7 @@ impl<'r> Engine<'r> {
     /// new derivation has reclaimed the element (a reclaim resets the
     /// status in `insert_node`/`connect`).
     pub fn consolidate(&mut self, g: &mut Graph) {
+        self.settle_removed(g);
         // Processes ONLY the TT collected by retraction — no full
         // model scan. An element that was RECLAIMED in the meantime is
         // still in the list, but is no longer TT (connect set it to
@@ -1416,10 +1470,12 @@ impl<'r> Engine<'r> {
         a: &GhostId,
         b: &GhostId,
     ) {
+        self.settle_removed(g);
         self.expand_at(g, resolver, &[*a, *b]);
     }
 
     pub fn link_removed(&mut self, g: &mut Graph, a: &GhostId, b: &GhostId) {
+        self.settle_removed(g);
         let Some(in_a) = self.by_element.get(a) else {
             return;
         };
@@ -1443,14 +1499,20 @@ impl<'r> Engine<'r> {
     /// delete/modify (spec §1.6): EAGERLY kill the element's matches.
     pub fn element_removed(&mut self, id: &GhostId) {
         let Some(refs) = self.by_element.get(id).cloned() else {
+            self.removed_unfiled(id);
             return;
         };
-        for &mix in refs.as_slice() {
+        self.kill(refs.as_slice());
+    }
+
+    /// Kills matches eagerly: dead and out of the todo.
+    fn kill(&mut self, mixes: &[u32]) {
+        for &mix in mixes {
             let m = &mut self.matches[mix as usize];
             if !m.dead {
                 m.dead = true;
                 self.todo
-                    .remove(&todo_key(self.rules[m.rule_ix].rank, &m.refs, m.rule_ix));
+                    .remove(self.rules[m.rule_ix].rank, &m.refs, m.rule_ix, mix);
             }
         }
     }
@@ -1465,75 +1527,71 @@ impl<'r> Engine<'r> {
         ceiling: Option<&SelectionBound>,
     ) -> Option<bool> {
         // `true` in Some = applied; None = no admitted todo below the bound.
+        self.settle_removed(g);
         loop {
             let filtered = self.active.is_some() || self.wave_directions.is_some();
-            let key = match ceiling {
+            let taken = match ceiling {
                 None if !filtered => {
                     trace!(todo_scanned);
                     self.todo.pop_first()
                 }
                 None => {
-                    let key = self
-                        .todo
-                        .iter()
-                        .find(|k| {
-                            trace!(todo_scanned);
-                            self.rule_active(k.3)
-                        })
-                        .cloned();
-                    if let Some(key) = &key {
-                        self.todo.remove(key);
-                    }
-                    key
+                    let (active, directions, rules) =
+                        (self.active.as_ref(), self.wave_directions, self.rules);
+                    self.todo.take_first(|rule_ix| {
+                        trace!(todo_scanned);
+                        rule_admitted(active, directions, &rules[rule_ix], rule_ix)
+                    })
                 }
                 Some(b) => {
-                    // Strictly below the bound = in the BTreeSet
-                    // strictly AFTER the bound key (reverse order).
-                    let bound = todo_key(b.rank, &Refs::from(b.refs.as_slice()), 0);
-                    let key = self
-                        .todo
-                        .range(bound.clone()..)
-                        .find(|k| {
+                    // Strictly below the bound: from the position of
+                    // the bound on, but not at that position itself.
+                    let (active, directions, rules) =
+                        (self.active.as_ref(), self.wave_directions, self.rules);
+                    self.todo.take_from(
+                        b.rank,
+                        &Refs::from(b.refs.as_slice()),
+                        |at_bound, rule_ix| {
                             trace!(todo_scanned);
-                            !(k.0 == bound.0 && k.2 == bound.2)
-                                && (!filtered || self.rule_active(k.3))
-                        })
-                        .cloned();
-                    if let Some(key) = &key {
-                        self.todo.remove(key);
-                    }
-                    key
+                            !at_bound
+                                && (!filtered
+                                    || rule_admitted(active, directions, &rules[rule_ix], rule_ix))
+                        },
+                    )
                 }
             };
-            let key = key?;
-            let (rule_ix, refs) = (key.3, (key.2).0);
+            let Taken {
+                rule_ix,
+                refs,
+                carried,
+            } = taken?;
             let rule = &self.rules[rule_ix];
-            if self.applied.contains(&(rule_ix, refs.clone())) {
+            if self.applied.contains(rule_ix, &refs, carried) {
                 continue;
             }
-            // TT ANCHORS don't fire: the resurrection window keeps TT
-            // matchable for re-derivations (context reclaim) — but as
-            // an ESTABLISHES anchor, something retracted doesn't work
-            // (otherwise reclaim zombies). Context refs may be TT
-            // (reclaim through use). A forgotten match is found again
-            // by the next seed, if resurrected.
-            if rule
-                .corr_recognition
-                .iter()
-                .any(|(_, pos, _)| self_node_tt(g, &refs[*pos]))
-            {
-                self.by_key.remove(&(rule_ix, refs));
-                continue;
-            }
-            // rc8-#2: the anchor already carries a corr of
-            // this type with a MATCHABLE counterpart — the element is
-            // translated, regardless of which direction/variant ⇒ a
-            // duplicate.
             let mut names = self.names.for_step(g, self.rules, rule_ix);
-            if is_translated(g, rule, &refs, &mut names) {
-                // Duplicate: nothing new — note it for the verdict.
-                self.applied.insert((rule_ix, refs));
-                return Some(false);
+            match recognise(g, rule, &refs, &mut names) {
+                // TT ANCHORS don't fire: the resurrection window keeps
+                // TT matchable for re-derivations (context reclaim) —
+                // but as an ESTABLISHES anchor, something retracted
+                // doesn't work (otherwise reclaim zombies). Context
+                // refs may be TT (reclaim through use). A forgotten
+                // match is found again by the next seed, if
+                // resurrected.
+                Recognised::Tentative => {
+                    self.by_key.remove(&(rule_ix, refs));
+                    continue;
+                }
+                // rc8-#2: the anchor already carries a corr of
+                // this type with a MATCHABLE counterpart — the element
+                // is translated, regardless of which direction/variant
+                // ⇒ a duplicate.
+                Recognised::Translated => {
+                    // Duplicate: nothing new — note it for the verdict.
+                    self.applied.insert_owned(rule_ix, refs, carried);
+                    return Some(false);
+                }
+                Recognised::Open => {}
             }
             let mut ids = std::mem::take(&mut self.ids);
             match plan_of(g, rule, &refs, &mut ids, &mut names) {
@@ -1541,7 +1599,7 @@ impl<'r> Engine<'r> {
                     // Duplicate as well: everything the plan would
                     // create is there.
                     self.ids = ids;
-                    self.applied.insert((rule_ix, refs));
+                    self.applied.insert_owned(rule_ix, refs, carried);
                     return Some(false);
                 }
                 Planned::Tombstone => {
@@ -1578,10 +1636,10 @@ impl<'r> Engine<'r> {
                 created: Vec::new(),
                 created_edges,
             });
-            self.applied.insert((rule_ix, refs.clone()));
+            self.applied.insert(rule_ix, &refs, carried);
             // Materialize the provenance edge: the applied match points
             // at its cascade entry (so `retract_for` needs no scan).
-            if let Some(&mix) = self.by_key.get(&(rule_ix, refs.clone())) {
+            if let Some(mix) = self.pulled_match(rule_ix, &refs, carried) {
                 self.matches[mix as usize].entry = Some(eix);
             }
             self.expand_at(g, resolver, &created);
@@ -2100,6 +2158,104 @@ mod tests {
         assert_eq!(e.cascade.len(), 1, "only f1 gets translated");
     }
 
+    /// A removed connection kills the matches that rest on it, and
+    /// only those. The door `element_removed` does not get the graph;
+    /// what it cannot settle itself is settled by the next door that
+    /// does, here the step.
+    #[test]
+    fn a_removed_connection_kills_the_matches_resting_on_it() {
+        let (mut g, vs) = seed(2);
+        let fwd = father_rule(&mut g).remove(0);
+        let rules = vec![fwd];
+        let mut e = Engine::new(&rules);
+        e.seed(&g, &vs);
+        assert_eq!(e.todo.len(), 2);
+        let member = g
+            .iter_nodes()
+            .find(|n| g.types.name(n.typ) == "Member")
+            .unwrap()
+            .id;
+        let father = g
+            .parts(&member)
+            .find(|p| !p.outgoing)
+            .expect("the member hangs on a father")
+            .other;
+        let link = g.connection_id(&father, &member).expect("father → member");
+        // The connection the other way round is no element of the
+        // graph and no link of the pattern: nothing rests on it.
+        e.element_removed(&crate::graph::preview_connection_id(&member, &father));
+        g.set_connection_status(&link, Status::Tombstone);
+        e.element_removed(&link);
+        let _ = e.run_remaining(&mut g, &vs);
+        assert_eq!(e.cascade.len(), 1, "only the other family gets translated");
+    }
+
+    /// A match is filed under the connection of each of its links in
+    /// the direction the pattern names, also where the graph holds the
+    /// connection the other way round (a link to a context
+    /// correspondence is direction-free). Removing an element with that
+    /// id, which the graph does not know, kills the match.
+    #[test]
+    fn a_match_rests_on_the_named_direction_of_a_context_link() {
+        let file: RuleFile = serde_json::from_value(serde_json::json!({
+            "format": 3,
+            "name": "context_link",
+            "rules": [
+                {
+                    "name": "Root", "rank": 100,
+                    "left": {"anchor": "a", "nodes": [
+                        {"name": "a", "type": "A"}
+                    ]},
+                    "right": {"anchor": "b", "nodes": [
+                        {"name": "b", "type": "B"}
+                    ]},
+                    "corrs": [{"type": "AB", "left": "a", "right": "b",
+                               "role": "establishes"}]
+                },
+                {
+                    "name": "Child", "rank": 90,
+                    "left": {"anchor": "a", "nodes": [
+                        {"name": "a", "type": "A"},
+                        {"name": "x", "type": "X"}
+                    ], "links": [["a", "x"]]},
+                    "right": {"anchor": "b", "nodes": [
+                        {"name": "b", "type": "B"},
+                        {"name": "y", "type": "Y"}
+                    ], "links": [["b", "y"]]},
+                    "corrs": [
+                        {"type": "AB", "left": "a", "right": "b",
+                         "role": "references"},
+                        {"type": "XY", "left": "x", "right": "y",
+                         "role": "establishes"}
+                    ]
+                }
+            ]
+        }))
+        .expect("rule file parses");
+        let mut g = Graph::new();
+        let a = g.add_baseline("a", "A");
+        let x = g.add_baseline("a/x", "X");
+        g.connect(a, x, Status::Solid);
+        let rules = crate::rules::load_file(&file, &mut g).expect("rules lower");
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        // Root applies and creates the correspondence; the match of
+        // Child is found from it and waits in the todo.
+        assert_eq!(e.step(&mut g, &vs), Some(true));
+        assert_eq!(e.todo.len(), 1, "the candidate of Child");
+        let corr = g.iter_nodes().find(|n| n.is_corr).expect("AB").id;
+        // The graph holds a → corr. The pattern of Child names the
+        // link from the correspondence to its anchor.
+        assert!(g.connection_id(&a, &corr).is_some());
+        let named = crate::graph::preview_connection_id(&corr, &a);
+        assert!(g.connection(&named).is_none() && g.node(&named).is_none());
+        e.element_removed(&named);
+        assert_eq!(e.step(&mut g, &vs), None, "the candidate of Child is dead");
+        assert_eq!(e.cascade.len(), 1);
+    }
+
     impl<'r> Engine<'r> {
         /// Test helper: run without a fresh seed.
         fn run_remaining(&mut self, g: &mut Graph, resolver: &dyn ValueResolver) -> Termination {
@@ -2329,10 +2485,10 @@ mod tests {
         let bound = {
             let high = e
                 .todo
-                .iter()
+                .keys()
+                .into_iter()
                 .find(|k| k.3 == 1)
-                .expect("der hochrangige steht in der Queue")
-                .clone();
+                .expect("der hochrangige steht in der Queue");
             SelectionBound {
                 rank: (bound_rank(&high)),
                 refs: (bound_refs(&high)),
@@ -2436,11 +2592,18 @@ mod contract_tests {
             ("Stored", size_of::<Stored>()),
             ("Entry", size_of::<Entry>()),
         ];
+        // `opt_h` keeps one index less in place and the long list
+        // behind one pointer.
+        let (ixs, filed) = if cfg!(feature = "opt_h") {
+            (16, 48)
+        } else {
+            (32, 64)
+        };
         assert_eq!(
             sizes,
             [
-                ("Ixs", 32),
-                ("(GhostId, Ixs)", 64),
+                ("Ixs", ixs),
+                ("(GhostId, Ixs)", filed),
                 ("TodoKey", 48),
                 ("Stored", 40),
                 ("Entry", 88),
