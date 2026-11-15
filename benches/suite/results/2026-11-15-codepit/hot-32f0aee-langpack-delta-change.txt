@@ -1,0 +1,73 @@
+== langpack/delta-change/k700/n20000/d200, instructions:u: 312 of 3452 samples in the section
+-- inclusive, % of section
+ 76.60	seesaw_tgg::engine::Engine::step_with_limit
+ 54.49	seesaw_tgg::engine::Engine::expand_at
+ 33.65	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+ 23.08	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17hfb32e97e08612f3aE
+ 20.19	seesaw_tgg::engine::Engine::drain_retraction
+ 20.19	seesaw_tgg::engine::Engine::retract_wave
+ 11.22	seesaw_tgg::engine::Engine::record
+ 10.90	seesaw_tgg::plan::apply_creation_at
+  8.97	seesaw_tgg::engine::Engine::retract_match
+  7.69	seesaw_tgg::engine::anchor::AnchorIndex::walk::_$u7b$$u7b$closure$u7d$$u7d$
+  6.41	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  6.41	seesaw_tgg::engine::matcher::find_matches_planned
+  6.41	seesaw_tgg::graph::Graph::connect_reporting
+  5.13	alloc::collections::btree::map::BTreeMap<K,V,A>::insert
+  4.81	__memmove_avx_unaligned_erms
+  4.49	hashbrown::rustc_entry::>::rustc_entry
+  4.17	seesaw_tgg::graph::Graph::with_value
+  3.53	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  3.21	__memcmp_avx2_movbe
+  2.56	hashbrown::map::HashMap<K,V,S,A>::insert
+  2.24	__memmove_avx_unaligned
+  2.24	seesaw_tgg::engine::anchor_translated
+  1.92	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_str
+  1.92	seesaw_tgg::graph::Graph::connection_id
+  1.92	seesaw_tgg::graph::ident::ghost
+  1.60	malloc
+  1.60	seesaw_tgg::engine::Engine::elements_added
+  1.28	<core::iter::adapters::map::Map<I,F> as core::iter::traits::iterator::Iterator>::try_fold
+  1.28	alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections:
+  1.28	blake3::Hasher::update
+  1.28	cfree@GLIBC_2.2.5
+  1.28	seesaw_tgg::engine::Engine::consolidate
+  1.28	seesaw_tgg::engine::matcher::node_ok
+  1.28	seesaw_tgg::graph::KonstTable::intern
+  1.28	seesaw_tgg::graph::Parts::of_type
+-- self, % of section
+  9.29	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17hfb32e97e08612f3aE
+  8.33	seesaw_tgg::engine::Engine::step_with_limit
+  8.33	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  6.09	seesaw_tgg::engine::Engine::retract_match
+  5.45	seesaw_tgg::engine::Engine::drain_retraction
+  5.45	seesaw_tgg::engine::Engine::record
+  4.49	__memmove_avx_unaligned_erms
+  4.49	hashbrown::rustc_entry::>::rustc_entry
+  4.17	seesaw_tgg::engine::anchor::AnchorIndex::walk::_$u7b$$u7b$closure$u7d$$u7d$
+  3.21	__memcmp_avx2_movbe
+  3.21	alloc::collections::btree::map::BTreeMap<K,V,A>::insert
+  2.56	hashbrown::map::HashMap<K,V,S,A>::insert
+  2.24	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  2.24	__memmove_avx_unaligned
+  2.24	seesaw_tgg::graph::Graph::with_value
+  1.92	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_str
+  1.92	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  1.92	seesaw_tgg::graph::Graph::connection_id
+  1.28	seesaw_tgg::engine::Engine::consolidate
+  1.28	seesaw_tgg::engine::Engine::expand_at
+  1.28	seesaw_tgg::engine::matcher::node_ok
+  1.28	seesaw_tgg::graph::Graph::connect_reporting
+  1.28	seesaw_tgg::graph::Parts::of_type
+  0.96	blake3::Hasher::final_output
+  0.96	cfree@GLIBC_2.2.5
+  0.96	core::ops::function::impls:: for &mut F>::call_mut
+  0.96	hashbrown::map::HashMap<K,V,S,A>::contains_key
+  0.96	hashbrown::raw::RawTable<T,A>::remove_entry
+  0.96	malloc
+  0.96	seesaw_tgg::graph::TypeTable::intern
+  0.96	seesaw_tgg::plan::apply_creation_at
+  0.64	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  0.64	[unknown]
+  0.64	alloc::collections::btree::map::entry::VacantEntry<K,V,A>::insert_entry
+  0.64	alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections:

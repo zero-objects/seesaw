@@ -1,0 +1,76 @@
+== f2p/add/f20000, self of /step_with_limit/: 20.21 % of the section (595 of 2944 samples)
+-- innermost inlined function, % of section
+  6.90	seesaw_tgg::engine::Ixs::push
+  4.31	<T as core::array::equality::SpecArrayEq<U,_>>::spec_eq
+  2.92	core::core_arch::x86::sse2::_mm_movemask_epi8
+  1.46	core::ptr::write
+  0.65	hashbrown::rustc_entry::>::rustc_entry
+  0.58	core::sync::atomic::atomic_add
+  0.54	core::tuple::::eq
+  0.37	<alloc::sync::Arc<T,A> as core::clone::Clone>::clone
+  0.31	<hashbrown::raw::RawTableInner>::probe_seq
+  0.24	seesaw_tgg::engine::Engine::step_with_limit
+  0.17	<alloc::sync::Arc<T,A> as core::ops::drop::Drop>::drop
+  0.14	<hashbrown::control::bitmask::BitMask>::lowest_set_bit
+  0.14	core::intrinsics::rotate_left
+  0.14	core::ptr::copy_nonoverlapping
+  0.14	core::ptr::mut_ptr::::sub
+  0.14	seesaw_tgg::graph::ident::ghost
+  0.10	<core::slice::iter::Iter<T> as core::iter::traits::iterator::Iterator>::any
+  0.10	<hashbrown::control::tag::Tag>::full
+  0.10	<hashbrown::raw::RawTableInner>::find_insert_index_in_group
+  0.07	<hashbrown::raw::RawTableInner>::find_inner
+  0.07	alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<BorrowTyp
+  0.07	alloc::collections::btree::node::NodeRef<BorrowType,K,V,alloc::collections::btree::node::m
+  0.07	alloc::vec::Vec<T,A>::len
+  0.07	core::intrinsics::unlikely
+  0.07	core::option::Option<T>::as_mut
+  0.07	core::ptr::non_null::NonNull<T>::add
+  0.07	seesaw_tgg::engine::Engine::creation_exists
+  0.03	<seesaw_tgg::engine::Ixs as core::default::Default>::default
+  0.03	<seesaw_tgg::ident::GhostId as core::hash::Hash>::hash
+  0.03	<u64>::wrapping_mul
+  0.03	alloc::raw_vec::RawVecInner<A>::current_memory
+  0.03	core::intrinsics::likely
+  0.03	core::option::Option<T>::as_ref
+  0.03	core::ptr::mut_ptr::::add
+-- source line, % of section
+  6.73	src/engine/mod.rs:173
+  4.31	src/array/equality.rs:157
+  2.92	src/x86/sse2.rs:1563
+  1.46	src/ptr/mod.rs:1917
+  0.65	src/rustc_entry.rs:47
+  0.58	src/sync/atomic.rs:3923
+  0.54	src/tuple.rs:31
+  0.37	src/sync.rs:2405
+  0.31	src/raw/mod.rs:2492
+  0.17	src/engine/mod.rs:177
+  0.17	src/sync.rs:2811
+  0.14	src/control/bitmask.rs:50
+  0.14	src/intrinsics/mod.rs:2029
+  0.14	src/ptr/mod.rs:547
+  0.14	src/ptr/mut_ptr.rs:1072
+  0.10	src/control/tag.rs:48
+  0.10	src/engine/mod.rs:1475
+  0.10	src/raw/mod.rs:1793
+  0.10	src/slice/iter/macros.rs:332
+  0.07	src/collections/btree/node.rs:731
+  0.07	src/collections/btree/node.rs:896
+  0.07	src/engine/mod.rs:1279
+  0.07	src/engine/mod.rs:1471
+  0.07	src/graph.rs:445
+  0.07	src/graph.rs:446
+  0.07	src/intrinsics/mod.rs:457
+  0.07	src/option.rs:767
+  0.07	src/ptr/non_null.rs:659
+  0.07	src/raw/mod.rs:2073
+  0.07	src/vec/mod.rs:2997
+  0.03	src/engine/mod.rs:166
+  0.03	src/engine/mod.rs:?
+  0.03	src/ident.rs:69
+  0.03	src/intrinsics/mod.rs:434
+  0.03	src/num/uint_macros.rs:2533
+  0.03	src/option.rs:745
+  0.03	src/ptr/mut_ptr.rs:961
+  0.03	src/raw_vec/mod.rs:632
+  0.03	src/sync.rs:?

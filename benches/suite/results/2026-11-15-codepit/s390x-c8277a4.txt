@@ -1,0 +1,15 @@
+FMT_RC=0
+CLIPPY_RC=0
+TEST_RC=0
+passed=188 failed=0 ignored=7
+BE_BUILD_RC=0
+BE_LIB_RC=0 test result: ok. 123 passed; 0 failed; 4 ignored; 0 measured; 0 filtered out; finished in 1.50s
+BE_TESTS_RC=0
+BE Integrationstests: groups=17 passed=188 failed=0 ignored=7
+BE_BENCH_BUILD_RC=0
+s390x | langpack/seed/k50/n2000 | steps 5246 | applied 2623 | nodes 12554 | e636a88ace0d48eb
+s390x | langpack/add/k50/n2000 | steps 5246 | applied 2623 | nodes 12554 | e636a88ace0d48eb
+s390x | langpack/delta-change/k50/n2000/d200 | steps 2182 | applied 4805 | nodes 12770 | d81f82cba13a48a4
+s390x | langpack/delta-delete/k50/n2000/d200 | steps 0 | applied 2623 | nodes 12554 | acc610a627b68a27
+s390x | f2p/add/f2000 | steps 24002 | applied 8001 | nodes 58006 | c3b4f34453abdb46
+s390x | f2p/delta-delete/f2000/d1000 | steps 0 | applied 8001 | nodes 58006 | cc1b2254c3a11d0d

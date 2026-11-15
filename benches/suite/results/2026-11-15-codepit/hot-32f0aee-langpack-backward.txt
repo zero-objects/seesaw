@@ -1,0 +1,73 @@
+== langpack/backward/k700/n2000, instructions:u: 284 of 1559 samples in the section
+-- inclusive, % of section
+ 83.45	seesaw_tgg::engine::Engine::expand_at
+ 60.92	seesaw_tgg::engine::Engine::elements_added
+ 57.04	seesaw_tgg::engine::anchor::AnchorIndex::build
+ 39.08	seesaw_tgg::engine::Engine::step_with_limit
+ 16.55	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+ 11.62	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17hfb32e97e08612f3aE
+ 11.62	alloc::raw_vec::RawVec<T,A>::grow_one
+  8.80	seesaw_tgg::plan::apply_creation_at
+  8.10	malloc
+  7.75	_ZN5alloc7raw_vec20RawVecInner$LT$A$GT$11finish_grow17hf2ede5d1813ea6f8E
+  7.39	<alloc::vec::Vec<T,A> as core::clone::Clone>::clone
+  7.04	realloc
+  6.34	_int_malloc
+  6.34	_int_realloc
+  5.99	cfree@GLIBC_2.2.5
+  5.28	_RNvXs4_NtCslNYArtu3iFV_5alloc6stringNtB5_6StringNtNtCsgEmfK2I1SDS_4core5clone5Clone5clone
+  4.23	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  4.23	seesaw_tgg::engine::Engine::record
+  4.23	seesaw_tgg::graph::Graph::connect_reporting
+  3.87	hashbrown::map::HashMap<K,V,S,A>::insert
+  3.52	seesaw_tgg::engine::anchor::AnchorIndex::walk::_$u7b$$u7b$closure$u7d$$u7d$
+  3.17	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  3.17	seesaw_tgg::engine::matcher::find_matches_planned
+  2.82	__memcmp_avx2_movbe
+  2.82	__memmove_avx_unaligned_erms
+  2.46	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  2.46	_ZN5alloc7raw_vec20RawVecInner$LT$A$GT$11finish_grow17h7a31fedc8fc6dd51E
+  2.46	__memmove_avx_unaligned
+  2.46	alloc::collections::vec_deque::VecDeque<T,A>::grow
+  2.11	blake3::Hasher::update
+  2.11	hashbrown::rustc_entry::>::rustc_entry
+  2.11	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  1.76	_RNvMs0_NtNtNtNtCsjrHSEGnQ3l9_3std3sys4sync4once5futexNtB5_4Once4call
+  1.76	_ZN10seesaw_tgg6engine7matcher10build_plan17h59dd8d460f9d2125E
+  1.76	_ZN3std4sync4once4Once15call_once_force28_$u7b$$u7b$closure$u7d$$u7d$17h1c9fa97a9652b9edE
+-- self, % of section
+ 22.54	seesaw_tgg::engine::anchor::AnchorIndex::build
+  5.28	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17hfb32e97e08612f3aE
+  4.93	_int_malloc
+  4.23	malloc
+  4.23	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  3.87	<alloc::vec::Vec<T,A> as core::clone::Clone>::clone
+  3.52	cfree@GLIBC_2.2.5
+  2.82	__memcmp_avx2_movbe
+  2.46	__memmove_avx_unaligned
+  2.46	__memmove_avx_unaligned_erms
+  2.46	hashbrown::map::HashMap<K,V,S,A>::insert
+  2.46	seesaw_tgg::engine::Engine::step_with_limit
+  2.11	_int_realloc
+  2.11	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  1.76	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  1.76	_int_free_create_chunk
+  1.41	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  1.41	seesaw_tgg::engine::Engine::record
+  1.41	seesaw_tgg::engine::anchor::AnchorIndex::walk::_$u7b$$u7b$closure$u7d$$u7d$
+  1.41	seesaw_tgg::graph::Graph::with_value
+  1.41	seesaw_tgg::graph::Parts::insert
+  1.06	[unknown]
+  1.06	_RNvCsfLfy6EI15iL_7___rustc13___rdl_realloc
+  1.06	_RNvXs4_NtCslNYArtu3iFV_5alloc6stringNtB5_6StringNtNtCsgEmfK2I1SDS_4core5clone5Clone5clone
+  1.06	_ZN10seesaw_tgg6engine7matcher10build_plan17h59dd8d460f9d2125E
+  1.06	blake3::Hasher::finalize
+  1.06	malloc_consolidate
+  1.06	seesaw_tgg::graph::Graph::connection_id
+  1.06	seesaw_tgg::graph::TypeTable::intern
+  1.06	seesaw_tgg::plan::apply_creation_at
+  0.70	_RNvCsfLfy6EI15iL_7___rustc11___rdl_alloc
+  0.70	_ZN5alloc7raw_vec20RawVecInner$LT$A$GT$11finish_grow17hf2ede5d1813ea6f8E
+  0.70	blake3::Hasher::update
+  0.70	hashbrown::rustc_entry::>::rustc_entry
+  0.70	realloc

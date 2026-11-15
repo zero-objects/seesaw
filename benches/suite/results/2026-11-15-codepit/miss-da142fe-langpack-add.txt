@@ -1,0 +1,63 @@
+== langpack/add/k700/n20000, cache-misses:u: 1235 of 2577 samples in the section
+-- inclusive, % of section
+ 83.08	seesaw_tgg::engine::Engine::step_with_limit
+ 69.64	seesaw_tgg::engine::Engine::expand_at
+ 42.02	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+ 33.85	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h91838bab7b05c6c5E
+ 16.92	seesaw_tgg::engine::Engine::elements_added
+ 16.60	seesaw_tgg::plan::apply_creation_at
+ 12.55	seesaw_tgg::engine::Engine::record
+ 11.17	seesaw_tgg::graph::Graph::connect_reporting
+ 10.85	seesaw_tgg::graph::Graph::with_value
+  8.66	seesaw_tgg::engine::anchor::AnchorIndex::walk::_$u7b$$u7b$closure$u7d$$u7d$
+  8.18	seesaw_tgg::engine::matcher::find_matches_planned
+  7.77	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  5.91	__memmove_avx_unaligned_erms
+  5.91	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  5.02	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_str
+  4.70	seesaw_tgg::graph::Parts::insert
+  3.64	hashbrown::map::HashMap<K,V,S,A>::insert
+  3.32	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  3.08	__memcmp_avx2_movbe
+  3.08	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$
+  3.00	[unknown]
+  3.00	alloc::raw_vec::RawVec<T,A>::grow_one
+  2.91	blake3::Hasher::update
+  2.75	_ZN5alloc7raw_vec20RawVecInner$LT$A$GT$11finish_grow17hf2ede5d1813ea6f8E
+  2.67	hashbrown::rustc_entry::>::rustc_entry
+  2.43	seesaw_tgg::engine::anchor_translated
+  2.35	malloc
+  2.19	_int_malloc
+  2.02	blake3::ChunkState::update
+  1.70	seesaw_tgg::graph::TypeTable::lookup
+-- self, % of section
+ 12.71	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h91838bab7b05c6c5E
+  8.18	seesaw_tgg::engine::Engine::step_with_limit
+  7.94	seesaw_tgg::engine::Engine::record
+  5.91	seesaw_tgg::graph::Graph::with_value
+  5.02	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_str
+  4.62	seesaw_tgg::engine::anchor::AnchorIndex::walk::_$u7b$$u7b$closure$u7d$$u7d$
+  4.53	__memmove_avx_unaligned_erms
+  4.05	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  3.56	seesaw_tgg::engine::Engine::expand_at
+  3.16	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  3.08	__memcmp_avx2_movbe
+  3.00	[unknown]
+  3.00	seesaw_tgg::graph::Parts::insert
+  2.83	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  2.83	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$
+  1.94	hashbrown::map::HashMap<K,V,S,A>::insert
+  1.86	seesaw_tgg::graph::Graph::connect_reporting
+  1.46	seesaw_tgg::plan::apply_creation_at
+  1.38	core::hash::Hash::hash_slice
+  1.38	hashbrown::rustc_entry::>::rustc_entry
+  1.21	seesaw_tgg::graph::Parts::of_type
+  1.21	seesaw_tgg::graph::TypeTable::lookup
+  1.13	seesaw_tgg::graph::TypeTable::intern
+  1.05	__memmove_avx_unaligned
+  1.05	_int_malloc
+  0.97	seesaw_tgg::graph::Graph::connection_id
+  0.89	alloc::collections::btree::search::>::search_tree
+  0.89	blake3::ChunkState::update
+  0.65	_ZN10seesaw_tgg5graph5Graph11insert_node17h38650a7eb2d94e0fE
+  0.57	blake3::Hasher::finalize

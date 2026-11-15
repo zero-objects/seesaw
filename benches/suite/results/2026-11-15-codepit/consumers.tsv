@@ -1,0 +1,28 @@
+A=2.0.2	core	rc=0	groups=19 passed=175 failed=0 ignored=9
+B=e9e69cd	core	rc=0	groups=19 passed=186 failed=0 ignored=9
+A=2.0.2	dcrt	rc=0	groups=1 passed=2 failed=0 ignored=0
+B=e9e69cd	dcrt	rc=0	groups=1 passed=2 failed=0 ignored=0
+A=2.0.2 PERF-SUITE drycleaner_forward n=5 fixtures=34 min_ms=369.67 live_nodes=33463 rules=4006
+A=2.0.2	dcperf	rc=0	groups=1 passed=1 failed=0 ignored=0
+B=e9e69cd PERF-SUITE drycleaner_forward n=5 fixtures=34 min_ms=129.79 live_nodes=33463 rules=4006
+B=e9e69cd	dcperf	rc=0	groups=1 passed=1 failed=0 ignored=0
+A=2.0.2	pipeline-hub-ir	rc=0	groups=6 passed=69 failed=0 ignored=0
+B=e9e69cd	pipeline-hub-ir	rc=0	groups=6 passed=69 failed=0 ignored=0
+A=2.0.2	pipeline-tgg-seeder	rc=0	groups=17 passed=76 failed=0 ignored=1
+B=e9e69cd	pipeline-tgg-seeder	rc=0	groups=17 passed=76 failed=0 ignored=1
+A=2.0.2	fwd1	rc=0	groups=19 passed=143 failed=0 ignored=0
+B=e9e69cd	fwd1	rc=0	groups=19 passed=143 failed=0 ignored=0
+A=2.0.2	fwd2	rc=0	groups=19 passed=57 failed=0 ignored=0
+B=e9e69cd	fwd2	rc=0	groups=19 passed=57 failed=0 ignored=0
+A=2.0.2	fwd3	rc=0	groups=18 passed=66 failed=0 ignored=0
+B=e9e69cd	fwd3	rc=0	groups=18 passed=66 failed=0 ignored=0
+A=2.0.2	pipeline-render	rc=0	groups=2 passed=13 failed=0 ignored=0
+B=e9e69cd	pipeline-render	rc=0	groups=2 passed=13 failed=0 ignored=0
+A=2.0.2	pipeline-recipe	rc=0	groups=2 passed=30 failed=0 ignored=0
+B=e9e69cd	pipeline-recipe	rc=0	groups=2 passed=30 failed=0 ignored=0
+A=2.0.2	chaos-generator	rc=0	groups=6 passed=33 failed=0 ignored=17
+B=e9e69cd	chaos-generator	rc=0	groups=6 passed=33 failed=0 ignored=17
+A=2.0.2	pipeline-ffi	rc=0	groups=4 passed=26 failed=0 ignored=0
+B=e9e69cd	pipeline-ffi	rc=0	groups=4 passed=26 failed=0 ignored=0
+A=2.0.2	gate	rc=0	groups=1 passed=1 failed=0 ignored=0
+B=e9e69cd	gate	rc=0	groups=1 passed=1 failed=0 ignored=0

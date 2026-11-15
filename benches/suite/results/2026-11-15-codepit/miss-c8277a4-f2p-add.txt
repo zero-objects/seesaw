@@ -1,0 +1,51 @@
+== f2p/add/f20000, cache-misses:u: 3978 of 9872 samples in the section
+-- inclusive, % of section
+ 68.53	seesaw_tgg::engine::Engine::step_with_limit
+ 47.96	seesaw_tgg::engine::Engine::expand_at
+ 24.69	seesaw_tgg::engine::Engine::record
+ 16.26	seesaw_tgg::plan::apply_creation_at
+ 12.97	seesaw_tgg::engine::matcher::find_matches_planned
+ 12.72	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+ 11.46	seesaw_tgg::graph::Graph::connect_reporting
+ 10.56	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  9.53	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  8.07	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  7.44	<core::iter::adapters::map::Map<I,F> as core::iter::traits::iterator::Iterator>::try_fold
+  7.01	core::hash::Hash::hash_slice
+  6.66	seesaw_tgg::graph::Parts::of_type
+  6.33	hashbrown::rustc_entry::>::rustc_entry
+  5.76	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h7c0465d8d7eb97aeE
+  4.90	alloc::collections::btree::map::BTreeMap<K,V,A>::insert
+  4.90	seesaw_tgg::engine::Engine::expand_at::_$u7b$$u7b$closure$u7d$$u7d$
+  4.83	hashbrown::map::HashMap<K,V,S,A>::insert
+  4.73	seesaw_tgg::graph::Graph::insert_connection
+  4.70	core::ops::function::impls:: for &mut F>::call_mut
+  3.80	alloc::collections::btree::search::>::search_tree
+  3.49	[unknown]
+  3.42	__memmove_avx_unaligned_erms
+  2.87	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$
+-- self, % of section
+ 16.42	seesaw_tgg::engine::Engine::step_with_limit
+ 11.69	seesaw_tgg::engine::Engine::record
+  7.01	core::hash::Hash::hash_slice
+  6.66	seesaw_tgg::graph::Parts::of_type
+  4.90	seesaw_tgg::engine::Engine::expand_at::_$u7b$$u7b$closure$u7d$$u7d$
+  4.68	core::ops::function::impls:: for &mut F>::call_mut
+  3.80	alloc::collections::btree::search::>::search_tree
+  3.67	seesaw_tgg::graph::Graph::insert_connection
+  3.49	[unknown]
+  2.87	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$
+  2.66	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  2.19	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  2.14	__memmove_avx_unaligned_erms
+  2.11	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  1.78	<core::ops::try_trait::Wrapped<T,A,F> as core::ops::function::FnMut<(A,)>>::call_mut
+  1.68	hashbrown::rustc_entry::>::rustc_entry
+  1.63	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h7c0465d8d7eb97aeE
+  1.58	hashbrown::map::HashMap<K,V,S,A>::contains_key
+  1.56	seesaw_tgg::plan::apply_creation_at
+  1.48	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  1.48	seesaw_tgg::engine::Engine::expand_at
+  1.28	_ZN10seesaw_tgg5graph5Graph11insert_node17h38650a7eb2d94e0fE
+  0.96	__memmove_avx_unaligned
+  0.80	seesaw_tgg::graph::TypeTable::lookup

@@ -1,0 +1,3 @@
+CHECKS_RC=0
+mit seesaw_checks: groups=18 passed=188 failed=0 ignored=7
+WASM32_CHECK_RC=0

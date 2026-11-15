@@ -39,11 +39,14 @@ on 40 files of commonmark-java: cascade steps of the forward wave
 131.5 s → 3.9 s, of the backward wave 60.3 s → 2.7 s; identical graph
 and output. Rust only; the Java implementation is unchanged.
 
-### Further changes to expansion, matcher and graph
+### Further changes to expansion, seed, matcher and graph
 
 Found with the counters and profiles of the performance suite (below).
-Each leaves the graph and the order of the cascade as they were; the
-suite checks that with a fingerprint over both.
+None of them changes what the engine does: graph, cascade and its
+order, the sequence of results `step` returns, `saw_contradiction` and
+the verdicts of `run` are those of 2.0.2. The suite checks graph and
+cascade with a fingerprint per cell, a differential test runs random
+models and waves through this engine and the published 2.0.2 (below).
 
 Expansion:
 
@@ -58,26 +61,29 @@ Expansion:
   of them and dropped again by the match store. The search anchored at
   a new node now leaves out the nodes that stand earlier in the same
   delta, so the match is found from the first of them, at the point in
-  the order where it was recorded first before.
+  the order where it was recorded first before. The walk of the index
+  leaves the same nodes out, so no search is started that could only
+  find such a match (in `f2p/add` five of eight searches found nothing).
 - The plan of an anchored search depends on rule and position only. It
   is built at the first search at its place and kept.
 - An anchored search writes into buffers the engine keeps and no longer
   allocates per search and per match.
-- After a step, its new nodes are anchored at every admitted rule. In a
-  wave without a route they fit the rules of the opposite direction:
-  the match was searched, recorded and later pulled by `step`, which
-  found it translated and counted a duplicate (two of three steps in
-  `f2p/add`). The condition `step` applies (every anchor of the rule's
-  establishes corrs already carries a corr of its type with a live
-  counterpart) is now checked when the match is found, for the nodes a
-  step of the engine has just created. Such a match is not recorded,
-  and where the rule has one establishes corr and the search would be
-  anchored at its anchor, the search is left out. This changes the
-  inner state: these matches are no longer in the match store or the
-  applied set, and `step` no longer returns `Some(false)` for them.
-  Graph and cascade are the same.
 - The candidate triples of a large delta are sorted per node and
   distributed by rule instead of sorted as a whole.
+- The index is built without copying the paths of every position (it
+  was more than half of a run over a small model with 1 401 rules).
+- A walk looks a neighbour up once, for its value and its
+  participations.
+
+Seed:
+
+- `seed` searched every rule over all nodes of the type of its first
+  position. In a rule set whose rules share one structural type that is
+  rules times nodes. Where the search per rule would start at more than
+  four times the nodes of the graph, the seed now anchors every node
+  through the index, like an added one, and records the matches rule by
+  rule in the order of the search per rule. The state of the engine
+  after the seed is the same.
 
 Matcher:
 
@@ -101,20 +107,25 @@ Engine bookkeeping:
 - The match store reads the ids of a match's connections from the graph
   instead of deriving each with a hash.
 - The identities of the nodes a step creates are derived once, for the
-  contradiction check and the creation.
+  duplicate check, the contradiction check and the creation.
 - The per-element index lists hold up to four entries in place.
 - The todo key carries the head of the ref sequence, so that most
   comparisons are decided without following the sequence.
 - The applied set is a hash set, and a cascade entry takes the created
   nodes without a copy.
+- The index from a product to the entries that produced it holds the
+  created nodes. The producers of a created connection are found from
+  its two ends when a deleted connection asks for them.
+- Retraction walks the products of an entry without copying the lists
+  and reads and writes each status in one access.
 
 Graph:
 
 - A slot of the map holds a node or a connection, not room for both.
 - The participation list of a node is a sorted vector while short and a
-  B-tree from 48 entries on.
-- `connect_reporting` looks its endpoints up twice instead of four
-  times.
+  B-tree above 48 entries. It starts with room for two.
+- `connect_reporting` reaches each endpoint once (five accesses to the
+  map per new connection before).
 - The order of `GhostId` is written out over four words instead of a
   call to `memcmp`. Its hash is one word instead of the 32 bytes; the
   order in which `Graph::nodes` walks the map changes with it (it is
@@ -123,53 +134,99 @@ Graph:
   comparing types only.
 - A new slot is written once.
 
-Tried and taken back, each on a measurement: equality of `GhostId`
-written out like its order (slower), reading the connection id from the
-participation list in `Graph::connected` (more instructions in `seed`),
-collecting the input of an identity hash and hashing it in one call
-(more instructions).
+Tried and taken back, each on a measurement or a test:
 
-Measured on one exclusively reserved machine. Time is user CPU of the
-measured section, minimum of four interleaved runs ("2.0.2": two runs;
-"now": taken two commits before the last, whose instruction counts
-differ by less than 0.5 %). Because the time varied by 10 to 15 %
-between runs of one binary, the comparison within this series is the
-number of instructions retired in user mode. "index" is the anchor
-index alone, "now" all of the above.
+- Leaving out a match whose anchor is already translated when it is
+  found on the nodes a step has just created, and the search for it
+  (two of three steps in `f2p/add` pull such a match and count a
+  duplicate). 2.0.2 keeps such a match in its store. A later `seed`
+  finds it again; where the translating correspondence had been
+  retracted in between, the engine then applied the rule or reported a
+  contradiction, and 2.0.2 does neither. `step` also returned fewer
+  results, which hosts count. Found by reading and by the differential
+  test.
+- Equality of `GhostId` written out like its order (slower).
+- Reading the connection id from the participation list in
+  `Graph::connected` (more instructions in `seed`).
+- Collecting the input of an identity hash and hashing it in one call
+  (more instructions).
+- Folding the hash word of `GhostId` so that identities built by hand
+  spread better (1.4 to 3 % more instructions; documented at
+  `GhostId::from_raw` instead).
 
-| cell | 2.0.2 | index | now | index / now, instructions |
-|---|---|---|---|---|
-| `langpack/add/k700/n2000` | 16 030 ms | 156.1 ms | 43.0 ms | 4.38 |
-| `langpack/backward/k700/n2000` | 8 278 ms | 135.2 ms | 38.9 ms | 4.01 |
-| `langpack/seed/k700/n2000` | 11 155 ms | 1 078 ms | 463.0 ms | 2.64 |
-| `langpack/add/k700/n20000` | not run | 1 568 ms | 335.3 ms | 7.99 |
-| `langpack/delta-add/k700/n20000/d200` | not run | 16.8 ms | 3.6 ms | 7.94 |
-| `langpack/delta-change/k700/n20000/d200` | not run | 295.1 ms | 87.9 ms | 5.99 |
-| `langpack/delta-delete/k700/n20000/d200` | not run | 49.8 ms | 22.0 ms | 2.11 |
-| `f2p/batch/f20000` | 1 738 ms | 1 712 ms | 765.8 ms | 2.79 |
-| `f2p/add/f20000` | 2 646 ms | 2 392 ms | 893.2 ms | 3.63 |
-| `f2p/delta-add/f20000/d1000` | 98.0 ms | 88.3 ms | 46.1 ms | 2.46 |
+Measured on one machine shared with other projects. The time of a cell
+varied by 10 to 15 % between runs of one binary there, so the comparison
+is the number of instructions retired in user mode in the measured
+section, which is the same in every run of one binary. "index" is the
+anchor index alone, "now" all of the above. In millions of instructions:
 
-Peak memory of the process in `f2p/add/f20000` (580 006 nodes): 1 514 MB
-with 2.0.2, 823 MB now.
+| cell | 2.0.2 | index | now |
+|---|---|---|---|
+| `langpack/add/k700/n2000` | 169 583 | 1 343 | 177 |
+| `langpack/backward/k700/n2000` | 87 230 | 1 197 | 151 |
+| `langpack/seed/k700/n2000` | 115 350 | 9 139 | 180 |
+| `langpack/add/k700/n20000` | not run | 12 176 | 1 286 |
+| `langpack/delta-add/k700/n20000/d200` | not run | 125 | 23.4 |
+| `langpack/delta-change/k700/n20000/d200` | not run | 2 070 | 287 |
+| `langpack/delta-delete/k700/n20000/d200` | not run | 162 | 59.1 |
+| `f2p/batch/f20000` | 9 002 | 8 516 | 3 187 |
+| `f2p/add/f20000` | 14 855 | 13 404 | 3 515 |
+| `f2p/delta-add/f20000/d1000` | 610 | 565 | 197 |
+
+Time, where it was measured against 2.0.2: the forward runs of the 34
+dry-cleaner fixtures (17 rule sets, 4 006 rules in sum, engine and
+rules new per run) took 130 ms instead of 370 ms (minimum of five,
+measured four commits before the last).
+
+Peak memory at the end of the measured section of `f2p/add/f20000`
+(580 006 nodes): 745 MiB. 2.0.2 was measured as the peak of the whole
+process, which includes the fingerprint: 1 514 MB.
+
+Graph and cascade of every cell are those of 2.0.2 where 2.0.2 was run
+(six of the cells above and thirteen cells of the sizes `k50/n2000` and
+`f2000`, among them the cells that change and delete), and equal
+between all states otherwise. The same fingerprints come out on a
+big-endian target (s390x under qemu).
 
 `langpack` is a synthetic rule set in the shape of a language pack
 (1 401 rules over one structural type per side), not the Java pack
 above. Raw data: `benches/suite/results/`.
 
+### Tests
+
+- `difftest/` is a package of its own, not published, that depends on
+  this engine and on `seesaw-tgg` 2.0.2 from the registry. Random
+  models and sequences of waves (add, change, delete on either side,
+  links, deleted products, seeds, `run` with a step budget, waves that
+  stop before saturation) go through both; after every wave graph,
+  cascade, the results of `step`, `saw_contradiction` and the verdicts
+  of `run` are compared. `cd difftest && cargo test --release`.
+- `--cfg seesaw_checks` compiles the engine's checks of the expansion
+  and the seed against the unfiltered search into the library, so that
+  the integration tests run under them
+  (`RUSTFLAGS="--cfg seesaw_checks" cargo test`). A test build of the
+  library has them anyway.
+- The comparison files shared with the Java implementation (cascade,
+  identities, predicate table) were looked for under the path of the
+  development tree. In this repository the tests did not find them and
+  skipped themselves. They read `java/src/test/resources/fixtures` now.
+
 ### Performance suite
 
 `benches/suite` runs one cell (workload, operation, size) per process
-and writes one line per cell: user CPU, wall time, peak memory, steps,
-a fingerprint over the graph and the cascade in the order it was
-applied, and on Linux the instructions retired in user mode. The
-fingerprint has to be the same for every build of the engine.
-`cargo bench --bench suite -- list` names the cells,
-`benches/suite/cells.sh` runs a list of them, `benches/suite/profile.sh`
-profiles one over the whole process, and `benches/suite/hot.sh` reports
-the hot paths of the measured section alone (inclusive and self share
-per function, from the samples whose call chain passes through the
-section).
+and writes one line per cell: user CPU, wall time, peak memory at the
+end of the measured section, steps, a fingerprint over the graph and
+the cascade in the order it was applied, and on Linux the instructions
+retired in user mode, CPU cycles, cache misses and mispredicted
+branches of the measured section. The fingerprint has to be the same
+for every build of the engine. `cargo bench --bench suite -- list`
+names the cells, `benches/suite/cells.sh` runs a list of them,
+`benches/suite/profile.sh` profiles one over the whole process,
+`benches/suite/hot.sh` reports the hot paths of the measured section
+alone (inclusive and self share per function), and
+`benches/suite/lines.sh` resolves the self share of a function into the
+functions inlined into it and into source lines. `hot.sh` and
+`lines.sh` take the event to sample, `cache-misses:u` among them.
 
 With `--features perf_trace` a cell also reports structural counters
 (searches, candidates, node checks, value resolutions, identity hashes
@@ -177,19 +234,21 @@ and others). They do not depend on the machine.
 
 ### Added
 
-- `engine::AnchorIndex` (`build`, `built_for`) and
-  `Engine::with_anchor_index`.
+- `engine::AnchorIndex` (`build`, `built_for`, `fits`) and
+  `Engine::with_anchor_index`. The engine takes a shared index when the
+  patterns of its rules are the ones the index was built from.
 - `ValueResolver::baseline_str` (provided, lends nothing by default),
-  `Graph::with_value`, `Graph::with_node_value`, `Graph::connection_id`.
+  `Graph::with_value`, `Graph::with_node_value`, `Graph::connection_id`,
+  `Graph::type_count`.
 
 ### Changed
 
-- `plan::apply_creation` takes the bindings as `&[GhostId]`.
-- `engine::MatchRec::refs` is an `Arc<[GhostId]>`. The type is public,
-  a value of it is not reachable from outside the engine.
+- `engine::MatchRec` is deprecated. No function hands one out or takes
+  one; the engine keeps its matches in a record of its own.
 - `perf_trace` (feature, off by default): the module now holds the
   counters of the current engine. The fields of the first generation
-  had no call site left and are gone.
+  had no call site left and are gone. The module is a diagnostic of the
+  implementation and changes with it.
 
 ## [2.0.2] — 2026-08-15
 

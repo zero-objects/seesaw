@@ -1,0 +1,46 @@
+== f2p/add/f20000, cache-misses:u, self of /step_with_limit|Engine::record|expand_at|Parts::|connect_reporting|apply_creation_at|AnchorIndex|enumerate/: 73.64 % of the section (1782 of 2420 samples)
+-- innermost inlined function, % of section
+ 21.20	<T as core::array::equality::SpecArrayEq<U,_>>::spec_eq
+ 10.79	seesaw_tgg::engine::Ixs::push
+  7.48	core::hint::select_unpredictable
+  7.48	core::ptr::write
+  4.79	core::core_arch::x86::sse2::_mm_movemask_epi8
+  1.61	core::slice::::binary_search_by
+  1.24	<hashbrown::raw::RawTableInner>::probe_seq
+  1.07	core::tuple::::eq
+  0.95	seesaw_tgg::engine::matcher::enumerate
+  0.91	hashbrown::rustc_entry::>::rustc_entry
+  0.83	core::sync::atomic::atomic_add
+  0.66	core::mem::replace
+  0.62	<hashbrown::control::bitmask::BitMask>::lowest_set_bit
+  0.54	core::intrinsics::likely
+-- source line, % of section
+ 21.20	src/array/equality.rs:157
+ 10.70	src/engine/mod.rs:173
+  7.48	src/hint.rs:876
+  7.48	src/ptr/mod.rs:1917
+  4.79	src/x86/sse2.rs:1563
+  1.36	src/slice/mod.rs:3016
+  1.24	src/raw/mod.rs:2492
+  1.07	src/tuple.rs:31
+  0.87	src/rustc_entry.rs:47
+  0.83	src/sync/atomic.rs:3923
+  0.66	src/mem/mod.rs:901
+  0.62	src/control/bitmask.rs:50
+  0.54	src/intrinsics/mod.rs:434
+  0.50	src/graph.rs:36
+-- source line of the function it was inlined into, % of section
+  8.06	src/engine/mod.rs:1460
+  6.69	src/engine/mod.rs:781
+  6.49	src/graph.rs:321
+  5.99	src/engine/mod.rs:546
+  5.83	src/engine/anchor.rs:406
+  5.04	src/engine/mod.rs:517
+  3.35	src/graph.rs:293
+  2.44	src/graph.rs:808
+  2.31	src/engine/mod.rs:771
+  2.27	src/engine/mod.rs:786
+  2.15	src/engine/mod.rs:1474
+  1.98	src/engine/anchor.rs:471
+  1.94	src/engine/matcher.rs:279
+  1.82	src/engine/matcher.rs:320

@@ -1,0 +1,55 @@
+== f2p/add/f20000, instructions:u: 2802 of 8265 samples in the section
+-- inclusive, % of section
+ 75.73	seesaw_tgg::engine::Engine::step_with_limit
+ 39.54	seesaw_tgg::engine::Engine::expand_at
+ 32.83	seesaw_tgg::plan::apply_creation_at
+ 20.09	seesaw_tgg::engine::Engine::record
+ 19.41	seesaw_tgg::graph::Graph::connect_reporting
+ 10.21	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  9.17	seesaw_tgg::graph::Graph::insert_connection
+  7.74	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  7.74	seesaw_tgg::engine::matcher::find_matches_planned
+  7.57	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  6.85	[unknown]
+  5.35	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  5.25	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h7c0465d8d7eb97aeE
+  4.75	seesaw_tgg::graph::Parts::of_type
+  4.28	_ZN10seesaw_tgg5graph5Graph11insert_node17h38650a7eb2d94e0fE
+  4.14	<core::iter::adapters::map::Map<I,F> as core::iter::traits::iterator::Iterator>::try_fold
+  3.93	__memmove_avx_unaligned_erms
+  3.93	alloc::collections::btree::map::BTreeMap<K,V,A>::insert
+  3.68	seesaw_tgg::graph::ident::connection
+  3.10	seesaw_tgg::engine::Engine::expand_at::_$u7b$$u7b$closure$u7d$$u7d$
+  3.03	<core::ops::try_trait::Wrapped<T,A,F> as core::ops::function::FnMut<(A,)>>::call_mut
+  2.71	seesaw_tgg::graph::TypeTable::intern
+  2.68	malloc
+  2.64	seesaw_tgg::graph::Parts::insert
+  2.61	alloc::collections::btree::search::>::search_tree
+  2.57	core::ops::function::impls:: for &mut F>::call_mut
+-- self, % of section
+ 15.27	seesaw_tgg::engine::Engine::step_with_limit
+ 11.60	seesaw_tgg::engine::Engine::record
+  7.21	seesaw_tgg::graph::Graph::insert_connection
+  6.85	[unknown]
+  4.75	seesaw_tgg::graph::Parts::of_type
+  4.46	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  3.89	_ZN10seesaw_tgg5graph5Graph11insert_node17h38650a7eb2d94e0fE
+  3.25	seesaw_tgg::plan::apply_creation_at
+  3.10	seesaw_tgg::engine::Engine::expand_at::_$u7b$$u7b$closure$u7d$$u7d$
+  3.03	<core::ops::try_trait::Wrapped<T,A,F> as core::ops::function::FnMut<(A,)>>::call_mut
+  2.61	alloc::collections::btree::search::>::search_tree
+  2.57	core::ops::function::impls:: for &mut F>::call_mut
+  2.43	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$
+  2.32	seesaw_tgg::graph::TypeTable::intern
+  2.14	core::hash::Hash::hash_slice
+  1.93	__memmove_avx_unaligned_erms
+  1.46	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+  1.46	seesaw_tgg::graph::ident::connection
+  1.32	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h7c0465d8d7eb97aeE
+  1.28	hashbrown::map::HashMap<K,V,S,A>::contains_key
+  1.21	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  1.18	_int_malloc
+  1.03	__memmove_avx_unaligned
+  0.93	seesaw_tgg::rules::transform::Chain::normalized
+  0.89	seesaw_tgg::graph::Graph::connect_reporting
+  0.89	seesaw_tgg::graph::Parts::insert

@@ -1,0 +1,93 @@
+== langpack/seed/k700/n2000, instructions:u: 3447 of 3953 samples in the section
+-- inclusive, % of section
+ 92.08	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+ 91.94	seesaw_tgg::engine::Engine::seed
+ 91.82	seesaw_tgg::engine::Engine::seed_rule
+ 91.76	seesaw_tgg::engine::matcher::find_matches_with_fixed
+ 85.90	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+ 22.43	seesaw_tgg::graph::Parts::of_type
+ 19.15	seesaw_tgg::engine::matcher::node_ok
+ 10.01	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_str
+  8.06	seesaw_tgg::engine::Engine::step_with_limit
+  6.70	seesaw_tgg::engine::Engine::expand_at
+  4.70	seesaw_tgg::engine::anchor::AnchorIndex::build
+  4.09	seesaw_tgg::rules::predicate::Predicate::matches
+  3.48	__memcmp_avx2_movbe
+  1.02	alloc::raw_vec::RawVec<T,A>::grow_one
+  0.90	malloc
+  0.87	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  0.81	seesaw_tgg::plan::apply_creation_at
+  0.78	_ZN5alloc7raw_vec20RawVecInner$LT$A$GT$11finish_grow17hf2ede5d1813ea6f8E
+  0.73	<alloc::vec::Vec<T,A> as core::clone::Clone>::clone
+  0.70	realloc
+  0.67	_int_malloc
+  0.58	_RNvXs4_NtCslNYArtu3iFV_5alloc6stringNtB5_6StringNtNtCsgEmfK2I1SDS_4core5clone5Clone5clone
+  0.58	_int_realloc
+  0.55	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17hfb32e97e08612f3aE
+  0.55	cfree@GLIBC_2.2.5
+  0.55	seesaw_tgg::engine::matcher::find_matches_planned
+  0.52	seesaw_tgg::graph::Graph::connect_reporting
+  0.41	seesaw_tgg::engine::Engine::record
+  0.35	__memmove_avx_unaligned_erms
+  0.32	_ZN10seesaw_tgg6engine7matcher10build_plan17h59dd8d460f9d2125E
+  0.32	__memmove_avx_unaligned
+  0.26	[unknown]
+  0.23	seesaw_tgg::engine::anchor::AnchorIndex::walk::_$u7b$$u7b$closure$u7d$$u7d$
+  0.20	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  0.20	__libc_calloc
+  0.20	blake3::Hasher::update
+  0.20	seesaw_tgg::graph::Parts::insert
+  0.17	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  0.15	_ZN5alloc7raw_vec20RawVecInner$LT$A$GT$11finish_grow17h7a31fedc8fc6dd51E
+  0.15	alloc::collections::vec_deque::VecDeque<T,A>::grow
+  0.15	hashbrown::map::HashMap<K,V,S,A>::insert
+  0.12	_RNvCsfLfy6EI15iL_7___rustc12___rust_alloc
+  0.12	_RNvMs0_NtNtNtNtCsjrHSEGnQ3l9_3std3sys4sync4once5futexNtB5_4Once4call
+  0.12	_ZN10seesaw_tgg5graph5Graph11insert_node17h38650a7eb2d94e0fE
+  0.12	_ZN3std4sync4once4Once15call_once_force28_$u7b$$u7b$closure$u7d$$u7d$17h1c9fa97a9652b9edE
+-- self, % of section
+ 26.28	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+ 22.34	seesaw_tgg::graph::Parts::of_type
+ 20.13	_ZN10seesaw_tgg6engine7matcher9enumerate17h86428f61b806e111E
+ 10.01	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_str
+  9.25	seesaw_tgg::engine::matcher::node_ok
+  3.48	__memcmp_avx2_movbe
+  1.65	seesaw_tgg::engine::anchor::AnchorIndex::build
+  0.73	seesaw_tgg::rules::predicate::Predicate::matches
+  0.52	_int_malloc
+  0.49	malloc
+  0.32	<alloc::vec::Vec<T,A> as core::clone::Clone>::clone
+  0.32	__memmove_avx_unaligned
+  0.32	__memmove_avx_unaligned_erms
+  0.32	cfree@GLIBC_2.2.5
+  0.29	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  0.26	[unknown]
+  0.20	_ZN10seesaw_tgg6engine7matcher10build_plan17h59dd8d460f9d2125E
+  0.20	seesaw_tgg::engine::Engine::step_with_limit
+  0.17	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17hfb32e97e08612f3aE
+  0.12	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  0.12	_RNvCsfLfy6EI15iL_7___rustc12___rust_alloc
+  0.12	_ZN10seesaw_tgg5graph5Graph11insert_node17h38650a7eb2d94e0fE
+  0.12	_int_realloc
+  0.12	realloc
+  0.12	seesaw_tgg::engine::Engine::record
+  0.12	seesaw_tgg::engine::Engine::seed
+  0.12	seesaw_tgg::engine::anchor::AnchorIndex::walk::_$u7b$$u7b$closure$u7d$$u7d$
+  0.09	__libc_calloc
+  0.09	blake3::Hasher::finalize
+  0.09	blake3::Hasher::update
+  0.09	hashbrown::map::HashMap<K,V,S,A>::insert
+  0.09	seesaw_tgg::graph::Graph::connect_reporting
+  0.09	seesaw_tgg::graph::Graph::connection_id
+  0.09	unlink_chunk.isra.0
+  0.06	_int_free_chunk
+  0.06	_int_free_create_chunk
+  0.06	_int_free_merge_chunk
+  0.06	alloc::raw_vec::RawVec<T,A>::grow_one
+  0.06	blake3::ChunkState::update
+  0.06	hashbrown::map::HashMap<K,V,S,A>::contains_key
+  0.06	hashbrown::rustc_entry::>::rustc_entry
+  0.06	malloc_consolidate
+  0.06	seesaw_tgg::engine::Engine::expand_at
+  0.06	seesaw_tgg::graph::Parts::insert
+  0.06	seesaw_tgg::graph::TypeTable::intern
