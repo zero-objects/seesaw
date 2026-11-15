@@ -47,3 +47,7 @@ pub mod ident;
 pub mod perf_trace;
 pub mod plan;
 pub mod rules;
+mod values;
+
+#[cfg(feature = "opt_f")]
+pub use values::ValueNumbers;

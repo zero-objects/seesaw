@@ -101,6 +101,9 @@ struct Step {
     /// Links to already placed positions: (placed position, direction
     /// stance of the NEW node). `None` = context link (direction-free).
     links: Vec<(usize, Option<bool>)>,
+    /// What `crate::values` keeps of the constant the node is compared
+    /// with ([`Plan::number`]).
+    wanted: crate::values::Wanted,
 }
 
 /// Search plan of a pattern for one set of pre-bound positions.
@@ -112,6 +115,22 @@ pub(crate) struct Plan {
     /// positions. Every other link is checked by the step that places
     /// the later of its two ends.
     closing: Vec<usize>,
+    /// What `crate::values` keeps of the numbering of the anchor index
+    /// that built the plan ([`Plan::number`]).
+    numbers: crate::values::Shared,
+}
+
+impl Plan {
+    /// Notes for the steps how the values of their nodes are compared
+    /// with the constants of the pattern (`crate::values`), for a plan
+    /// the anchor index with the numbering `numbers` keeps.
+    pub(crate) fn number(&mut self, pattern: &Pattern, numbers: &crate::values::Numbering) {
+        self.numbers = numbers.share();
+        for step in &mut self.steps {
+            step.wanted =
+                crate::values::wanted(pattern.nodes[step.node_ix].value.as_ref(), numbers.get());
+        }
+    }
 }
 
 fn build_plan(pattern: &Pattern, fixed: &[Option<GhostId>]) -> Plan {
@@ -126,6 +145,7 @@ fn build_plan(pattern: &Pattern, fixed: &[Option<GhostId>]) -> Plan {
                 node_ix: i,
                 pre_bound: true,
                 links: Vec::new(),
+                wanted: Default::default(),
             });
         }
     }
@@ -172,6 +192,7 @@ fn build_plan(pattern: &Pattern, fixed: &[Option<GhostId>]) -> Plan {
             node_ix: i,
             pre_bound: false,
             links,
+            wanted: Default::default(),
         });
     }
     let bound = |i: usize| fixed.get(i).is_some_and(Option::is_some);
@@ -184,12 +205,22 @@ fn build_plan(pattern: &Pattern, fixed: &[Option<GhostId>]) -> Plan {
         })
         .map(|(i, _)| i)
         .collect();
-    Plan { steps, closing }
+    Plan {
+        steps,
+        closing,
+        numbers: Default::default(),
+    }
 }
 
 // ── Enumeration ──────────────────────────────────────────────────────────
 
-fn node_ok(g: &Graph, resolver: &dyn ValueResolver, pn: &PatternNode, id: &GhostId) -> bool {
+fn node_ok<'h>(
+    g: &Graph,
+    resolver: &dyn ValueResolver,
+    pn: &PatternNode,
+    id: &GhostId,
+    hint: impl FnOnce() -> crate::values::Hint<'h>,
+) -> bool {
     trace!(node_checks);
     let Some(node) = g.node(id) else {
         return false;
@@ -199,7 +230,7 @@ fn node_ok(g: &Graph, resolver: &dyn ValueResolver, pn: &PatternNode, id: &Ghost
     }
     match &pn.value {
         None => true,
-        Some(p) => g.with_node_value(node, resolver, |v| p.matches(v)),
+        Some(p) => crate::values::holds(g, resolver, p, node, hint()),
     }
 }
 
@@ -273,10 +304,13 @@ fn enumerate(
     }
     let step = &plan.steps[depth];
     let pn = &pattern.nodes[step.node_ix];
+    // What a value check knows from the plan; read only when a node
+    // with a value constraint is checked.
+    let hint = || crate::values::Hint::of(&plan.numbers, &step.wanted);
 
     if step.pre_bound {
         let id = cur[step.node_ix].expect("pre-bound");
-        if node_ok(g, resolver, pn, &id) {
+        if node_ok(g, resolver, pn, &id, hint) {
             enumerate(
                 g,
                 resolver,
@@ -320,7 +354,7 @@ fn enumerate(
         if via.is_some_and(|c| !g.connection(&c).is_some_and(|c| c.status.is_matchable())) {
             return false;
         }
-        if !node_ok(g, resolver, pn, &cand) {
+        if !node_ok(g, resolver, pn, &cand, hint) {
             return false;
         }
         if !links_ok(g, cur, rest, cand) {
