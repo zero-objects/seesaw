@@ -21,7 +21,7 @@ use std::collections::BTreeSet;
 
 use crate::ident::{GhostId, Status};
 
-#[cfg(test)]
+#[cfg(any(test, seesaw_checks))]
 use crate::engine::matcher::find_matches_with_fixed;
 use crate::engine::matcher::{find_matches, find_matches_planned, Bindings};
 use crate::graph::{Graph, ValueResolver};
@@ -210,10 +210,6 @@ impl Ixs {
             Self::Inline { len, ix } => &ix[..*len as usize],
             Self::Heap(v) => v,
         }
-    }
-
-    fn to_vec(&self) -> Vec<u32> {
-        self.as_slice().to_vec()
     }
 }
 
@@ -686,7 +682,7 @@ impl<'r> Engine<'r> {
     /// fewer nodes; both find the same matches and record them in the
     /// same order.
     pub fn seed(&mut self, g: &Graph, resolver: &dyn ValueResolver) {
-        #[cfg(test)]
+        #[cfg(any(test, seesaw_checks))]
         self.check_seed(g, resolver);
         if self.seed_through_index(g) {
             self.seed_by_index(g, resolver);
@@ -724,16 +720,17 @@ impl<'r> Engine<'r> {
     /// nodes of the graph (measured: 560 times in the suite's language
     /// pack with 700 kinds, 0.3 times in Families to Persons).
     fn seed_through_index(&self, g: &Graph) -> bool {
-        const FACTOR: usize = 4;
-        let starts: usize = self
+        const FACTOR: u64 = 4;
+        // In 64 bits: rules times nodes can pass a 32-bit `usize`.
+        let starts: u64 = self
             .rules
             .iter()
             .enumerate()
             .filter(|(ri, _)| self.rule_active(*ri))
             .filter_map(|(_, rule)| rule.pattern.nodes.first())
-            .map(|pn| g.type_count(pn.typ))
+            .map(|pn| g.type_count(pn.typ) as u64)
             .sum();
-        starts > FACTOR * g.node_count()
+        starts > FACTOR * g.node_count() as u64
     }
 
     /// The seed through the [`AnchorIndex`]: every matchable node of the
@@ -761,7 +758,7 @@ impl<'r> Engine<'r> {
 
     /// Test check of the seed: the index finds the matches of the scan,
     /// in its order.
-    #[cfg(test)]
+    #[cfg(any(test, seesaw_checks))]
     fn check_seed(&mut self, g: &Graph, resolver: &dyn ValueResolver) {
         let rules = self.rules;
         let admitted: Vec<bool> = (0..rules.len()).map(|ri| self.rule_active(ri)).collect();
@@ -900,7 +897,7 @@ impl<'r> Engine<'r> {
                 earlier,
             )
         };
-        #[cfg(test)]
+        #[cfg(any(test, seesaw_checks))]
         self.check_candidates(g, resolver, new_nodes, &candidates);
         let mut scratch = std::mem::take(&mut self.scratch);
         for (ri, ni, pos) in candidates {
@@ -926,7 +923,7 @@ impl<'r> Engine<'r> {
         }
         self.scratch = scratch;
         self.anchor = anchor;
-        #[cfg(test)]
+        #[cfg(any(test, seesaw_checks))]
         self.check_recorded(g, resolver, new_nodes);
     }
 
@@ -934,7 +931,7 @@ impl<'r> Engine<'r> {
     /// unfiltered loop finds (every active rule, every new node, every
     /// position of its type, no node left out) is in the match store
     /// afterwards.
-    #[cfg(test)]
+    #[cfg(any(test, seesaw_checks))]
     fn check_recorded(&self, g: &Graph, resolver: &dyn ValueResolver, new_nodes: &[GhostId]) {
         for (ri, rule) in self.rules.iter().enumerate() {
             if !self.rule_active(ri) {
@@ -963,7 +960,7 @@ impl<'r> Engine<'r> {
     /// Test check of [`anchor::AnchorIndex`]: every (rule, node,
     /// position) triple at which the search that leaves out the earlier
     /// new nodes finds a match is a candidate.
-    #[cfg(test)]
+    #[cfg(any(test, seesaw_checks))]
     fn check_candidates(
         &self,
         g: &Graph,
@@ -1098,9 +1095,11 @@ impl<'r> Engine<'r> {
         // queue. The next by_element lookup finds the children for
         // each `created` entry.
         if let Some(eix) = entry {
-            let created = self.cascade[eix as usize].created.clone();
-            let created_edges = self.cascade[eix as usize].created_edges.clone();
-            for c in created {
+            let eix = eix as usize;
+            // By index: the loops write the graph, the pending lists and
+            // the queue, not the cascade.
+            for i in 0..self.cascade[eix].created.len() {
+                let c = self.cascade[eix].created[i];
                 // A product of THIS entry, so its provenance is proven
                 // by the loop itself — the status does not decide.
                 //
@@ -1115,8 +1114,7 @@ impl<'r> Engine<'r> {
                 // the run decides. Re-derived within this run means the
                 // element is reclaimed, otherwise it resolves to
                 // `Tombstone`. At rest only `Ghost` and `Solid` remain.
-                if g.node(&c).is_some_and(|n| n.status.is_matchable()) {
-                    g.set_node_status(&c, Status::TentativeTombstone);
+                if g.retract_node(&c) {
                     self.pending_tt_nodes.push(c);
                 }
                 queue.push(c);
@@ -1125,13 +1123,13 @@ impl<'r> Engine<'r> {
             // `connect` lifts TT again (same endpoints re-derived),
             // otherwise `consolidate` finalizes to tombstone. Edges
             // have no provenance children ⇒ not queued.
-            for e in created_edges {
+            for i in 0..self.cascade[eix].created_edges.len() {
+                let e = self.cascade[eix].created_edges[i];
                 // Same reasoning as for the nodes above: provenance
                 // decides, not the lifecycle state. A materialized
                 // edge is `Solid` and was left standing until
                 // 2026-08-10, so a retracted node kept its connections.
-                if g.connection(&e).is_some_and(|c| c.status.is_matchable()) {
-                    g.set_connection_status(&e, Status::TentativeTombstone);
+                if g.retract_connection(&e) {
                     self.pending_tt_edges.push(e);
                 }
             }
@@ -1140,7 +1138,9 @@ impl<'r> Engine<'r> {
 
     /// Provenance walk over the queue (core of `retract_for`).
     fn drain_retraction(&mut self, g: &mut Graph, queue: &mut Vec<GhostId>) {
-        let mut seen: BTreeSet<GhostId> = BTreeSet::new();
+        // Only filled and asked, never walked.
+        let mut seen: std::collections::HashSet<GhostId, crate::hash::FxBuildHasher> =
+            Default::default();
         while let Some(id) = queue.pop() {
             if !seen.insert(id) {
                 continue;
@@ -1154,12 +1154,10 @@ impl<'r> Engine<'r> {
             // Two ways an element can justify further retraction.
             //
             // It PARTICIPATES in matches: those lose their ground.
-            let mixes: Vec<u32> = self
-                .by_element
-                .get(&id)
-                .map(Ixs::to_vec)
-                .unwrap_or_default();
-            for mix in mixes {
+            // A copy of the list (in place up to four entries): the
+            // retraction below writes the engine.
+            let mixes: Ixs = self.by_element.get(&id).cloned().unwrap_or_default();
+            for &mix in mixes.as_slice() {
                 self.retract_match(g, mix, queue);
             }
             // It was PRODUCED by entries: those lose their result, and
@@ -1167,12 +1165,8 @@ impl<'r> Engine<'r> {
             // above all. Without this direction a deleted product left
             // its correspondence standing, because a rule's match does
             // not contain what the rule creates (measured 2026-08-11).
-            let eixs: Vec<u32> = self
-                .by_product
-                .get(&id)
-                .map(Ixs::to_vec)
-                .unwrap_or_default();
-            if !eixs.is_empty() {
+            let eixs: Ixs = self.by_product.get(&id).cloned().unwrap_or_default();
+            if !eixs.as_slice().is_empty() {
                 // Die Ursache folgt dem PFAD, nicht dem Zeitraum. Durch
                 // eine Delete-Welle laufen auch Elemente, die selbst
                 // nicht geloescht wurden -- Erzeugnisse, die fallen,
@@ -1184,7 +1178,7 @@ impl<'r> Engine<'r> {
                     && g.connection(&id).is_none();
                 let hier_gilt = self.deleting && hier;
                 let outer = std::mem::replace(&mut self.deleting, hier_gilt);
-                for eix in eixs {
+                for &eix in eixs.as_slice() {
                     self.retract_entry(g, eix, queue);
                 }
                 self.deleting = outer;
@@ -1202,21 +1196,12 @@ impl<'r> Engine<'r> {
         // Ghost) ⇒ the status check skips it.
         let mut fallen: Vec<GhostId> = Vec::new();
         for id in self.pending_tt_nodes.drain(..) {
-            if g.node(&id)
-                .is_some_and(|n| n.status == Status::TentativeTombstone)
-            {
-                g.set_node_status(&id, Status::Tombstone);
-                if g.node(&id).is_some_and(|n| n.is_corr) {
-                    fallen.push(id);
-                }
+            if g.settle_node(&id) == Some(true) {
+                fallen.push(id);
             }
         }
         for id in self.pending_tt_edges.drain(..) {
-            if g.connection(&id)
-                .is_some_and(|c| c.status == Status::TentativeTombstone)
-            {
-                g.set_connection_status(&id, Status::Tombstone);
-            }
+            g.settle_connection(&id);
         }
         self.follow_fallen_corrs(g, &mut fallen);
         // Die Markierung gehoert der Welle, die gerade endete.
@@ -1246,7 +1231,8 @@ impl<'r> Engine<'r> {
     /// like any other removal, which can fell further correspondences,
     /// so the loop runs to a fixed point.
     fn follow_fallen_corrs(&mut self, g: &mut Graph, fallen: &mut Vec<GhostId>) {
-        let mut seen: BTreeSet<GhostId> = BTreeSet::new();
+        let mut seen: std::collections::HashSet<GhostId, crate::hash::FxBuildHasher> =
+            Default::default();
         while let Some(corr) = fallen.pop() {
             if !seen.insert(corr) || !g.node(&corr).is_some_and(|n| n.is_corr) {
                 continue;
@@ -1282,21 +1268,12 @@ impl<'r> Engine<'r> {
                 // The endpoint's own retraction may have felled further
                 // correspondences; resolve them in the same fixed point.
                 for id in self.pending_tt_nodes.drain(..) {
-                    if g.node(&id)
-                        .is_some_and(|n| n.status == Status::TentativeTombstone)
-                    {
-                        g.set_node_status(&id, Status::Tombstone);
-                        if g.node(&id).is_some_and(|n| n.is_corr) {
-                            fallen.push(id);
-                        }
+                    if g.settle_node(&id) == Some(true) {
+                        fallen.push(id);
                     }
                 }
                 for id in self.pending_tt_edges.drain(..) {
-                    if g.connection(&id)
-                        .is_some_and(|c| c.status == Status::TentativeTombstone)
-                    {
-                        g.set_connection_status(&id, Status::Tombstone);
-                    }
+                    g.settle_connection(&id);
                 }
             }
         }
@@ -1362,10 +1339,10 @@ impl<'r> Engine<'r> {
 
     /// delete/modify (spec §1.6): EAGERLY kill the element's matches.
     pub fn element_removed(&mut self, id: &GhostId) {
-        let Some(refs) = self.by_element.get(id).map(Ixs::to_vec) else {
+        let Some(refs) = self.by_element.get(id).cloned() else {
             return;
         };
-        for mix in refs {
+        for &mix in refs.as_slice() {
             let m = &mut self.matches[mix as usize];
             if !m.dead {
                 m.dead = true;
@@ -2311,6 +2288,27 @@ mod contract_tests {
         ok::<crate::graph::Graph>();
         ok::<crate::graph::ValueStore>();
         ok::<DirectedRule>();
+    }
+
+    /// The per-element list keeps the order of insertion in place and
+    /// on the heap, and changes over after [`IXS_INLINE`] entries.
+    #[test]
+    fn ixs_keeps_the_order_of_insertion_across_the_switch() {
+        for n in 0..=12u32 {
+            let mut ixs = Ixs::default();
+            let mut model = Vec::new();
+            for i in 0..n {
+                let value = i * 7 % 13;
+                ixs.push(value);
+                model.push(value);
+            }
+            assert_eq!(ixs.as_slice(), model.as_slice(), "{n} entries");
+            assert_eq!(
+                matches!(ixs, Ixs::Inline { .. }),
+                n as usize <= IXS_INLINE,
+                "{n} entries"
+            );
+        }
     }
 
     /// Sizes of the records the engine keeps per element and per match

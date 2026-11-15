@@ -36,6 +36,14 @@ libc = "0.2"
 name = "suite"
 harness = false
 
+# `--cfg seesaw_checks` compiles the engine's checks of the delta-local
+# expansion and of the seed against the unfiltered search into the
+# library, as a test build of the library has them. With it the
+# integration tests in `tests/` run under those checks:
+#   RUSTFLAGS="--cfg seesaw_checks" cargo test
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(seesaw_checks)'] }
+
 [features]
 # Deterministic structural counters for the cascade, for diagnostics.
 # Off by default, no effect on the hot path.

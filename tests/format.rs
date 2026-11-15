@@ -231,6 +231,55 @@ fn kaskaden_endzustand_ist_aktuell() {
     );
 }
 
+/// Die Engine leitet die Identitaeten der Erzeugnisse eines Schritts
+/// selbst ab, bevor sie den Plan anwendet. Sie muessen die sein, die
+/// `plan::apply_creation` ableitet: Der Plan, noch einmal auf den
+/// fertigen Graphen angewandt, nennt je Eintrag dieselben Knoten, nennt
+/// keine Kante, die der Eintrag nicht angelegt hat, und laesst die
+/// Knotenzahl, wie sie ist.
+#[test]
+fn die_engine_erzeugt_die_knoten_des_plans() {
+    for (regeln, wurzel, klasse, blatt) in [
+        (MIN, "Model", "Class", "name"),
+        (DYN, "Model", "Class", "name"),
+    ] {
+        let file = RuleFile::from_json(regeln).expect("parst");
+        let mut g = Graph::default();
+        let rules = seesaw_tgg::rules::load_file(&file, &mut g).expect("laedt");
+        let model = g.add_baseline("m", wurzel);
+        let cls = g.add_baseline("m/Person", klasse);
+        let cname = g.add_baseline("m/Person/name", blatt);
+        g.connect(model, cls, Status::Solid);
+        g.connect(cls, cname, Status::Solid);
+        let mut vs = ValueStore::default();
+        vs.insert(cname, "Person");
+        let mut engine = Engine::new(&rules);
+        engine.admit_delta(&[DeltaDomain::Source]);
+        engine.run(&mut g, &vs, 1000);
+        assert!(
+            !engine.cascade.is_empty(),
+            "die Fixture treibt eine Kaskade"
+        );
+        for entry in &engine.cascade {
+            let mut noch_einmal = g.clone();
+            let (knoten, kanten) = seesaw_tgg::plan::apply_creation(
+                &mut noch_einmal,
+                &rules[entry.rule_ix],
+                &entry.refs,
+            );
+            assert_eq!(knoten, entry.created, "Regel {}", rules[entry.rule_ix].name);
+            // Kanten des Plans meldet eine zweite Anwendung nicht mehr
+            // (sie sind nicht neu), die einer dynamischen Bindung schon.
+            assert!(
+                kanten.iter().all(|k| entry.created_edges.contains(k)),
+                "Regel {}",
+                rules[entry.rule_ix].name
+            );
+            assert_eq!(noch_einmal.node_count(), g.node_count());
+        }
+    }
+}
+
 /// Ein materialisiertes Erzeugnis wird zurückgezogen, ein
 /// Baseline-Element nicht.
 ///

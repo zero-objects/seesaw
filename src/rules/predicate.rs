@@ -259,8 +259,13 @@ pub fn parse_number(s: &str) -> Option<f64> {
 /// A predicate that decides differently on either side shows up here
 /// and nowhere else, because the table is the only place where the two
 /// evaluations meet on identical input.
+// The Java tree lives under `java/` here, not as the sibling crate
+// `../../seesaw-java` of the development tree.
 #[cfg(test)]
-const PREDICATE_TABLE: &str = "../../seesaw-java/src/test/resources/fixtures/predicate_table.json";
+const PREDICATE_TABLE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/java/src/test/resources/fixtures/predicate_table.json"
+);
 
 #[cfg(test)]
 fn predicate_table_json() -> String {
@@ -456,6 +461,25 @@ mod tests {
     fn write_predicate_table() {
         std::fs::write(PREDICATE_TABLE, predicate_table_json()).expect("table write attempt");
         eprintln!("predicate table written to {PREDICATE_TABLE}");
+    }
+
+    /// The table in the Java tree is the one this side would write.
+    /// Java reads the same file. The published package has no Java
+    /// tree, there is nothing to compare then.
+    #[test]
+    fn predicate_table_is_up_to_date() {
+        let Ok(on_disk) = std::fs::read_to_string(PREDICATE_TABLE) else {
+            eprintln!("SKIPPED: {PREDICATE_TABLE} is missing");
+            return;
+        };
+        let on_disk: serde_json::Value = serde_json::from_str(&on_disk).expect("table parses");
+        let fresh: serde_json::Value =
+            serde_json::from_str(&predicate_table_json()).expect("table parses");
+        assert_eq!(
+            on_disk, fresh,
+            "the predicate table in the Java tree is stale: write it again with \
+             `cargo test --lib -- --ignored write_predicate_table`"
+        );
     }
 
     /// Die Rust-Seite gegen die Tabelle. Faellt hier etwas um, ist die

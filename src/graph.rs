@@ -291,6 +291,13 @@ impl Parts {
                         t.insert(p);
                         *self = Self::Tree(t);
                     } else {
+                        // Most nodes have one or two participations
+                        // (a leaf, a connection to its owner). The
+                        // first allocation holds two, not the four a
+                        // vector starts with.
+                        if v.capacity() == 0 {
+                            v.reserve_exact(2);
+                        }
                         v.insert(at, p);
                     }
                 }
@@ -934,6 +941,55 @@ impl Graph {
                 true
             }
             None => false,
+        }
+    }
+
+    /// Tentatively retracts a matchable node. `true`: it was matchable
+    /// and is a `TentativeTombstone` now.
+    pub(crate) fn retract_node(&mut self, id: &GhostId) -> bool {
+        match self.map.get_mut(id).and_then(Slot::node_mut) {
+            Some(n) if n.status.is_matchable() => {
+                n.status = Status::TentativeTombstone;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Tentatively retracts a matchable connection. `true`: it was
+    /// matchable and is a `TentativeTombstone` now.
+    pub(crate) fn retract_connection(&mut self, id: &GhostId) -> bool {
+        match self.map.get_mut(id).and_then(Slot::connection_mut) {
+            Some(c) if c.status.is_matchable() => {
+                c.status = Status::TentativeTombstone;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Makes a tentatively retracted node a tombstone. `None`: the node
+    /// is not tentatively retracted (reclaimed, or not there).
+    /// Otherwise whether it is a correspondence.
+    pub(crate) fn settle_node(&mut self, id: &GhostId) -> Option<bool> {
+        match self.map.get_mut(id).and_then(Slot::node_mut) {
+            Some(n) if n.status == Status::TentativeTombstone => {
+                n.status = Status::Tombstone;
+                Some(n.is_corr)
+            }
+            _ => None,
+        }
+    }
+
+    /// Makes a tentatively retracted connection a tombstone. `false`:
+    /// it is not tentatively retracted.
+    pub(crate) fn settle_connection(&mut self, id: &GhostId) -> bool {
+        match self.map.get_mut(id).and_then(Slot::connection_mut) {
+            Some(c) if c.status == Status::TentativeTombstone => {
+                c.status = Status::Tombstone;
+                true
+            }
+            _ => false,
         }
     }
 

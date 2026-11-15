@@ -977,6 +977,89 @@ mod tests {
         }
     }
 
+    /// Triples for `in_order`: nodes with up to four triples each, an
+    /// empty group first, in between and last, `total` triples.
+    fn switch_input(total: usize) -> (Vec<(usize, usize, usize)>, Vec<usize>) {
+        let mut out = Vec::new();
+        let mut groups = vec![0];
+        let mut ni = 1;
+        while out.len() < total {
+            groups.push(out.len());
+            for pos in (0..4).rev() {
+                if out.len() < total {
+                    out.push(((ni * 7 + pos * 5) % 23, ni, pos));
+                }
+            }
+            ni += 1;
+            if ni % 9 == 0 {
+                groups.push(out.len());
+                ni += 1;
+            }
+        }
+        groups.push(out.len());
+        (out, groups)
+    }
+
+    /// Around the length from which the triples are distributed by rule
+    /// instead of sorted as a whole.
+    #[test]
+    fn in_order_at_the_switch() {
+        for total in [0, 1, 255, 256, 257, 300] {
+            let (out, groups) = switch_input(total);
+            let mut expected = out.clone();
+            expected.sort_unstable();
+            assert_eq!(
+                AnchorIndex::in_order(out, &groups),
+                expected,
+                "{total} triples"
+            );
+        }
+    }
+
+    /// A resolver that lends nothing (`baseline_str` is the default).
+    struct Plain<'a>(&'a ValueStore);
+
+    impl crate::graph::ValueResolver for Plain<'_> {
+        fn baseline_value(&self, id: &GhostId) -> Option<String> {
+            self.0.baseline_value(id)
+        }
+    }
+
+    /// The cascade (rule, refs, created) of a tree as one add delta.
+    fn cascade_of(t: &Tree, lend: bool) -> Vec<(usize, Vec<GhostId>, Vec<GhostId>)> {
+        let mut g = Graph::new();
+        let mut vs = ValueStore::default();
+        let all = build(t, &mut g, &mut vs);
+        let rules = crate::rules::load(&rules_json(), &mut g).expect("rules load");
+        let plain = Plain(&vs);
+        let resolver: &dyn crate::graph::ValueResolver = if lend { &vs } else { &plain };
+        let mut e = Engine::new(&rules);
+        e.elements_added(&g, resolver, &all);
+        while e.step(&mut g, resolver).is_some() {}
+        e.cascade
+            .iter()
+            .map(|entry| (entry.rule_ix, entry.refs.clone(), entry.created.clone()))
+            .collect()
+    }
+
+    /// Values read borrowed and values read as strings give the same
+    /// cascade.
+    #[test]
+    fn a_resolver_that_lends_nothing_gives_the_same_cascade() {
+        let t = Tree {
+            nodes: vec![
+                ("cls".into(), 0, None),
+                ("m".into(), 1, Some(true)),
+                ("m".into(), 1, Some(false)),
+                ("x".into(), 0, None),
+                ("m".into(), 4, Some(true)),
+            ],
+        };
+        let lent = cascade_of(&t, true);
+        assert_eq!(lent.len(), 6);
+        assert_eq!(lent, cascade_of(&t, false));
+    }
+
     proptest! {
         /// The distribution by rule gives the order of a sort.
         #[test]
