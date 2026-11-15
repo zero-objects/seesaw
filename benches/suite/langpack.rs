@@ -19,6 +19,7 @@ use seesaw_tgg::ident::{GhostId, Status};
 use seesaw_tgg::plan::DirectedRule;
 
 use crate::fingerprint;
+use crate::hints;
 use crate::measure::{self, Usage};
 use crate::Outcome;
 
@@ -155,6 +156,10 @@ const WINDOW: usize = 64;
 impl Model {
     fn new(spec: Spec) -> Self {
         let mut g = Graph::new();
+        // A language node has its `rule` leaf and, two times out of
+        // three, a `flag` leaf; each of them has one connection.
+        let input = spec.nodes * 8 / 3 + 4;
+        hints::graph(&mut g, input, input, &hints::LANGPACK);
         let mut vs = ValueStore::default();
         let _project = g.add_baseline("project", "P");
         let file = g.add_baseline("file", "F");
@@ -250,10 +255,12 @@ pub fn seed(spec: Spec) -> Outcome {
     let mut m = Model::new(spec);
     let rules = load(spec, &mut m.g);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::LANGPACK);
     let (steps, usage) = measure::section(|| {
         e.seed(&m.g, &m.vs);
         saturate(&mut e, &mut m.g, &m.vs)
     });
+    hints::report("langpack/seed", &m.g, &e, m.all.len());
     outcome(&m.g, &e, &m.vs, steps, usage)
 }
 
@@ -262,10 +269,12 @@ pub fn add(spec: Spec) -> Outcome {
     let mut m = Model::new(spec);
     let rules = load(spec, &mut m.g);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::LANGPACK);
     let (steps, usage) = measure::section(|| {
         e.elements_added(&m.g, &m.vs, &m.all);
         saturate(&mut e, &mut m.g, &m.vs)
     });
+    hints::report("langpack/add", &m.g, &e, m.all.len());
     outcome(&m.g, &e, &m.vs, steps, usage)
 }
 
@@ -280,6 +289,7 @@ fn synchronised(spec: Spec) -> (Model, Vec<DirectedRule>) {
 pub fn delta_add(spec: Spec, delta: usize) -> Outcome {
     let (mut m, rules) = synchronised(spec);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::LANGPACK);
     e.elements_added(&m.g, &m.vs, &m.all);
     saturate(&mut e, &mut m.g, &m.vs);
     let (steps, usage) = measure::section(|| {
@@ -301,6 +311,7 @@ pub fn delta_add(spec: Spec, delta: usize) -> Outcome {
 pub fn delta_change(spec: Spec, delta: usize) -> Outcome {
     let (mut m, rules) = synchronised(spec);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::LANGPACK);
     e.elements_added(&m.g, &m.vs, &m.all);
     saturate(&mut e, &mut m.g, &m.vs);
     let half = spec.kinds / 2;
@@ -333,6 +344,7 @@ pub fn delta_change(spec: Spec, delta: usize) -> Outcome {
 pub fn delta_change_same(spec: Spec, delta: usize) -> Outcome {
     let (mut m, rules) = synchronised(spec);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::LANGPACK);
     e.elements_added(&m.g, &m.vs, &m.all);
     saturate(&mut e, &mut m.g, &m.vs);
     let half = spec.kinds / 2;
@@ -360,6 +372,7 @@ pub fn delta_change_same(spec: Spec, delta: usize) -> Outcome {
 pub fn delta_delete(spec: Spec, delta: usize) -> Outcome {
     let (mut m, rules) = synchronised(spec);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::LANGPACK);
     e.elements_added(&m.g, &m.vs, &m.all);
     saturate(&mut e, &mut m.g, &m.vs);
     let (steps, usage) = measure::section(|| {
@@ -388,6 +401,7 @@ pub fn backward(spec: Spec) -> Outcome {
     // Forward once (not measured) to obtain a target model.
     let (mut m, rules) = synchronised(spec);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, m.all.len(), &hints::LANGPACK);
     e.elements_added(&m.g, &m.vs, &m.all);
     saturate(&mut e, &mut m.g, &m.vs);
 
@@ -401,6 +415,7 @@ pub fn backward(spec: Spec) -> Outcome {
             .filter(|n| n.status.is_matchable() && target.contains(&m.g.types.name(n.typ)))
             .collect();
     nodes.sort_by_key(|n| n.id);
+    hints::graph(&mut g, nodes.len(), nodes.len(), &hints::LANGPACK_BACKWARD);
     let mut copy = std::collections::BTreeMap::new();
     let mut all = Vec::new();
     for n in &nodes {
@@ -422,10 +437,12 @@ pub fn backward(spec: Spec) -> Outcome {
     }
     let rules = load(spec, &mut g);
     let mut e = Engine::new(&rules);
+    hints::engine(&mut e, all.len(), &hints::LANGPACK_BACKWARD);
     let (steps, usage) = measure::section(|| {
         e.admit_delta(&[DeltaDomain::Target]);
         e.elements_added(&g, &vs, &all);
         saturate(&mut e, &mut g, &vs)
     });
+    hints::report("langpack/backward", &g, &e, all.len());
     outcome(&g, &e, &vs, steps, usage)
 }

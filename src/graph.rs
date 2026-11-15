@@ -36,12 +36,22 @@ use crate::rules::transform::{Chain, ChainId, ChainTable};
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TypeId(pub u32);
 
+// Which table instance a table is: `TableUid`. Empty without the
+// feature `opt_g`, a number per instance with it.
+#[cfg(not(feature = "opt_g"))]
+include!("graph/uid_plain.rs");
+#[cfg(feature = "opt_g")]
+include!("graph/uid_counted.rs");
+
 /// Type name ↔ [`TypeId`] interning (insert-only, deterministic in
 /// registration order).
 #[derive(Debug, Clone, Default)]
 pub struct TypeTable {
     by_name: FxHashMap<String, TypeId>,
     names: Vec<String>,
+    /// Which instance this is. Read with the feature `opt_g` only.
+    #[allow(dead_code)]
+    pub(crate) uid: TableUid,
 }
 
 impl TypeTable {
@@ -101,6 +111,9 @@ pub struct KonstId(pub u32);
 pub struct KonstTable {
     by_value: FxHashMap<String, KonstId>,
     values: Vec<String>,
+    /// Which instance this is. Read with the feature `opt_g` only.
+    #[allow(dead_code)]
+    pub(crate) uid: TableUid,
 }
 
 impl KonstTable {
@@ -196,68 +209,15 @@ pub struct Participation {
     pub connection: GhostId,
 }
 
-/// Slot of one participant in the global map.
-///
-/// A participant is a node (with its participations) or a connection,
-/// never both: the identities of the two come from different
-/// derivations. The slot holds the one it is, not room for both.
-#[derive(Clone, Debug, Default)]
-enum Slot {
-    /// Created by `entry`, about to be filled.
-    #[default]
-    Empty,
-    Node {
-        node: Node,
-        /// Participations, sorted (deterministic order, O(log) access
-        /// by counterpart type via range).
-        parts: Parts,
-    },
-    Connection(Connection),
-}
-
-impl Slot {
-    fn node(&self) -> Option<&Node> {
-        match self {
-            Self::Node { node, .. } => Some(node),
-            _ => None,
-        }
-    }
-
-    fn node_mut(&mut self) -> Option<&mut Node> {
-        match self {
-            Self::Node { node, .. } => Some(node),
-            _ => None,
-        }
-    }
-
-    fn connection(&self) -> Option<&Connection> {
-        match self {
-            Self::Connection(c) => Some(c),
-            _ => None,
-        }
-    }
-
-    fn connection_mut(&mut self) -> Option<&mut Connection> {
-        match self {
-            Self::Connection(c) => Some(c),
-            _ => None,
-        }
-    }
-
-    fn parts(&self) -> Option<&Parts> {
-        match self {
-            Self::Node { parts, .. } => Some(parts),
-            _ => None,
-        }
-    }
-
-    fn parts_mut(&mut self) -> Option<&mut Parts> {
-        match self {
-            Self::Node { parts, .. } => Some(parts),
-            _ => None,
-        }
-    }
-}
+// Where the participants live: the type `Store`. Two implementations
+// of one interface: the map of slots of 2.0.2, and with `opt_c` a map
+// of numbers into dense vectors of nodes and connections. The files
+// are included, not modules of their own, so that the code of the
+// first stays in this module's unit of compilation as it was.
+#[cfg(not(feature = "opt_c"))]
+include!("graph/store_map.rs");
+#[cfg(feature = "opt_c")]
+include!("graph/store_dense.rs");
 
 /// The participation list of one participant: a set, in the order of
 /// [`Participation`]. A sorted vector while it is short, a B-tree once
@@ -447,6 +407,7 @@ mod ident {
         GhostId::from_raw(*h.finalize().as_bytes())
     }
 
+    #[inline]
     pub fn ghost(parent: &GhostId, typ_name: &str) -> GhostId {
         trace!(ident_hashes);
         let mut h = blake3::Hasher::new();
@@ -508,6 +469,7 @@ mod ident {
     /// plan position), NOT via the value — no value in any hash; two
     /// variant rules produce structurally distinct leaves at the same
     /// anchor.
+    #[inline]
     pub fn konst(parent: &GhostId, typ_name: &str, rule_name: &str, plan_ix: u32) -> GhostId {
         trace!(ident_hashes);
         let mut h = blake3::Hasher::new();
@@ -569,7 +531,7 @@ impl Graph {
     /// [`Graph::add_corr`] with the identity already derived.
     pub(crate) fn add_corr_at(&mut self, id: GhostId, typ_name: &str) -> GhostId {
         let typ = self.types.intern(typ_name);
-        self.insert_node(Node {
+        self.store.insert_node(Node {
             id,
             typ,
             status: Status::Ghost,
@@ -586,15 +548,10 @@ impl Graph {
 /// read.
 #[derive(Debug, Clone, Default)]
 pub struct Graph {
-    map: FxHashMap<GhostId, Slot>,
+    /// The participants: nodes with their participations, connections,
+    /// the nodes' insertion order and the type index.
+    store: Store,
     pub types: TypeTable,
-    /// Insertion order of the nodes (deterministic iteration for
-    /// dumps/fingerprints).
-    node_order: Vec<GhostId>,
-    /// Type index for seed scans (realization, §3b.2): ids per type in
-    /// insertion order, insert-only; status is filtered on read like
-    /// everywhere else.
-    by_type: FxHashMap<TypeId, Vec<GhostId>>,
     /// Rule constants (source-material table, §3b.4).
     pub konsts: KonstTable,
     /// Transformation chains of derived leaves,
@@ -615,7 +572,7 @@ impl Graph {
     pub fn add_baseline(&mut self, external: &str, typ_name: &str) -> GhostId {
         let id = ident::baseline(external);
         let typ = self.types.intern(typ_name);
-        self.insert_node(Node {
+        self.store.insert_node(Node {
             id,
             typ,
             status: Status::Solid,
@@ -637,7 +594,7 @@ impl Graph {
     /// [`Graph::add_ghost`] with the identity already derived.
     pub(crate) fn add_ghost_at(&mut self, id: GhostId, typ_name: &str) -> GhostId {
         let typ = self.types.intern(typ_name);
-        self.insert_node(Node {
+        self.store.insert_node(Node {
             id,
             typ,
             status: Status::Ghost,
@@ -679,7 +636,7 @@ impl Graph {
     ) -> GhostId {
         let transform = self.intern_plan(transform);
         let typ = self.types.intern(typ_name);
-        self.insert_node(Node {
+        self.store.insert_node(Node {
             id,
             typ,
             status: Status::Ghost,
@@ -716,7 +673,7 @@ impl Graph {
     ) -> GhostId {
         let typ = self.types.intern(typ_name);
         let konst = self.konsts.intern(value);
-        self.insert_node(Node {
+        self.store.insert_node(Node {
             id,
             typ,
             status: Status::Ghost,
@@ -733,43 +690,8 @@ impl Graph {
     /// node with two endpoints, not a special kind) — the mark must not
     /// touch identity.
     pub fn mark_corr(&mut self, id: &GhostId) {
-        if let Some(n) = self.map.get_mut(id).and_then(Slot::node_mut) {
+        if let Some(n) = self.store.node_mut(id) {
             n.is_corr = true;
-        }
-    }
-
-    fn insert_node(&mut self, node: Node) {
-        use std::collections::hash_map::Entry;
-        // A new node is written into its slot once (no default slot
-        // first).
-        match self.map.entry(node.id) {
-            Entry::Vacant(v) => {
-                self.node_order.push(node.id);
-                self.by_type.entry(node.typ).or_default().push(node.id);
-                v.insert(Slot::Node {
-                    node,
-                    parts: Parts::default(),
-                });
-            }
-            Entry::Occupied(mut o) => match o.get_mut() {
-                Slot::Node { node: existing, .. } => {
-                    // M5: resurrection.
-                    if existing.status == Status::TentativeTombstone {
-                        existing.status = node.status;
-                    }
-                }
-                slot @ Slot::Empty => {
-                    self.node_order.push(node.id);
-                    self.by_type.entry(node.typ).or_default().push(node.id);
-                    *slot = Slot::Node {
-                        node,
-                        parts: Parts::default(),
-                    };
-                }
-                Slot::Connection(_) => {
-                    unreachable!("a node identity is not a connection identity")
-                }
-            },
         }
     }
 
@@ -778,19 +700,14 @@ impl Graph {
     /// value into its original (store/host). From here on the leaf is
     /// value-independent (state-based adapter).
     pub fn freeze_derived(&mut self, id: &GhostId) {
-        if let Some(n) = self.map.get_mut(id).and_then(Slot::node_mut) {
+        if let Some(n) = self.store.node_mut(id) {
             n.derived = None;
         }
     }
 
     /// Matchable nodes of a type (type index, insertion order).
     pub fn nodes_of_type(&self, typ: TypeId) -> impl Iterator<Item = &Node> + '_ {
-        self.by_type
-            .get(&typ)
-            .into_iter()
-            .flatten()
-            .filter_map(move |id| self.node(id))
-            .filter(|n| n.status.is_matchable())
+        self.store.of_type(typ).filter(|n| n.status.is_matchable())
     }
 
     /// Connects two nodes (set: idempotent per direction). Direction =
@@ -816,20 +733,7 @@ impl Graph {
         }
         // Both endpoints in one access each: status, reclaim and the
         // participations are read and written on the two slots.
-        let [s, t] = self.map.get_disjoint_mut([&source, &target]);
-        let (
-            Some(Slot::Node {
-                node: s,
-                parts: s_parts,
-            }),
-            Some(Slot::Node {
-                node: t,
-                parts: t_parts,
-            }),
-        ) = (s, t)
-        else {
-            return None;
-        };
+        let [(s, s_parts), (t, t_parts)] = self.store.two_nodes_mut(&source, &target)?;
         if s.status == Status::Tombstone || t.status == Status::Tombstone {
             return None;
         }
@@ -861,42 +765,7 @@ impl Graph {
             outgoing: false,
             connection: id,
         });
-        Some((id, self.insert_connection(id, source, target, status)))
-    }
-
-    /// Writes the connection `id` into its slot. `true`: it is new.
-    /// `false`: it existed; a tentatively retracted one is revived
-    /// (M5).
-    fn insert_connection(
-        &mut self,
-        id: GhostId,
-        source: GhostId,
-        target: GhostId,
-        status: Status,
-    ) -> bool {
-        let connection = Connection {
-            id,
-            source,
-            target,
-            status,
-        };
-        match self.map.entry(id) {
-            std::collections::hash_map::Entry::Vacant(v) => {
-                v.insert(Slot::Connection(connection));
-            }
-            std::collections::hash_map::Entry::Occupied(mut o) => {
-                let slot = o.get_mut();
-                if let Some(c) = slot.connection_mut() {
-                    if c.status == Status::TentativeTombstone {
-                        c.status = status;
-                    }
-                    return false;
-                }
-                debug_assert!(matches!(slot, Slot::Empty));
-                *slot = Slot::Connection(connection);
-            }
-        }
-        true
+        Some((id, self.store.insert_connection(id, source, target, status)))
     }
 
     /// [`Graph::connect_reporting`] for a connection from a node to
@@ -916,10 +785,10 @@ impl Graph {
             self.set_node_status(&node, Status::Ghost);
         }
         let id = ident::connection(&node, &node);
-        if !self.insert_connection(id, node, node, status) {
+        if !self.store.insert_connection(id, node, node, status) {
             return Some((id, false));
         }
-        if let Some(parts) = self.map.get_mut(&node).and_then(Slot::parts_mut) {
+        if let Some(parts) = self.store.parts_mut(&node) {
             for outgoing in [true, false] {
                 parts.insert(Participation {
                     other_typ: typ,
@@ -935,7 +804,7 @@ impl Graph {
     // ── Status ───────────────────────────────────────────────────
 
     pub fn set_node_status(&mut self, id: &GhostId, status: Status) -> bool {
-        match self.map.get_mut(id).and_then(Slot::node_mut) {
+        match self.store.node_mut(id) {
             Some(n) => {
                 n.status = status;
                 true
@@ -947,7 +816,7 @@ impl Graph {
     /// Tentatively retracts a matchable node. `true`: it was matchable
     /// and is a `TentativeTombstone` now.
     pub(crate) fn retract_node(&mut self, id: &GhostId) -> bool {
-        match self.map.get_mut(id).and_then(Slot::node_mut) {
+        match self.store.node_mut(id) {
             Some(n) if n.status.is_matchable() => {
                 n.status = Status::TentativeTombstone;
                 true
@@ -959,7 +828,7 @@ impl Graph {
     /// Tentatively retracts a matchable connection. `true`: it was
     /// matchable and is a `TentativeTombstone` now.
     pub(crate) fn retract_connection(&mut self, id: &GhostId) -> bool {
-        match self.map.get_mut(id).and_then(Slot::connection_mut) {
+        match self.store.connection_mut(id) {
             Some(c) if c.status.is_matchable() => {
                 c.status = Status::TentativeTombstone;
                 true
@@ -972,7 +841,7 @@ impl Graph {
     /// is not tentatively retracted (reclaimed, or not there).
     /// Otherwise whether it is a correspondence.
     pub(crate) fn settle_node(&mut self, id: &GhostId) -> Option<bool> {
-        match self.map.get_mut(id).and_then(Slot::node_mut) {
+        match self.store.node_mut(id) {
             Some(n) if n.status == Status::TentativeTombstone => {
                 n.status = Status::Tombstone;
                 Some(n.is_corr)
@@ -984,7 +853,7 @@ impl Graph {
     /// Makes a tentatively retracted connection a tombstone. `false`:
     /// it is not tentatively retracted.
     pub(crate) fn settle_connection(&mut self, id: &GhostId) -> bool {
-        match self.map.get_mut(id).and_then(Slot::connection_mut) {
+        match self.store.connection_mut(id) {
             Some(c) if c.status == Status::TentativeTombstone => {
                 c.status = Status::Tombstone;
                 true
@@ -994,7 +863,7 @@ impl Graph {
     }
 
     pub fn set_connection_status(&mut self, id: &GhostId, status: Status) -> bool {
-        match self.map.get_mut(id).and_then(Slot::connection_mut) {
+        match self.store.connection_mut(id) {
             Some(c) => {
                 c.status = status;
                 true
@@ -1006,25 +875,22 @@ impl Graph {
     // ── Reading ──────────────────────────────────────────────────
 
     pub fn node(&self, id: &GhostId) -> Option<&Node> {
-        self.map.get(id).and_then(Slot::node)
+        self.store.node(id)
     }
 
     /// A node with its participation list, in one access.
     pub(crate) fn node_parts(&self, id: &GhostId) -> Option<(&Node, &Parts)> {
-        match self.map.get(id)? {
-            Slot::Node { node, parts } => Some((node, parts)),
-            _ => None,
-        }
+        self.store.node_parts(id)
     }
 
     /// Every node in the graph, in no particular order. Callers that
     /// need a stable sequence sort by id.
     pub fn nodes(&self) -> impl Iterator<Item = &Node> + '_ {
-        self.map.values().filter_map(Slot::node)
+        self.store.nodes()
     }
 
     pub fn connection(&self, id: &GhostId) -> Option<&Connection> {
-        self.map.get(id).and_then(Slot::connection)
+        self.store.connection(id)
     }
 
     /// A node's participations whose counterpart has type `typ` (range
@@ -1034,20 +900,15 @@ impl Graph {
         id: &GhostId,
         typ: TypeId,
     ) -> impl Iterator<Item = &'a Participation> + 'a {
-        self.map
-            .get(id)
-            .and_then(Slot::parts)
+        self.store
+            .parts(id)
             .into_iter()
             .flat_map(move |parts| parts.of_type(typ))
     }
 
     /// All participations (sorted) — for walks/diagnostics.
     pub fn parts<'a>(&'a self, id: &GhostId) -> impl Iterator<Item = &'a Participation> + 'a {
-        self.map
-            .get(id)
-            .and_then(Slot::parts)
-            .into_iter()
-            .flat_map(Parts::iter)
+        self.store.parts(id).into_iter().flat_map(Parts::iter)
     }
 
     /// The id of the connection source→target, if the graph holds one
@@ -1077,7 +938,7 @@ impl Graph {
             connection: GhostId::from_raw([0xFF; 32]),
             ..lo
         };
-        let found = self.map.get(source)?.parts()?.range(lo, hi).next()?;
+        let found = self.store.parts(source)?.range(lo, hi).next()?;
         debug_assert_eq!(found.connection, ident::connection(source, target));
         Some(found.connection)
     }
@@ -1112,19 +973,17 @@ impl Graph {
 
     /// Nodes in insertion order.
     pub fn iter_nodes(&self) -> impl Iterator<Item = &Node> {
-        self.node_order
-            .iter()
-            .filter_map(|id| self.map.get(id).and_then(Slot::node))
+        self.store.nodes_in_order()
     }
 
     pub fn node_count(&self) -> usize {
-        self.node_order.len()
+        self.store.node_count()
     }
 
     /// How many nodes of a type the graph holds, whatever their status.
     #[must_use]
     pub fn type_count(&self, typ: TypeId) -> usize {
-        self.by_type.get(&typ).map_or(0, Vec::len)
+        self.store.type_count(typ)
     }
 
     /// Materialization (fold end stage, def. 5.1): a new
@@ -1145,25 +1004,14 @@ impl Graph {
             }
             let mut node = n.clone();
             node.status = Status::Solid;
-            let id = node.id;
-            out.node_order.push(id);
-            out.by_type.entry(node.typ).or_default().push(id);
-            out.map.insert(
-                id,
-                Slot::Node {
-                    node,
-                    parts: Parts::default(),
-                },
-            );
+            out.store.insert_node(node);
         }
-        for slot in self.map.values() {
-            if let Some(c) = slot.connection() {
-                if c.status == Status::Tombstone {
-                    continue;
-                }
-                if out.node(&c.source).is_some() && out.node(&c.target).is_some() {
-                    let _ = out.connect(c.source, c.target, Status::Solid);
-                }
+        for c in self.store.connections() {
+            if c.status == Status::Tombstone {
+                continue;
+            }
+            if out.node(&c.source).is_some() && out.node(&c.target).is_some() {
+                let _ = out.connect(c.source, c.target, Status::Solid);
             }
         }
         out
@@ -1234,6 +1082,101 @@ impl Graph {
                 }
             }
         }
+    }
+}
+
+/// Creation and reading by type id (feature `opt_g`): what the
+/// functions that take a type name do after they resolved it.
+#[cfg(feature = "opt_g")]
+impl Graph {
+    /// [`Graph::add_corr_at`] for a type already interned.
+    pub(crate) fn add_corr_typed(&mut self, id: GhostId, typ: TypeId) -> GhostId {
+        self.store.insert_node(Node {
+            id,
+            typ,
+            status: Status::Ghost,
+            derived: None,
+            konst: None,
+            is_corr: true,
+        });
+        id
+    }
+
+    /// [`Graph::add_ghost_at`] for a type already interned.
+    pub(crate) fn add_ghost_typed(&mut self, id: GhostId, typ: TypeId) -> GhostId {
+        self.store.insert_node(Node {
+            id,
+            typ,
+            status: Status::Ghost,
+            derived: None,
+            konst: None,
+            is_corr: false,
+        });
+        id
+    }
+
+    /// [`Graph::add_derived_leaf_at`] for a type and a chain already
+    /// interned.
+    pub(crate) fn add_derived_leaf_typed(
+        &mut self,
+        id: GhostId,
+        typ: TypeId,
+        source: GhostId,
+        transform: LeafTransform,
+    ) -> GhostId {
+        self.store.insert_node(Node {
+            id,
+            typ,
+            status: Status::Ghost,
+            derived: Some(DerivedLeaf {
+                quelle: source,
+                transform,
+            }),
+            konst: None,
+            is_corr: false,
+        });
+        id
+    }
+
+    /// [`Graph::add_konst_leaf_at`] for a type and a constant already
+    /// interned.
+    pub(crate) fn add_konst_leaf_typed(
+        &mut self,
+        id: GhostId,
+        typ: TypeId,
+        konst: KonstId,
+    ) -> GhostId {
+        self.store.insert_node(Node {
+            id,
+            typ,
+            status: Status::Ghost,
+            derived: None,
+            konst: Some(konst),
+            is_corr: false,
+        });
+        id
+    }
+
+    /// [`Graph::child_leaf_of_type`] for a type already looked up.
+    pub(crate) fn child_leaf_of_typ(&self, anchor: &GhostId, typ: TypeId) -> Option<GhostId> {
+        self.parts_by_other_type(anchor, typ)
+            .filter(|p| p.outgoing)
+            .map(|p| p.other)
+            .find(|id| self.node(id).is_some_and(|n| n.status.is_matchable()))
+    }
+}
+
+#[cfg(feature = "opt_b")]
+impl Graph {
+    /// Makes room for `nodes` further nodes and `connections` further
+    /// connections, so that the graph's stores do not grow step by
+    /// step while they are added. A hint: fewer or more may follow.
+    ///
+    /// [`Graph::nodes`] has no particular order; the order it has can
+    /// differ from that of a graph that grew without the hint. Every
+    /// ordered reading of the graph is the same.
+    pub fn reserve(&mut self, nodes: usize, connections: usize) {
+        self.store.reserve(nodes, connections);
     }
 }
 
@@ -1432,6 +1375,74 @@ mod tests {
         // A TOMB endpoint is rejected.
         g.set_node_status(&name, Status::Tombstone);
         assert!(g.connect(class, name, Status::Solid).is_none());
+    }
+
+    /// The two iterations "in no particular order" (`nodes`, and the
+    /// connections `materialize` reads) follow the keys of a map that
+    /// was filled with the participant ids in the order the graph
+    /// received them, whatever the store keeps per id.
+    #[test]
+    fn the_unordered_iterations_follow_a_map_of_the_ids() {
+        let mut g = Graph::new();
+        let mut shadow: FxHashMap<GhostId, bool> = FxHashMap::default();
+        let hub = g.add_baseline("hub", "Reg");
+        shadow.insert(hub, true);
+        for i in 0..3000 {
+            let f = g.add_baseline(&format!("f{i}"), "Family");
+            shadow.insert(f, true);
+            let c = g.connect(hub, f, Status::Solid).unwrap();
+            shadow.insert(c, false);
+            if i % 3 == 0 {
+                let leaf = g.add_ghost(&f, "name");
+                shadow.insert(leaf, true);
+                let c = g.connect(f, leaf, Status::Ghost).unwrap();
+                shadow.insert(c, false);
+                // Again: neither a second node nor a second connection.
+                g.add_ghost(&f, "name");
+                g.connect(f, leaf, Status::Ghost).unwrap();
+            }
+        }
+        let nodes: Vec<GhostId> = g.nodes().map(|n| n.id).collect();
+        let expected: Vec<GhostId> = shadow
+            .iter()
+            .filter(|(_, node)| **node)
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(nodes, expected);
+        assert_eq!(g.node_count(), expected.len());
+        // In insertion order per type and overall.
+        let families: Vec<GhostId> = g
+            .nodes_of_type(g.types.lookup("Family").unwrap())
+            .map(|n| n.id)
+            .collect();
+        let in_order: Vec<GhostId> = g
+            .iter_nodes()
+            .filter(|n| g.types.name(n.typ) == "Family")
+            .map(|n| n.id)
+            .collect();
+        assert_eq!(families, in_order);
+        assert_eq!(families.len(), 3000);
+        assert_eq!(g.type_count(g.types.lookup("name").unwrap()), 1000);
+        // The copy holds the same participants; it was filled with the
+        // nodes in insertion order and with the connections in the
+        // order of the map.
+        let copy = g.materialize();
+        let mut shadow_copy: FxHashMap<GhostId, bool> = FxHashMap::default();
+        for n in g.iter_nodes() {
+            shadow_copy.insert(n.id, true);
+        }
+        for (id, node) in &shadow {
+            if !*node {
+                shadow_copy.insert(*id, false);
+            }
+        }
+        let copied: Vec<GhostId> = copy.nodes().map(|n| n.id).collect();
+        let expected: Vec<GhostId> = shadow_copy
+            .iter()
+            .filter(|(_, node)| **node)
+            .map(|(id, _)| *id)
+            .collect();
+        assert_eq!(copied, expected);
     }
 
     #[test]
