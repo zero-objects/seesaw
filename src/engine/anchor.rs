@@ -401,8 +401,16 @@ impl AnchorIndex {
     }
 
     /// Marks every prefix-tree node below `at` that a walk from the
-    /// graph node `x` realises.
-    fn walk(&self, g: &Graph, v: &dyn ValueResolver, x: GhostId, at: u32, st: &mut Walk) {
+    /// graph node `x` realises without entering a node `skip` names.
+    fn walk(
+        &self,
+        g: &Graph,
+        v: &dyn ValueResolver,
+        x: GhostId,
+        at: u32,
+        st: &mut Walk,
+        skip: &dyn Fn(&GhostId) -> bool,
+    ) {
         if !st.visited.insert((x, at)) {
             return;
         }
@@ -413,6 +421,11 @@ impl AnchorIndex {
                 if group.outgoing.is_some_and(|o| o != p.outgoing) {
                     continue;
                 }
+                // A node the search will leave out cannot stand on a
+                // path of a match it finds.
+                if skip(&p.other) {
+                    continue;
+                }
                 // The status of the edge and of the neighbour is not
                 // read here. A path over a retracted element is marked
                 // although no match can use it; the condition stays
@@ -421,16 +434,16 @@ impl AnchorIndex {
                 // participation of every walk, the retracted elements
                 // are few. The type is that of the participation range.
                 if let Some(id) = group.any {
-                    self.enter(g, v, p.other, id, st);
+                    self.enter(g, v, p.other, id, st, skip);
                 }
                 if valued {
                     g.with_value(&p.other, v, |val| {
                         if let Some(&id) = val.and_then(|s| group.equals.get(s)) {
-                            self.enter(g, v, p.other, id, st);
+                            self.enter(g, v, p.other, id, st, skip);
                         }
                         for (_, pred, id) in &group.other {
                             if pred.matches(val) {
-                                self.enter(g, v, p.other, *id, st);
+                                self.enter(g, v, p.other, *id, st, skip);
                             }
                         }
                     });
@@ -439,7 +452,15 @@ impl AnchorIndex {
         }
     }
 
-    fn enter(&self, g: &Graph, v: &dyn ValueResolver, x: GhostId, id: u32, st: &mut Walk) {
+    fn enter(
+        &self,
+        g: &Graph,
+        v: &dyn ValueResolver,
+        x: GhostId,
+        id: u32,
+        st: &mut Walk,
+        skip: &dyn Fn(&GhostId) -> bool,
+    ) {
         if !st.marked[id as usize] {
             st.marked[id as usize] = true;
             st.list.push(id);
@@ -448,13 +469,20 @@ impl AnchorIndex {
         if self.nodes[id as usize].groups.is_empty() {
             return;
         }
-        self.walk(g, v, x, id, st);
+        self.walk(g, v, x, id, st, skip);
     }
 
     /// The (rule, index into `nodes`, position) triples at which an
     /// anchored search can find a match, for the rules `active` admits,
     /// ascending by (rule, node index, position) — the order of the
     /// unfiltered loop.
+    ///
+    /// `skip(ni, id)`: the search anchored at `nodes[ni]` leaves the
+    /// node `id` out. The walk from `nodes[ni]` does not enter such a
+    /// node, so a place whose paths are realised only through one is
+    /// not a candidate: the search there would find nothing. A node the
+    /// search leaves out as its own anchor (`skip(ni, &nodes[ni])`) has
+    /// no triples.
     pub(crate) fn candidates(
         &self,
         g: &Graph,
@@ -462,6 +490,7 @@ impl AnchorIndex {
         nodes: &[GhostId],
         st: &mut Walk,
         active: impl Fn(usize) -> bool,
+        skip: impl Fn(usize, &GhostId) -> bool,
     ) -> Vec<(usize, usize, usize)> {
         let mut out: Vec<(usize, usize, usize)> = Vec::new();
         if st.marked.len() != self.nodes.len() {
@@ -474,6 +503,9 @@ impl AnchorIndex {
         groups.clear();
         for (ni, x) in nodes.iter().enumerate() {
             groups.push(out.len());
+            if skip(ni, x) {
+                continue;
+            }
             let Some(node) = g.node(x) else { continue };
             let Some(ti) = self.by_type.get(&node.typ) else {
                 continue;
@@ -482,7 +514,7 @@ impl AnchorIndex {
                 continue;
             }
             st.visited.clear();
-            self.walk(g, v, *x, ti.root, st);
+            self.walk(g, v, *x, ti.root, st, &|id| skip(ni, id));
             // The places filed under a marked node, and the places
             // without a path. Each place is filed once, so none comes
             // twice; the triples are sorted below. Of the places that

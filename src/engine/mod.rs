@@ -319,7 +319,14 @@ fn index_seed(
         .collect();
     nodes.sort_unstable();
     nodes.dedup();
-    let candidates = index.candidates(g, resolver, &nodes, walk, |ri| admitted[ri]);
+    let candidates = index.candidates(
+        g,
+        resolver,
+        &nodes,
+        walk,
+        |ri| admitted[ri],
+        |ni, id| *id < nodes[ni],
+    );
     let mut next = 0;
     // The matches of one rule, one after the other, and their starts in
     // μ order.
@@ -740,14 +747,6 @@ impl<'r> Engine<'r> {
         let rules = self.rules;
         let anchor = self.take_index();
         let index = anchor.index();
-        let candidates = {
-            let (active, directions) = (self.active.as_ref(), self.wave_directions);
-            index.candidates(g, resolver, new_nodes, &mut self.walk, |ri| {
-                rule_admitted(active, directions, &rules[ri], ri)
-            })
-        };
-        #[cfg(test)]
-        self.check_candidates(g, resolver, new_nodes, &candidates);
         // A match that binds several of the new nodes would be found
         // once from each of them. It is searched from the first of them
         // only: the search anchored at `new_nodes[ni]` leaves out every
@@ -755,7 +754,10 @@ impl<'r> Engine<'r> {
         // node has it at a position where the index offers it as a
         // candidate too (the condition is necessary), and that triple
         // sorts before this one, so the match is recorded there, at the
-        // place in the order where it was recorded first before.
+        // place in the order where it was recorded first before. The
+        // index leaves the same nodes out of its walks, so it offers no
+        // place whose search would only find such matches, and none for
+        // a node that stands in `new_nodes` a second time.
         let first: crate::hash::FxHashMap<GhostId, usize> = if new_nodes.len() > LINEAR_NEW {
             let mut first = crate::hash::FxHashMap::default();
             for (i, id) in new_nodes.iter().enumerate() {
@@ -765,19 +767,30 @@ impl<'r> Engine<'r> {
         } else {
             crate::hash::FxHashMap::default()
         };
+        let earlier = |ni: usize, id: &GhostId| {
+            if new_nodes.len() > LINEAR_NEW {
+                first.get(id).is_some_and(|&i| i < ni)
+            } else {
+                new_nodes[..ni].contains(id)
+            }
+        };
+        let candidates = {
+            let (active, directions) = (self.active.as_ref(), self.wave_directions);
+            index.candidates(
+                g,
+                resolver,
+                new_nodes,
+                &mut self.walk,
+                |ri| rule_admitted(active, directions, &rules[ri], ri),
+                earlier,
+            )
+        };
+        #[cfg(test)]
+        self.check_candidates(g, resolver, new_nodes, &candidates);
         let mut scratch = std::mem::take(&mut self.scratch);
         for (ri, ni, pos) in candidates {
-            let earlier = |id: &GhostId| {
-                if new_nodes.len() > LINEAR_NEW {
-                    first.get(id).is_some_and(|&i| i < ni)
-                } else {
-                    new_nodes[..ni].contains(id)
-                }
-            };
-            if earlier(&new_nodes[ni]) {
-                // The same node again: searched at its first index.
-                continue;
-            }
+            let earlier = |id: &GhostId| earlier(ni, id);
+            debug_assert!(!earlier(&new_nodes[ni]), "a triple for a repeated node");
             let pattern = &rules[ri].pattern;
             let plan = index.plan(ri, pos, pattern);
             trace!(anchored_searches);
@@ -833,8 +846,8 @@ impl<'r> Engine<'r> {
     }
 
     /// Test check of [`anchor::AnchorIndex`]: every (rule, node,
-    /// position) triple at which the unfiltered loop finds a match is a
-    /// candidate.
+    /// position) triple at which the search that leaves out the earlier
+    /// new nodes finds a match is a candidate.
     #[cfg(test)]
     fn check_candidates(
         &self,
@@ -853,9 +866,20 @@ impl<'r> Engine<'r> {
                     if pn.typ != node.typ {
                         continue;
                     }
+                    let earlier = |other: &GhostId| new_nodes[..ni].contains(other);
+                    if earlier(id) {
+                        continue;
+                    }
                     let mut fixed = vec![None; rule.pattern.nodes.len()];
                     fixed[pos] = Some(*id);
-                    if !find_matches_with_fixed(g, resolver, &rule.pattern, &fixed).is_empty() {
+                    let found = crate::engine::matcher::find_matches_without(
+                        g,
+                        resolver,
+                        &rule.pattern,
+                        &fixed,
+                        Some(&earlier),
+                    );
+                    if !found.is_empty() {
                         assert!(
                             candidates.binary_search(&(ri, ni, pos)).is_ok(),
                             "anchor index drops a match: rule {} position {pos}",
