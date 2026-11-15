@@ -113,6 +113,10 @@ struct Group {
 #[derive(Debug, Default)]
 struct PathNode {
     groups: Vec<Group>,
+    /// The groups by type, ascending: (type, index into `groups`).
+    /// Filled once the tree is complete (`AnchorIndex::index_groups`).
+    #[cfg(feature = "opt_m")]
+    by_typ: Vec<(TypeId, u32)>,
 }
 
 /// One pattern position of one rule, as an anchor candidate.
@@ -296,6 +300,18 @@ impl Tree {
     }
 }
 
+// The walk over the prefix tree (`AnchorIndex::walk`) in two forms.
+// Without the feature `opt_m` it asks the participation list of the
+// graph node for one range per group of the prefix-tree node. With it,
+// a prefix-tree node with many groups is served by one pass over the
+// list instead. Both visit the same pairs of group and participation,
+// in another order; the marks of a walk do not depend on the order.
+// The files are part of this module.
+#[cfg(not(feature = "opt_m"))]
+include!("anchor/walk_by_group.rs");
+#[cfg(feature = "opt_m")]
+include!("anchor/walk_by_part.rs");
+
 impl AnchorIndex {
     /// Reads the paths from every position of the directed rules.
     #[must_use]
@@ -385,6 +401,7 @@ impl AnchorIndex {
                 });
             }
         }
+        index.index_groups();
         index
     }
 
@@ -479,62 +496,59 @@ impl AnchorIndex {
         self.shape == shape(rules)
     }
 
-    /// Marks every prefix-tree node below `at` that a walk from a graph
-    /// node realises without entering a node `skip` names. `parts` is
-    /// the participation list of the node the walk stands at.
-    fn walk<'g>(
+    /// One step of a walk: the participation `p` of the node the walk
+    /// stands at, under the children `group` of the prefix-tree node
+    /// (`p.other_typ == group.typ`). `valued`: the group has children
+    /// that ask for a value.
+    #[allow(clippy::too_many_arguments)]
+    #[inline(always)]
+    fn pair<'g>(
         &self,
         g: &'g Graph,
         v: &dyn ValueResolver,
-        parts: &'g Parts,
-        at: u32,
+        group: &Group,
+        valued: bool,
+        p: &'g crate::graph::Participation,
         st: &mut Walk,
         skip: &dyn Fn(&GhostId) -> bool,
     ) {
-        trace!(anchor_walk_visits);
-        for group in &self.nodes[at as usize].groups {
-            let valued = !group.equals.is_empty() || !group.other.is_empty();
-            for p in parts.of_type(group.typ) {
-                if group.outgoing.is_some_and(|o| o != p.outgoing) {
-                    continue;
-                }
-                // A node the search will leave out cannot stand on a
-                // path of a match it finds.
-                if skip(&p.other) {
-                    continue;
-                }
-                // The status of the edge and of the neighbour is not
-                // read here. A path over a retracted element is marked
-                // although no match can use it; the condition stays
-                // necessary, and the search at that place fails on the
-                // element. Reading the status costs two map lookups per
-                // participation of every walk, the retracted elements
-                // are few. The type is that of the participation range.
-                //
-                // The neighbour is looked up at most once, when its
-                // value or its participations are needed.
-                let mut other: Looked<'g> = None;
-                if let Some(id) = group.any {
+        if group.outgoing.is_some_and(|o| o != p.outgoing) {
+            return;
+        }
+        // A node the search will leave out cannot stand on a
+        // path of a match it finds.
+        if skip(&p.other) {
+            return;
+        }
+        // The status of the edge and of the neighbour is not
+        // read here. A path over a retracted element is marked
+        // although no match can use it; the condition stays
+        // necessary, and the search at that place fails on the
+        // element. Reading the status costs two map lookups per
+        // participation of every walk, the retracted elements
+        // are few. The type is that of the participation range.
+        //
+        // The neighbour is looked up at most once, when its
+        // value or its participations are needed.
+        let mut other: Looked<'g> = None;
+        if let Some(id) = group.any {
+            self.enter(g, v, &p.other, id, st, skip, &mut other);
+        }
+        if valued {
+            let Some((node, _)) = *other.get_or_insert_with(|| g.node_parts(&p.other)) else {
+                return;
+            };
+            let numbers = self.numbers.get();
+            values::see(g, v, node, numbers, |val| {
+                if let Some(&id) = group.equals.get(val, numbers) {
                     self.enter(g, v, &p.other, id, st, skip, &mut other);
                 }
-                if valued {
-                    let Some((node, _)) = *other.get_or_insert_with(|| g.node_parts(&p.other))
-                    else {
-                        continue;
-                    };
-                    let numbers = self.numbers.get();
-                    values::see(g, v, node, numbers, |val| {
-                        if let Some(&id) = group.equals.get(val, numbers) {
-                            self.enter(g, v, &p.other, id, st, skip, &mut other);
-                        }
-                        for (_, pred, id) in &group.other {
-                            if pred.matches(val.text()) {
-                                self.enter(g, v, &p.other, *id, st, skip, &mut other);
-                            }
-                        }
-                    });
+                for (_, pred, id) in &group.other {
+                    if pred.matches(val.text()) {
+                        self.enter(g, v, &p.other, *id, st, skip, &mut other);
+                    }
                 }
-            }
+            });
         }
     }
 
@@ -920,6 +934,77 @@ pub(crate) mod tests {
         // has no Method rule and so no flag rule either.
         assert_eq!(cascade(&t, true), 6);
         assert_eq!(cascade(&t, false), 6);
+    }
+
+    /// Rules that hang many different types below one type: the
+    /// prefix-tree node of `Item` has one group per rule. Items with
+    /// two leaves and one item with more leaves than a pass over the
+    /// list takes (`opt_m`) give the same matches by delta, by seed
+    /// through the index and by scan.
+    #[test]
+    fn the_index_keeps_the_matches_under_many_groups() {
+        const KINDS: usize = 6;
+        const ITEMS: usize = 10;
+        let rules: Vec<String> = (0..KINDS)
+            .map(|k| {
+                format!(
+                    r#"{{"name":"R{k}","rank":1,
+                    "left":{{"anchor":"item","nodes":[
+                        {{"name":"item","type":"Item"}},
+                        {{"name":"attr","type":"Attr{k}","context":true}}],
+                      "links":[["item","attr"]]}},
+                    "right":{{"anchor":"marker","nodes":[{{"name":"marker","type":"Marker{k}"}}]}},
+                    "corrs":[{{"type":"C{k}","left":"item","right":"marker","role":"establishes"}}]}}"#
+                )
+            })
+            .collect();
+        let json = format!(
+            r#"{{"format":3,"name":"anchor_groups","rules":[{}]}}"#,
+            rules.join(",")
+        );
+        let run = |mode: u8| -> usize {
+            let mut g = Graph::new();
+            let vs = ValueStore::default();
+            let mut all = Vec::new();
+            let leaf = |g: &mut Graph, owner: GhostId, name: String, typ: String| {
+                let l = g.add_baseline(&name, &typ);
+                g.connect(owner, l, Status::Solid);
+                l
+            };
+            // One leaf a rule asks for and one no rule knows.
+            for j in 0..ITEMS {
+                let item = g.add_baseline(&format!("item{j}"), "Item");
+                all.push(item);
+                let k = j % KINDS;
+                all.push(leaf(&mut g, item, format!("item{j}/a"), format!("Attr{k}")));
+                all.push(leaf(&mut g, item, format!("item{j}/o"), "Other0".into()));
+            }
+            // A hub: one leaf a rule asks for among many it does not.
+            let hub = g.add_baseline("hub", "Item");
+            all.push(hub);
+            for n in 0..KINDS * 8 + 12 {
+                all.push(leaf(
+                    &mut g,
+                    hub,
+                    format!("hub/o{n}"),
+                    format!("Other{}", n % 7),
+                ));
+            }
+            all.push(leaf(&mut g, hub, "hub/a".into(), "Attr4".into()));
+            let rules = crate::rules::load(&json, &mut g).expect("rules load");
+            let mut e = Engine::new(&rules);
+            match mode {
+                0 => e.elements_added(&g, &vs, &all),
+                1 => e.seed_by_index(&g, &vs),
+                _ => e.seed_by_scan(&g, &vs),
+            }
+            while e.step(&mut g, &vs).is_some() {}
+            e.cascade.len()
+        };
+        // One applied step per item and one for the hub.
+        assert_eq!(run(0), ITEMS + 1);
+        assert_eq!(run(1), ITEMS + 1);
+        assert_eq!(run(2), ITEMS + 1);
     }
 
     /// One rule: an `Item` with a context leaf `Attr` that carries the

@@ -315,7 +315,17 @@ impl Parts {
         }
     }
 
-    fn iter(&self) -> PartsIter<'_> {
+    /// Number of entries.
+    #[cfg(feature = "opt_m")]
+    pub(crate) fn len(&self) -> usize {
+        match self {
+            Self::Flat(v) => v.len(),
+            Self::Tree(t) => t.len(),
+        }
+    }
+
+    /// All entries, in order (the type of the counterpart first).
+    pub(crate) fn iter(&self) -> PartsIter<'_> {
         match self {
             Self::Flat(v) => PartsIter::Flat(v.iter()),
             Self::Tree(t) => PartsIter::All(t.iter()),

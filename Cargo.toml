@@ -76,7 +76,11 @@ opt_h = []
 opt_i = []
 # The search of the seed runs on several threads.
 opt_j = []
+# The walk over the anchor index passes once over the participation
+# list of a node where the prefix-tree node has many groups.
+opt_m = []
 opt_all = [
     "opt_a", "opt_b", "opt_c", "opt_d", "opt_e",
     "opt_f", "opt_g", "opt_h", "opt_i", "opt_j",
+    "opt_m",
 ]

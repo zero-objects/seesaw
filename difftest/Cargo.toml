@@ -31,9 +31,11 @@ opt_g = ["new/opt_g"]
 opt_h = ["new/opt_h"]
 opt_i = ["new/opt_i"]
 opt_j = ["new/opt_j"]
+opt_m = ["new/opt_m"]
 opt_all = [
     "opt_a", "opt_b", "opt_c", "opt_d", "opt_e",
     "opt_f", "opt_g", "opt_h", "opt_i", "opt_j",
+    "opt_m",
 ]
 
 [dev-dependencies]
