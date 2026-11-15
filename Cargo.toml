@@ -48,3 +48,35 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(seesaw_checks)'] }
 # Deterministic structural counters for the cascade, for diagnostics.
 # Off by default, no effect on the hot path.
 perf_trace = []
+
+# Switches of the performance work on the branch `perf/options`. Each
+# selects another implementation of one internal structure, none
+# changes what the engine does (graph, cascade and its order, results
+# of `step`, `saw_contradiction`, verdicts of `run`). They exist so
+# that combinations can be measured, and go once the selection is made.
+# Links of a match are not filed in `by_element`; the matches of a
+# removed connection are found from its two ends.
+opt_a = []
+# Capacity hints: `Graph::reserve`, `Engine::reserve`.
+opt_b = []
+# The graph map holds an index into dense vectors of nodes and
+# connections.
+opt_c = []
+# The todo is a heap.
+opt_d = []
+# The todo key carries the number of the match: one lookup per step.
+opt_e = []
+# Equals predicates compare the ids of values, not their strings.
+opt_f = []
+# The type ids of a rule are resolved once per graph, not per step.
+opt_g = []
+# `Ixs` in 16 bytes.
+opt_h = []
+# The anchor index of a rule set is shared within the process.
+opt_i = []
+# The search of the seed runs on several threads.
+opt_j = []
+opt_all = [
+    "opt_a", "opt_b", "opt_c", "opt_d", "opt_e",
+    "opt_f", "opt_g", "opt_h", "opt_i", "opt_j",
+]
