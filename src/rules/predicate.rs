@@ -14,8 +14,18 @@ pub enum Predicate {
     Exists,
     Equals(String),
     Prefix(String),
+    /// A regular expression that has to match the whole value
+    /// ([`Predicate::parse_regex`] frames the pattern).
+    ///
+    /// The engine's anchor index takes two regex predicates with the
+    /// same pattern text for the same predicate. A regex built another
+    /// way has to carry what changes its meaning in the pattern text
+    /// (inline flags), not in builder settings.
     Regex(regex::Regex),
-    NumericRange { min: f64, max: f64 },
+    NumericRange {
+        min: f64,
+        max: f64,
+    },
 }
 
 impl Predicate {

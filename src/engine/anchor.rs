@@ -63,9 +63,12 @@ fn shape(rules: &[DirectedRule]) -> u64 {
             match &n.value {
                 None => 0u8.hash(&mut h),
                 Some(Predicate::Exists) => 1u8.hash(&mut h),
-                Some(Predicate::Equals(v)) => (2u8, v).hash(&mut h),
-                Some(Predicate::Prefix(p)) => (3u8, p).hash(&mut h),
-                Some(Predicate::Regex(r)) => (4u8, r.as_str()).hash(&mut h),
+                // The length first: the hasher pads the last word of a
+                // text with zeros, so a text and the same text with
+                // trailing NUL characters would hash alike.
+                Some(Predicate::Equals(v)) => (2u8, v.len(), v).hash(&mut h),
+                Some(Predicate::Prefix(p)) => (3u8, p.len(), p).hash(&mut h),
+                Some(Predicate::Regex(r)) => (4u8, r.as_str().len(), r.as_str()).hash(&mut h),
                 Some(Predicate::NumericRange { min, max }) => {
                     (5u8, min.to_bits(), max.to_bits()).hash(&mut h);
                 }

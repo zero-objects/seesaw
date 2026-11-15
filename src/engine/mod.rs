@@ -315,8 +315,11 @@ impl AnchorSlot<'_> {
 
 /// The matches of every admitted rule over the whole graph, found
 /// through the anchor index: rule by rule, those of one rule in μ order,
-/// each handed to `each` once. That is the sequence of one
-/// [`find_matches`] per rule.
+/// handed to `each`. That is the sequence of one [`find_matches`] per
+/// rule, up to repetitions: a search returns a match once per way it
+/// reads a direction-free link between two nodes connected both ways,
+/// and the two searches can read that link at different steps. `record`
+/// drops a repetition.
 ///
 /// Every matchable node is anchored at the places the index offers for
 /// it. A match is searched from the smallest of its nodes only: the
@@ -789,6 +792,10 @@ impl<'r> Engine<'r> {
         self.walk = walk;
         self.scratch = scratch;
         self.anchor = anchor;
+        // Repetitions of one match stand next to each other (μ order)
+        // and are dropped by `record`.
+        indexed.dedup();
+        scanned.dedup();
         assert_eq!(
             indexed, scanned,
             "the seed through the index differs from the scan"
@@ -2373,6 +2380,8 @@ mod contract_tests {
         let copy = rules.clone();
         assert!(!index_one.built_for(&copy) && index_one.fits(&copy));
         assert!(!AnchorIndex::default().fits(&rules));
+        // A value that differs in trailing NUL characters only.
+        assert!(!index_one.fits(&rules_of("one\u{0}", &mut g)));
 
         // Other rules in the same buffer: same address, same length.
         let other = rules_of("two", &mut g);
