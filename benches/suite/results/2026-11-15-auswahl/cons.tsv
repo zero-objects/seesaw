@@ -1,0 +1,14 @@
+B	core	rc=0	groups=19 passed=208 failed=0 ignored=9
+B	dcrt	rc=0	groups=1 passed=2 failed=0 ignored=0
+B PERF-SUITE drycleaner_forward n=5 fixtures=34 min_ms=120.07 live_nodes=33463 rules=4006
+B	dcperf	rc=0	groups=1 passed=1 failed=0 ignored=0
+B	pipeline-hub-ir	rc=0	groups=6 passed=69 failed=0 ignored=0
+B	pipeline-tgg-seeder	rc=0	groups=17 passed=76 failed=0 ignored=1
+B	fwd1	rc=0	groups=19 passed=143 failed=0 ignored=0
+B	fwd2	rc=0	groups=19 passed=57 failed=0 ignored=0
+B	fwd3	rc=0	groups=18 passed=66 failed=0 ignored=0
+B	pipeline-render	rc=0	groups=2 passed=13 failed=0 ignored=0
+B	pipeline-recipe	rc=0	groups=2 passed=30 failed=0 ignored=0
+B	chaos-generator	rc=0	groups=6 passed=33 failed=0 ignored=17
+B	pipeline-ffi	rc=0	groups=4 passed=26 failed=0 ignored=0
+B	gate	rc=0	groups=1 passed=1 failed=0 ignored=0

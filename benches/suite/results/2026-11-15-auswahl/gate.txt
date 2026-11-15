@@ -1,0 +1,64 @@
+stand	b9b3ce9 0 offene Aenderungen
+stand	rustc 1.95.0 (59807616e 2026-04-14)
+stand	cargo 1.88.0 (873a06493 2025-05-10)
+stand	 19:56:02 up 10 days, 11:59,  0 users,  load average: 15.01, 17.26, 16.51
+g1	FMT_RC=0
+g1	CLIPPY_RC=0 [none]
+g1	TEST_RC=0 [none] groups=18 passed=206 failed=0 ignored=7
+g2	FMT_RC=0
+g2	CLIPPY_RC=0 [low_memory]
+g2	TEST_RC=0 [low_memory] groups=18 passed=207 failed=0 ignored=7
+g3	FMT_RC=0
+g3	CLIPPY_RC=0 [parallel_seed]
+g3	TEST_RC=0 [parallel_seed] groups=18 passed=209 failed=0 ignored=7
+g4	FMT_RC=0
+g4	CLIPPY_RC=0 [low_memory+parallel_seed]
+g4	TEST_RC=0 [low_memory+parallel_seed] groups=18 passed=210 failed=0 ignored=7
+c1	CHECKS_RC=0 [none] groups=18 passed=206 failed=0 ignored=7
+c2	CHECKS_RC=0 [low_memory+parallel_seed] groups=18 passed=210 failed=0 ignored=7
+tr	PERF_TRACE_RC=0 groups=18 passed=206 failed=0 ignored=7
+r1	R188_TEST_RC=0 groups=18 passed=206 failed=0 ignored=7
+r2	R188_CLIPPY_RC=0
+r2	R188_CHECK_BEIDE_RC=0
+mi	WASM_RC=0
+mi	WASM_LOW_MEMORY_RC=0
+mi	WASM_PARALLEL_SEED_RC=0
+mi	DOC_RC=0
+mi	DOC_BEIDE_RC=0
+mi	PUBLISH_DRY_RUN_RC=0
+mi	warning: crate seesaw-tgg@2.0.2 already exists on crates.io index
+mi	    Packaged 162 files, 1.4MiB (350.3KiB compressed)
+mi	warning: aborting upload due to dry run
+m1	MVN_RC=0 []
+m1	MVN run=150 failures=0 errors=0 skipped=4
+m2	MVN_RC=0 [-DargLine=-Dseesaw.anchorIndex=false]
+m2	MVN run=150 failures=0 errors=0 skipped=4
+m3	MVN_RC=0 [-DargLine=-Dseesaw.checks=true]
+m3	MVN run=150 failures=0 errors=0 skipped=4
+b1	BE_BUILD_RC=0
+b2	BE_TESTS_RC=0 groups=18 passed=206 failed=0 ignored=7
+b3	BE_BENCH_BUILD_RC=0
+b3	s390x  | langpack/seed/k50/n2000 | steps 5246 | applied 2623 | nodes 12554 | e636a88ace0d48eb
+b3	x86_64 | langpack/seed/k50/n2000 | steps 5246 | applied 2623 | nodes 12554 | e636a88ace0d48eb
+b3	s390x  | langpack/add/k50/n2000 | steps 5246 | applied 2623 | nodes 12554 | e636a88ace0d48eb
+b3	x86_64 | langpack/add/k50/n2000 | steps 5246 | applied 2623 | nodes 12554 | e636a88ace0d48eb
+b3	s390x  | langpack/delta-change/k50/n2000/d200 | steps 2182 | applied 4805 | nodes 12770 | d81f82cba13a48a4
+b3	x86_64 | langpack/delta-change/k50/n2000/d200 | steps 2182 | applied 4805 | nodes 12770 | d81f82cba13a48a4
+b3	s390x  | langpack/delta-delete/k50/n2000/d200 | steps 0 | applied 2623 | nodes 12554 | acc610a627b68a27
+b3	x86_64 | langpack/delta-delete/k50/n2000/d200 | steps 0 | applied 2623 | nodes 12554 | acc610a627b68a27
+b3	s390x  | f2p/add/f2000 | steps 24002 | applied 8001 | nodes 58006 | c3b4f34453abdb46
+b3	x86_64 | f2p/add/f2000 | steps 24002 | applied 8001 | nodes 58006 | c3b4f34453abdb46
+b3	s390x  | f2p/delta-delete/f2000/d1000 | steps 0 | applied 8001 | nodes 58006 | cc1b2254c3a11d0d
+b3	x86_64 | f2p/delta-delete/f2000/d1000 | steps 0 | applied 8001 | nodes 58006 | cc1b2254c3a11d0d
+d1	DIFF_RC=0 [none] faelle=standard groups=4 passed=8 failed=0 ignored=0
+d1	test a_suppressed_match_stays_suppressed_after_the_first_root_is_deleted ... ok;test followup_agrees ... ok;test predicates_agree ... ok;test family_agrees ... ok;test the_driver_reaches_the_cascade ... ok;test waves_agree_with_a_late_context ... ok;test waves_agree ... ok;test adds_agree ... ok;
+d2	DIFF_RC=0 [low_memory+parallel_seed] faelle=standard groups=4 passed=8 failed=0 ignored=0
+d2	test a_suppressed_match_stays_suppressed_after_the_first_root_is_deleted ... ok;test followup_agrees ... ok;test predicates_agree ... ok;test family_agrees ... ok;test the_driver_reaches_the_cascade ... ok;test waves_agree_with_a_late_context ... ok;test waves_agree ... ok;test adds_agree ... ok;
+d3	DIFF_RC=0 [none] faelle=1500 groups=4 passed=7 failed=0 ignored=0
+d3	test a_suppressed_match_stays_suppressed_after_the_first_root_is_deleted ... ok;test predicates_agree ... ok;test followup_agrees ... ok;test the_driver_reaches_the_cascade ... ok;test waves_agree_with_a_late_context ... ok;test waves_agree ... ok;test adds_agree ... ok;
+d4	DIFF_RC=0 [low_memory+parallel_seed] faelle=1500 groups=4 passed=7 failed=0 ignored=0
+d4	test a_suppressed_match_stays_suppressed_after_the_first_root_is_deleted ... ok;test predicates_agree ... ok;test followup_agrees ... ok;test the_driver_reaches_the_cascade ... ok;test waves_agree_with_a_late_context ... ok;test waves_agree ... ok;test adds_agree ... ok;
+f1	FAMILY_RC=0 [none] faelle=400 groups=1 passed=1 failed=0 ignored=0
+f2	FAMILY_RC=0 [low_memory+parallel_seed] faelle=400 groups=1 passed=1 failed=0 ignored=0
+dc1	DIFF_UNTER_CHECKS_RC=0 [none] groups=4 passed=8 failed=0 ignored=0
+dc2	DIFF_UNTER_CHECKS_RC=0 [low_memory+parallel_seed] groups=4 passed=8 failed=0 ignored=0
