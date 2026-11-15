@@ -12,7 +12,7 @@
  {
   "name": "<code>cargo test</code>",
   "at": "alle elf",
-  "result": "205 bestanden, 0 fehlgeschlagen, 7 ignoriert"
+  "result": "205 bestanden, 0 fehlgeschlagen, 7 ignoriert (Endstand 4fe0797)"
  },
  {
   "name": "<code>cargo test</code> mit <code>--cfg seesaw_checks</code>",
@@ -58,6 +58,11 @@
   "name": "<code>cargo doc --no-deps</code> mit <code>-D warnings</code>",
   "at": "alle elf",
   "result": "rc 0"
+ },
+ {
+  "name": "Java: <code>mvn test</code> mit Index, ohne Index (<code>-Dseesaw.anchorIndex=false</code>) und im Prüfmodus (<code>-Dseesaw.checks=true</code>)",
+  "at": "Java-Port",
+  "result": "je 150 gelaufen, 0 Fehlschläge, 0 Fehler, 4 übersprungen (vom Java-Strang gefahren). Auf dem zusammengeführten Stand mit Index erneut: 150, 0, 0, 4"
  },
  {
   "name": "s390x, <code>cargo publish --dry-run</code>, Java-Tests des Hauptzweigs, Konsumenten (Dev-Kopie, dry-cleaner), Tests von zerodds-pde",
