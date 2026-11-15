@@ -975,7 +975,7 @@ pub(crate) mod tests {
             let vs = ValueStore::default();
             let mut all = Vec::new();
             // An item of kind `k` with `others` leaves no rule knows.
-            let mut item =
+            let item =
                 |g: &mut Graph, all: &mut Vec<GhostId>, name: &str, k: usize, others: usize| {
                     let item = g.add_baseline(name, "Item");
                     let attr = g.add_baseline(&format!("{name}/a"), &format!("Attr{k}"));
