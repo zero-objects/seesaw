@@ -14,6 +14,12 @@ fn var(h: &mut blake3::Hasher, bytes: &[u8]) {
 /// Hash over all nodes (id, type, status, correspondence flag, value),
 /// all connections (id, status) and the cascade entries in order.
 pub fn of(g: &Graph, e: &Engine<'_>, v: &dyn ValueResolver) -> String {
+    of_all(g, &[e], v)
+}
+
+/// The same over one graph and several engines: the graph, then the
+/// cascade of each engine in the order given.
+pub fn of_all(g: &Graph, engines: &[&Engine<'_>], v: &dyn ValueResolver) -> String {
     let mut h = blake3::Hasher::new();
 
     let mut nodes: Vec<_> = g.nodes().collect();
@@ -51,14 +57,16 @@ pub fn of(g: &Graph, e: &Engine<'_>, v: &dyn ValueResolver) -> String {
         var(&mut h, status.as_bytes());
     }
 
-    h.update(&(e.cascade.len() as u64).to_le_bytes());
-    for entry in &e.cascade {
-        h.update(&(entry.rule_ix as u64).to_le_bytes());
-        h.update(&entry.rank.to_le_bytes());
-        for list in [&entry.refs, &entry.created, &entry.created_edges] {
-            h.update(&(list.len() as u64).to_le_bytes());
-            for id in list {
-                h.update(&id.as_bytes());
+    for e in engines {
+        h.update(&(e.cascade.len() as u64).to_le_bytes());
+        for entry in &e.cascade {
+            h.update(&(entry.rule_ix as u64).to_le_bytes());
+            h.update(&entry.rank.to_le_bytes());
+            for list in [&entry.refs, &entry.created, &entry.created_edges] {
+                h.update(&(list.len() as u64).to_le_bytes());
+                for id in list {
+                    h.update(&id.as_bytes());
+                }
             }
         }
     }

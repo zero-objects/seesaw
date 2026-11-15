@@ -227,3 +227,137 @@ pub fn section<T>(f: impl FnOnce() -> T) -> (T, Usage) {
         },
     )
 }
+
+/// A measured section in pieces: what is run between [`Meter::resume`]
+/// and [`Meter::pause`] counts, the rest does not. For workloads whose
+/// measured work is interleaved with work that is not measured.
+pub struct Meter {
+    usage: Usage,
+    wall: Instant,
+    user: u64,
+    #[cfg(target_os = "linux")]
+    counters: Vec<Option<Counter>>,
+    #[cfg(target_os = "linux")]
+    from: Vec<Reading>,
+    /// Counters that did not count for the whole of a piece.
+    #[cfg(target_os = "linux")]
+    lost: Vec<bool>,
+    #[cfg(feature = "perf_trace")]
+    trace_from: Vec<(&'static str, u64)>,
+}
+
+impl Meter {
+    /// A paused meter.
+    pub fn start() -> Self {
+        #[cfg(feature = "perf_trace")]
+        seesaw_tgg::perf_trace::reset();
+        #[cfg(target_os = "linux")]
+        let counters: Vec<Option<Counter>> = HARDWARE
+            .iter()
+            .map(|(_, kind, config)| (*kind, *config))
+            .chain([INSTRUCTIONS])
+            .map(Counter::open)
+            .collect();
+        Meter {
+            usage: Usage::default(),
+            wall: Instant::now(),
+            user: 0,
+            #[cfg(target_os = "linux")]
+            from: vec![Reading::default(); counters.len()],
+            #[cfg(target_os = "linux")]
+            lost: vec![false; counters.len()],
+            #[cfg(target_os = "linux")]
+            counters,
+            #[cfg(feature = "perf_trace")]
+            trace_from: Vec::new(),
+        }
+    }
+
+    pub fn resume(&mut self) {
+        #[cfg(feature = "perf_trace")]
+        {
+            self.trace_from = seesaw_tgg::perf_trace::snapshot().fields().to_vec();
+        }
+        self.wall = Instant::now();
+        self.user = user_ns();
+        #[cfg(target_os = "linux")]
+        for (from, counter) in self.from.iter_mut().zip(&self.counters) {
+            if let Some(c) = counter {
+                *from = c.read();
+            }
+        }
+    }
+
+    pub fn pause(&mut self) {
+        #[cfg(target_os = "linux")]
+        {
+            let n = HARDWARE.len();
+            for (i, counter) in self.counters.iter().enumerate() {
+                let Some(c) = counter else { continue };
+                let (from, to) = (self.from[i], c.read());
+                if to.enabled - from.enabled != to.running - from.running {
+                    self.lost[i] = true;
+                }
+                let count = to.value - from.value;
+                if i < n {
+                    self.usage.hardware[i] += count;
+                } else {
+                    self.usage.instructions += count;
+                }
+            }
+        }
+        self.usage.user_ns += user_ns() - self.user;
+        self.usage.wall_ns += self.wall.elapsed().as_nanos() as u64;
+        self.usage.peak_rss = peak_rss_bytes();
+        #[cfg(feature = "perf_trace")]
+        {
+            let to = seesaw_tgg::perf_trace::snapshot().fields().to_vec();
+            if self.usage.counters.is_empty() {
+                self.usage.counters = to.iter().map(|(name, _)| (*name, 0)).collect();
+            }
+            for (i, (_, value)) in to.iter().enumerate() {
+                self.usage.counters[i].1 += value - self.trace_from[i].1;
+            }
+        }
+    }
+
+    /// Runs `f` as one measured piece.
+    pub fn run<T>(&mut self, f: impl FnOnce() -> T) -> T {
+        self.resume();
+        let out = section_piece(f);
+        self.pause();
+        out
+    }
+
+    /// The sum over the pieces. A counter that was not counting for
+    /// the whole of a piece, or is not available, reads 0.
+    pub fn finish(mut self) -> Usage {
+        #[cfg(target_os = "linux")]
+        {
+            let n = HARDWARE.len();
+            for (i, counter) in self.counters.iter().enumerate() {
+                if counter.is_some() && !self.lost[i] {
+                    continue;
+                }
+                if i < n {
+                    self.usage.hardware[i] = 0;
+                } else {
+                    self.usage.instructions = 0;
+                }
+            }
+        }
+        self.usage
+    }
+}
+
+/// The frame of a measured piece of a [`Meter`]. `hot.sh` and
+/// `lines.sh` keep the samples below a frame whose name contains
+/// `measure::section`, which this one does.
+#[inline(never)]
+fn section_piece<T>(f: impl FnOnce() -> T) -> T {
+    let out = f();
+    // Work after the call: without it the call is compiled to a jump
+    // and this frame is not on the stack while `f` runs.
+    std::hint::black_box(&out);
+    out
+}

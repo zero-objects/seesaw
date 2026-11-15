@@ -1,0 +1,47 @@
+== pde/load/java40, instructions:u: 2099 of 24345 samples in the section
+-- inclusive, % of section
+100.00	suite::pde::World::run
+ 37.16	seesaw_tgg::engine::anchor::AnchorIndex::build
+ 22.87	<&mut serde_json::de::Deserializer<R> as serde_core::de::Deserializer>::deserialize_seq
+ 22.87	<&mut serde_json::de::Deserializer<R> as serde_core::de::Deserializer>::deserialize_struct
+ 22.87	<serde_core::de::impls::>::deserialize::VecVisitor<T> as serde_core::de::Visitor>::visit_seq
+ 22.87	seesaw_tgg::rules::format::RuleFile::from_json
+ 22.87	serde_json::de::from_trait
+ 20.58	seesaw_tgg::rules::load_file
+ 18.72	_int_malloc
+ 17.77	malloc
+ 16.06	suite::pde::World::slice
+ 15.67	[unknown]
+ 14.72	<core::iter::adapters::cloned::Cloned<I> as core::iter::traits::iterator::Iterator>::fold
+ 13.34	<alloc::vec::Vec<T,A> as core::clone::Clone>::clone
+ 12.39	_RNvXs4_NtCslNYArtu3iFV_5alloc6stringNtB5_6StringNtNtCsgEmfK2I1SDS_4core5clone5Clone5clone
+ 10.77	seesaw_tgg::rules::lower::lower_all
+ 10.67	seesaw_tgg::rules::lower::lower_directed_v3
+ 10.67	seesaw_tgg::rules::lower::lower_rule
+  7.48	seesaw_tgg::rules::validate::validate
+  7.24	alloc::raw_vec::RawVec<T,A>::grow_one
+  6.57	<serde_json::read::StrRead as serde_json::read::Read>::parse_str
+  6.38	<&mut serde_json::de::Deserializer<R> as serde_core::de::Deserializer>::deserialize_string
+-- self, % of section
+ 30.30	seesaw_tgg::engine::anchor::AnchorIndex::build
+ 15.67	[unknown]
+  6.96	_int_malloc
+  3.38	__memmove_avx_unaligned_erms
+  3.38	serde_json::read::SliceRead::skip_to_escape
+  3.19	<serde_json::read::StrRead as serde_json::read::Read>::parse_str
+  2.86	malloc
+  2.72	__memmove_avx_unaligned
+  2.67	<&mut serde_json::de::Deserializer<R> as serde_core::de::Deserializer>::deserialize_struct
+  2.62	cfree@GLIBC_2.2.5
+  2.29	<alloc::vec::Vec<T,A> as core::clone::Clone>::clone
+  1.95	__memcmp_avx2_movbe
+  1.91	_RNvXs4_NtCslNYArtu3iFV_5alloc6stringNtB5_6StringNtNtCsgEmfK2I1SDS_4core5clone5Clone5clone
+  1.67	malloc_consolidate
+  1.62	seesaw_tgg::rules::lower::lower_directed_v3
+  1.57	_ZN80_$LT$serde_json..de..MapAccess$LT$R$GT$$u20$as$u20$serde_core..de..MapAccess$GT$13next_key_seed
+  1.05	unlink_chunk.isra.0
+  0.91	_int_free_chunk
+  0.86	hashbrown::map::HashMap<K,V,S,A>::insert
+  0.86	seesaw_tgg::rules::validate::index_of
+  0.67	<&mut serde_json::de::Deserializer<R> as serde_core::de::Deserializer>::deserialize_string
+  0.52	<seesaw_tgg::rules::format::_::::deserialize::__FieldVisitor as serde_core::de::Visitor>::visit_str
