@@ -72,3 +72,9 @@ pub fn of_all(g: &Graph, engines: &[&Engine<'_>], v: &dyn ValueResolver) -> Stri
     }
     h.finalize().to_hex()[..16].to_string()
 }
+
+/// Fingerprint of several runs: the hash over their fingerprints in
+/// order.
+pub fn of_text(fingerprints: &str) -> String {
+    blake3::hash(fingerprints.as_bytes()).to_hex()[..16].to_string()
+}

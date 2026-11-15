@@ -172,6 +172,48 @@ pub fn batch(families: usize) -> Outcome {
     }
 }
 
+/// The seed alone on `threads` threads (`Engine::seed_with_threads`;
+/// one thread is `Engine::seed`). The steps to saturation follow after
+/// the measured section; graph and cascade are those of [`batch`].
+#[cfg(feature = "opt_j")]
+pub fn seed_search(families: usize, threads: usize) -> Outcome {
+    let mut m = Model::new(families);
+    let rules = rules(&mut m.g);
+    let mut e = Engine::new(&rules);
+    let ((), usage) = measure::section(|| e.seed_with_threads(&m.g, &m.vs, threads));
+    let steps = saturate(&mut e, &mut m.g, &m.vs);
+    assert_eq!(e.cascade.len(), 4 * families + 1);
+    Outcome {
+        usage,
+        steps,
+        applied: e.cascade.len() as u64,
+        nodes: m.g.node_count() as u64,
+        fingerprint: fingerprint::of(&m.g, &e, &m.vs),
+    }
+}
+
+/// An engine that starts on a model that is already translated: a
+/// second engine seeds the synchronised model on `threads` threads.
+/// Measured is that seed alone.
+#[cfg(feature = "opt_j")]
+pub fn reseed(families: usize, threads: usize) -> Outcome {
+    let mut m = Model::new(families);
+    let rules = rules(&mut m.g);
+    let mut first = Engine::new(&rules);
+    first.elements_added(&m.g, &m.vs, &m.all);
+    saturate(&mut first, &mut m.g, &m.vs);
+    let mut e = Engine::new(&rules);
+    let ((), usage) = measure::section(|| e.seed_with_threads(&m.g, &m.vs, threads));
+    let steps = saturate(&mut e, &mut m.g, &m.vs);
+    Outcome {
+        usage,
+        steps,
+        applied: e.cascade.len() as u64,
+        nodes: m.g.node_count() as u64,
+        fingerprint: fingerprint::of(&m.g, &e, &m.vs),
+    }
+}
+
 /// The whole model as one add delta.
 pub fn add(families: usize) -> Outcome {
     let mut m = Model::new(families);

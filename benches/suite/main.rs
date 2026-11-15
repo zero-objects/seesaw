@@ -102,6 +102,76 @@ fn cells() -> Vec<Cell> {
             Box::new(move || langpack::delta_delete(spec, 2000)),
         );
     }
+    for (kinds, nodes, engines) in [(700, 2_000, 10), (700, 200, 34)] {
+        let spec = Spec { kinds, nodes };
+        cell(
+            format!("langpack/engines/k{kinds}/n{nodes}/e{engines}"),
+            "batches one after the other, model, rules and engine new for each",
+            Box::new(move || langpack::engines(spec, engines)),
+        );
+    }
+    cell(
+        "langpack/index/k700/e100".to_string(),
+        "100 engines over rules loaded anew, one empty expansion each",
+        Box::new(move || {
+            langpack::index_only(
+                Spec {
+                    kinds: 700,
+                    nodes: 0,
+                },
+                100,
+            )
+        }),
+    );
+    // The seed with its search on several threads (`opt_j`). `t1` is
+    // `Engine::seed`.
+    #[cfg(feature = "opt_j")]
+    {
+        let spec = Spec {
+            kinds: 700,
+            nodes: 20_000,
+        };
+        for threads in [1, 2, 4, 8] {
+            cell(
+                format!("langpack/reseed/k700/n20000/t{threads}"),
+                "a second engine seeds the translated model, searches on t threads",
+                Box::new(move || langpack::reseed(spec, threads)),
+            );
+            cell(
+                format!("f2p/reseed/f20000/t{threads}"),
+                "a second engine seeds the translated model, searches on t threads",
+                Box::new(move || f2p::reseed(20_000, threads)),
+            );
+        }
+        for threads in [1, 4, 8] {
+            let large = Spec {
+                kinds: 700,
+                nodes: 200_000,
+            };
+            cell(
+                format!("langpack/reseed/k700/n200000/t{threads}"),
+                "a second engine seeds the translated model, searches on t threads",
+                Box::new(move || langpack::reseed(large, threads)),
+            );
+            cell(
+                format!("langpack/seed-search/k700/n20000/t{threads}"),
+                "the first seed alone, its searches on t threads",
+                Box::new(move || langpack::seed_search(spec, threads)),
+            );
+            cell(
+                format!("f2p/seed-search/f20000/t{threads}"),
+                "the first seed alone, its searches on t threads",
+                Box::new(move || f2p::seed_search(20_000, threads)),
+            );
+        }
+        for threads in [4, 8] {
+            cell(
+                format!("langpack/seed-par/k700/n20000/t{threads}"),
+                "batch through seed, the searches of the seed on t threads",
+                Box::new(move || langpack::seed_par(spec, threads)),
+            );
+        }
+    }
     // 200 000 families (the 10^6 anchor of the report) need more than
     // 10 GB at about 2.8 KB per node and are not a cell.
     for families in [2_000, 20_000, 60_000] {

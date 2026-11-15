@@ -114,6 +114,8 @@ pub struct KonstTable {
     /// Which instance this is. Read with the feature `opt_g` only.
     #[allow(dead_code)]
     pub(crate) uid: TableUid,
+    /// Beside each value what `crate::values` keeps with it.
+    cells: Vec<crate::values::Cell>,
 }
 
 impl KonstTable {
@@ -123,12 +125,19 @@ impl KonstTable {
         }
         let k = KonstId(self.values.len() as u32);
         self.values.push(value.to_string());
+        self.cells.push(crate::values::Cell::default());
         self.by_value.insert(value.to_string(), k);
         k
     }
 
     pub fn value(&self, k: KonstId) -> &str {
         &self.values[k.0 as usize]
+    }
+
+    /// The cell beside the value of `k`.
+    #[cfg_attr(not(feature = "opt_f"), allow(dead_code))]
+    pub(crate) fn cell(&self, k: KonstId) -> &crate::values::Cell {
+        &self.cells[k.0 as usize]
     }
 }
 
@@ -348,28 +357,56 @@ pub trait ValueResolver {
     fn baseline_str(&self, _id: &GhostId) -> Option<&str> {
         None
     }
+
+    /// The value of [`ValueResolver::baseline_str`] together with the
+    /// number its text has in `numbers`
+    /// ([`ValueNumbers::number_of`](crate::ValueNumbers::number_of) of
+    /// that very text), where the resolver keeps the number beside the
+    /// value. `None` says nothing about the value: the caller then asks
+    /// `baseline_str`. The default keeps no numbers.
+    ///
+    /// A resolver that answers has to answer with the number of the
+    /// text it lends, for the numbering it is asked about
+    /// ([`ValueNumbers::token`](crate::ValueNumbers::token)); a number
+    /// kept for another numbering or for an earlier text is wrong.
+    #[cfg(feature = "opt_f")]
+    fn baseline_number(
+        &self,
+        _id: &GhostId,
+        _numbers: &crate::ValueNumbers,
+    ) -> Option<(&str, u32)> {
+        None
+    }
 }
 
 /// Standalone original: values of the baseline leaves (e.g. from the
 /// seed generator). Does NOT belong to the overlay.
 #[derive(Debug, Clone, Default)]
 pub struct ValueStore {
-    values: FxHashMap<GhostId, String>,
+    values: FxHashMap<GhostId, crate::values::Kept>,
 }
 
 impl ValueStore {
     pub fn insert(&mut self, id: GhostId, value: impl Into<String>) {
-        self.values.insert(id, value.into());
+        self.values
+            .insert(id, crate::values::Kept::new(value.into()));
     }
 }
 
 impl ValueResolver for ValueStore {
     fn baseline_value(&self, id: &GhostId) -> Option<String> {
-        self.values.get(id).cloned()
+        self.values.get(id).map(|kept| kept.text.clone())
     }
 
     fn baseline_str(&self, id: &GhostId) -> Option<&str> {
-        self.values.get(id).map(String::as_str)
+        self.values.get(id).map(|kept| kept.text.as_str())
+    }
+
+    #[cfg(feature = "opt_f")]
+    fn baseline_number(&self, id: &GhostId, numbers: &crate::ValueNumbers) -> Option<(&str, u32)> {
+        self.values
+            .get(id)
+            .map(|kept| (kept.text.as_str(), kept.cell.number(&kept.text, numbers)))
     }
 }
 

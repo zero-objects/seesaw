@@ -36,6 +36,11 @@ use crate::hash::{FxBuildHasher, FxHashMap};
 use crate::ident::GhostId;
 use crate::plan::DirectedRule;
 use crate::rules::predicate::Predicate;
+use crate::values::{self, ByValue, Numbers, NumbersMut, Seen};
+
+mod own;
+
+pub(crate) use own::Own;
 
 /// Longest path read from a position (links). Paths are cut there; a
 /// cut path is still a necessary condition.
@@ -52,34 +57,40 @@ const VISITED_KEEP: usize = 1024;
 /// Digest of what the index reads from a rule set: per rule the pattern
 /// nodes (type, value predicate) and the links.
 fn shape(rules: &[DirectedRule]) -> u64 {
-    use std::hash::{Hash, Hasher};
+    use std::hash::Hasher;
     let mut h = crate::hash::FxHasher::default();
-    rules.len().hash(&mut h);
+    feed(rules, &mut h);
+    h.finish()
+}
+
+/// Feeds a hasher what the index reads from a rule set ([`shape`]).
+fn feed<H: std::hash::Hasher>(rules: &[DirectedRule], h: &mut H) {
+    use std::hash::Hash;
+    rules.len().hash(h);
     for rule in rules {
         let pattern = &rule.pattern;
-        pattern.nodes.len().hash(&mut h);
+        pattern.nodes.len().hash(h);
         for n in &pattern.nodes {
-            n.typ.hash(&mut h);
+            n.typ.hash(h);
             match &n.value {
-                None => 0u8.hash(&mut h),
-                Some(Predicate::Exists) => 1u8.hash(&mut h),
+                None => 0u8.hash(h),
+                Some(Predicate::Exists) => 1u8.hash(h),
                 // The length first: the hasher pads the last word of a
                 // text with zeros, so a text and the same text with
                 // trailing NUL characters would hash alike.
-                Some(Predicate::Equals(v)) => (2u8, v.len(), v).hash(&mut h),
-                Some(Predicate::Prefix(p)) => (3u8, p.len(), p).hash(&mut h),
-                Some(Predicate::Regex(r)) => (4u8, r.as_str().len(), r.as_str()).hash(&mut h),
+                Some(Predicate::Equals(v)) => (2u8, v.len(), v).hash(h),
+                Some(Predicate::Prefix(p)) => (3u8, p.len(), p).hash(h),
+                Some(Predicate::Regex(r)) => (4u8, r.as_str().len(), r.as_str()).hash(h),
                 Some(Predicate::NumericRange { min, max }) => {
-                    (5u8, min.to_bits(), max.to_bits()).hash(&mut h);
+                    (5u8, min.to_bits(), max.to_bits()).hash(h);
                 }
             }
         }
-        pattern.links.len().hash(&mut h);
+        pattern.links.len().hash(h);
         for l in &pattern.links {
-            (l.from, l.to, l.kind as u8).hash(&mut h);
+            (l.from, l.to, l.kind as u8).hash(h);
         }
     }
-    h.finish()
 }
 
 /// Children of a prefix-tree node that share direction and type: one
@@ -93,7 +104,7 @@ struct Group {
     /// The child without a value predicate.
     any: Option<u32>,
     /// Children with `Predicate::Equals`, by value.
-    equals: FxHashMap<String, u32>,
+    equals: ByValue<u32>,
     /// Children with another predicate (with its `Debug` form as key).
     other: Vec<(String, Predicate, u32)>,
 }
@@ -130,25 +141,25 @@ struct Filed {
     /// checked against the value of the node.
     valued: bool,
     /// Places with `Predicate::Equals`, by value.
-    equals: FxHashMap<String, Vec<u32>>,
+    equals: ByValue<Vec<u32>>,
 }
 
 impl Filed {
     /// How many places a node with the value of `value` would look at
     /// here.
-    fn load(&self, value: Option<&Predicate>) -> usize {
+    fn load(&self, value: Option<&Predicate>, numbers: Numbers<'_>) -> usize {
         match value {
-            Some(Predicate::Equals(v)) => self.equals.get(v).map_or(0, Vec::len),
+            Some(Predicate::Equals(v)) => self.equals.find(v, numbers).map_or(0, Vec::len),
             _ => self.any.len(),
         }
     }
 
-    fn push(&mut self, value: Option<&Predicate>, place: u32) {
+    fn push(&mut self, value: Option<&Predicate>, place: u32, numbers: NumbersMut<'_>) {
         match value {
-            Some(Predicate::Equals(v)) => match self.equals.get_mut(v.as_str()) {
+            Some(Predicate::Equals(v)) => match self.equals.find_mut(v.as_str(), numbers.read()) {
                 Some(places) => places.push(place),
                 None => {
-                    self.equals.insert(v.clone(), vec![place]);
+                    self.equals.put(v, numbers, vec![place]);
                 }
             },
             _ => {
@@ -212,6 +223,9 @@ pub struct AnchorIndex {
     plans: Vec<OnceLock<Plan>>,
     plan_at: Vec<usize>,
     by_type: FxHashMap<TypeId, TypeIndex>,
+    /// The constants of the `Predicate::Equals` of the rules, as index
+    /// and search compare values with them (`crate::values`).
+    numbers: values::Numbering,
     /// The rule slice the index was built for (address, length).
     built_for: (usize, usize),
     /// Digest of what the index read from the rules ([`shape`]).
@@ -299,6 +313,7 @@ impl AnchorIndex {
             plans: (0..positions).map(|_| OnceLock::new()).collect(),
             plan_at,
             by_type: FxHashMap::default(),
+            numbers: values::Numbering::default(),
             built_for: (rules.as_ptr() as usize, rules.len()),
             shape: shape(rules),
         };
@@ -349,15 +364,15 @@ impl AnchorIndex {
                 // places so far: a path many rules share (the link to
                 // the parent) fills up, a path few rules share (a leaf
                 // value) stays short.
-                let key = index.needs[from..]
-                    .iter()
-                    .copied()
-                    .min_by_key(|&n| index.filed[n as usize].load(pn.value.as_ref()));
+                let key = index.needs[from..].iter().copied().min_by_key(|&n| {
+                    index.filed[n as usize].load(pn.value.as_ref(), index.numbers.get())
+                });
                 let ti = index.by_type.get_mut(&pn.typ).expect("inserted above");
                 let place_ix = ti.places.len() as u32;
+                let numbers = index.numbers.edit();
                 match key {
-                    Some(n) => index.filed[n as usize].push(pn.value.as_ref(), place_ix),
-                    None => ti.free.push(pn.value.as_ref(), place_ix),
+                    Some(n) => index.filed[n as usize].push(pn.value.as_ref(), place_ix, numbers),
+                    None => ti.free.push(pn.value.as_ref(), place_ix, numbers),
                 }
                 ti.places.push(Place {
                     rule: ri,
@@ -398,7 +413,7 @@ impl AnchorIndex {
                     outgoing,
                     typ,
                     any: None,
-                    equals: FxHashMap::default(),
+                    equals: ByValue::default(),
                     other: Vec::new(),
                 });
                 self.nodes[parent as usize].groups.len() - 1
@@ -408,7 +423,9 @@ impl AnchorIndex {
             let group = &self.nodes[parent as usize].groups[gi];
             match pred {
                 None => group.any,
-                Some(Predicate::Equals(v)) => group.equals.get(v.as_str()).copied(),
+                Some(Predicate::Equals(v)) => {
+                    group.equals.find(v.as_str(), self.numbers.get()).copied()
+                }
                 Some(p) => {
                     let key = format!("{p:?}");
                     group
@@ -427,7 +444,7 @@ impl AnchorIndex {
         match pred {
             None => group.any = Some(c),
             Some(Predicate::Equals(v)) => {
-                group.equals.insert(v.clone(), c);
+                group.equals.put(v, self.numbers.edit(), c);
             }
             Some(p) => group.other.push((format!("{p:?}"), p.clone(), c)),
         }
@@ -437,7 +454,11 @@ impl AnchorIndex {
     /// The plan of the search anchored at position `pos` of `pattern`,
     /// the pattern of rule `rule` of the rules the index was built for.
     pub(crate) fn plan(&self, rule: usize, pos: usize, pattern: &Pattern) -> &Plan {
-        self.plans[self.plan_at[rule] + pos].get_or_init(|| plan_anchored(pattern, pos))
+        self.plans[self.plan_at[rule] + pos].get_or_init(|| {
+            let mut plan = plan_anchored(pattern, pos);
+            plan.number(pattern, &self.numbers);
+            plan
+        })
     }
 
     /// Was the index built from this very rule slice (same address and
@@ -501,12 +522,13 @@ impl AnchorIndex {
                     else {
                         continue;
                     };
-                    g.with_node_value(node, v, |val| {
-                        if let Some(&id) = val.and_then(|s| group.equals.get(s)) {
+                    let numbers = self.numbers.get();
+                    values::see(g, v, node, numbers, |val| {
+                        if let Some(&id) = group.equals.get(val, numbers) {
                             self.enter(g, v, &p.other, id, st, skip, &mut other);
                         }
                         for (_, pred, id) in &group.other {
-                            if pred.matches(val) {
+                            if pred.matches(val.text()) {
                                 self.enter(g, v, &p.other, *id, st, skip, &mut other);
                             }
                         }
@@ -611,7 +633,8 @@ impl AnchorIndex {
                     .chain(std::iter::once(&ti.free))
             };
             // The places a node with the value `value` stands at.
-            let mut offer = |value: Option<&str>| {
+            let numbers = self.numbers.get();
+            let mut offer = |value: Seen<'_>| {
                 let mut check = |place_ix: u32, value_holds: bool| {
                     trace!(anchor_places);
                     let place = &ti.places[place_ix as usize];
@@ -621,7 +644,7 @@ impl AnchorIndex {
                     }
                     if !value_holds {
                         if let Some(pred) = &place.value {
-                            if !pred.matches(value) {
+                            if !pred.matches(value.text()) {
                                 return;
                             }
                         }
@@ -634,7 +657,7 @@ impl AnchorIndex {
                     for &place_ix in &f.any {
                         check(place_ix, false);
                     }
-                    if let Some(places) = value.and_then(|s| f.equals.get(s)) {
+                    if let Some(places) = f.equals.get(value, numbers) {
                         for &place_ix in places {
                             check(place_ix, true);
                         }
@@ -644,9 +667,9 @@ impl AnchorIndex {
             // The value of the node, where a reached place asks for it:
             // by value (`equals`) or with another predicate (`valued`).
             if reached().any(|f| !f.equals.is_empty() || f.valued) {
-                g.with_node_value(node, v, offer);
+                values::see(g, v, node, numbers, offer);
             } else {
-                offer(None);
+                offer(Seen::none());
             }
             // Reset only what this walk marked.
             for id in st.list.drain(..) {
@@ -697,7 +720,7 @@ impl AnchorIndex {
 // ══ Tests ═══════════════════════════════════════════════════════════════
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     //! Rule shapes of a language pack (one structural type per side, one
     //! node corr type for all rules, the distinguishing leaf values two
     //! to three links from the parent): root, child, grandchild with a
@@ -724,7 +747,7 @@ mod tests {
         n
     }
 
-    fn rules_json() -> String {
+    pub(crate) fn rules_json() -> String {
         let child = |name: &str, parent_rule: Option<&str>, rule: &str, feature: &str| {
             let mut left = vec![
                 serde_json::json!({"name": "sp", "type": "J"}),
@@ -798,8 +821,8 @@ mod tests {
     /// A language tree: per node the rule value, the parent (index) and
     /// whether it carries the flag leaf.
     #[derive(Debug, Clone)]
-    struct Tree {
-        nodes: Vec<(String, usize, Option<bool>)>,
+    pub(crate) struct Tree {
+        pub(crate) nodes: Vec<(String, usize, Option<bool>)>,
     }
 
     fn tree() -> impl Strategy<Value = Tree> {
@@ -822,7 +845,7 @@ mod tests {
     }
 
     /// Graph with file, root and the tree; returns the language nodes.
-    fn build(t: &Tree, g: &mut Graph, vs: &mut ValueStore) -> Vec<GhostId> {
+    pub(crate) fn build(t: &Tree, g: &mut Graph, vs: &mut ValueStore) -> Vec<GhostId> {
         let _p = g.add_baseline("project", "P");
         let f = g.add_baseline("file", "F");
         let root = g.add_baseline("n0", "J");
