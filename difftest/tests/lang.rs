@@ -192,10 +192,53 @@ pub fn rules_json(late_context: bool) -> String {
     serde_json::json!({"format": 3, "name": "difftest_lang", "rules": rules}).to_string()
 }
 
+/// How a driver seeds and what it does with a fresh engine. The
+/// released engine and the engine of this repository without features
+/// do it plainly. With the feature `opt_j` the engine of this
+/// repository seeds on three threads, with `opt_b` graph and engine
+/// get a capacity hint first: both are other ways to the same result,
+/// and this is where they are held against the release.
+macro_rules! plain_seed {
+    ($e:expr, $g:expr, $vs:expr) => {
+        $e.seed($g, $vs)
+    };
+}
+#[cfg(not(feature = "opt_j"))]
+macro_rules! tuned_seed {
+    ($e:expr, $g:expr, $vs:expr) => {
+        $e.seed($g, $vs)
+    };
+}
+#[cfg(feature = "opt_j")]
+macro_rules! tuned_seed {
+    ($e:expr, $g:expr, $vs:expr) => {
+        $e.seed_with_threads($g, $vs, 3)
+    };
+}
+macro_rules! plain_start {
+    ($e:expr, $g:expr) => {};
+}
+#[cfg(not(feature = "opt_b"))]
+macro_rules! tuned_start {
+    ($e:expr, $g:expr) => {};
+}
+#[cfg(feature = "opt_b")]
+macro_rules! tuned_start {
+    ($e:expr, $g:expr) => {
+        $g.reserve(48, 96);
+        $e.reserve(new::engine::Sizes {
+            matches: 40,
+            elements: 120,
+            products: 60,
+            steps: 20,
+        });
+    };
+}
+
 /// The code that runs a scenario through one engine crate. Returns one
 /// dump of graph and cascade per wave.
 macro_rules! driver {
-    ($module:ident, $krate:ident) => {
+    ($module:ident, $krate:ident, $seed:ident, $start:ident) => {
         pub mod $module {
             use super::{pick, NodeSpec, Op, Scenario};
             use $krate::engine::{DeltaDomain, Engine};
@@ -347,13 +390,14 @@ macro_rules! driver {
                     all.extend(m.grow(spec));
                 }
                 let mut e = Engine::new(&rules);
+                $start!(e, m.g);
                 let source = |e: &mut Engine<'_>| {
                     if s.routed {
                         e.admit_delta(&[DeltaDomain::Source]);
                     }
                 };
                 if s.by_seed {
-                    e.seed(&m.g, &m.vs);
+                    $seed!(e, &m.g, &m.vs);
                 } else {
                     source(&mut e);
                     e.elements_added(&m.g, &m.vs, &all);
@@ -452,7 +496,7 @@ macro_rules! driver {
                             if s.routed {
                                 e.admit_initial();
                             }
-                            e.seed(&m.g, &m.vs);
+                            $seed!(e, &m.g, &m.vs);
                         }
                     }
                     wave(&mut m, &mut e, what);
@@ -463,8 +507,8 @@ macro_rules! driver {
     };
 }
 
-driver!(released, old);
-driver!(current, new);
+driver!(released, old, plain_seed, plain_start);
+driver!(current, new, tuned_seed, tuned_start);
 
 fn rule_value() -> impl Strategy<Value = &'static str> {
     prop_oneof![Just("cls"), Just("m"), Just("x"), Just("unit")]

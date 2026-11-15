@@ -17,6 +17,25 @@ new = { package = "seesaw-tgg", path = ".." }
 # The release it has to agree with.
 old = { package = "seesaw-tgg", version = "=2.0.2" }
 
+# The switches of the engine of this repository (branch `perf/options`),
+# passed on. With `opt_j` the drivers seed through `seed_with_threads`,
+# with `opt_b` they give graph and engine a capacity hint.
+[features]
+opt_a = ["new/opt_a"]
+opt_b = ["new/opt_b"]
+opt_c = ["new/opt_c"]
+opt_d = ["new/opt_d"]
+opt_e = ["new/opt_e"]
+opt_f = ["new/opt_f"]
+opt_g = ["new/opt_g"]
+opt_h = ["new/opt_h"]
+opt_i = ["new/opt_i"]
+opt_j = ["new/opt_j"]
+opt_all = [
+    "opt_a", "opt_b", "opt_c", "opt_d", "opt_e",
+    "opt_f", "opt_g", "opt_h", "opt_i", "opt_j",
+]
+
 [dev-dependencies]
 proptest = "1.5"
 serde_json = "1.0"
