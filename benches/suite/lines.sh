@@ -20,6 +20,13 @@
 # the file.
 #
 # `SUITE_FEATURES` (a comma list) builds the suite with those features.
+#
+# `SUITE_CALLGRAPH=fp` builds with frame pointers and lets perf walk
+# them. The default copies 16 KiB of stack per sample and unwinds with
+# the debug data; a sample whose chain is longer than that copy does
+# not reach the section and is left out, which loses the deep
+# recursions first (measured on `pde/open/java40`: a third to a half of
+# the samples of the section).
 set -eu
 cell=$1
 pattern=$2
@@ -34,13 +41,25 @@ cd "$(dirname "$0")/../.."
 # The binary of this set of features, from cargo's own output: a set
 # that is built already is not linked again, so the newest file in the
 # directory may belong to another set.
-bin=$(CARGO_PROFILE_BENCH_DEBUG=1 CARGO_TARGET_DIR=target/prof \
+case ${SUITE_CALLGRAPH:-dwarf} in
+fp)
+    RUSTFLAGS="${RUSTFLAGS:-} -C force-frame-pointers=yes"
+    export RUSTFLAGS
+    dir=target/prof-fp
+    graph=fp
+    ;;
+*)
+    dir=target/prof
+    graph=dwarf,16384
+    ;;
+esac
+bin=$(CARGO_PROFILE_BENCH_DEBUG=1 CARGO_TARGET_DIR=$dir \
     cargo bench -q --bench suite ${SUITE_FEATURES:+--features "$SUITE_FEATURES"} --no-run \
     --message-format=json 2>/dev/null |
     grep -o '"executable":"[^"]*/suite-[^"]*"' | tail -1 | sed 's/^"executable":"//; s/"$//')
 [ -x "$bin" ] || { echo "the suite did not build" >&2; exit 1; }
 tmp=$(mktemp -d /tmp/suite-lines.XXXXXX)
-perf record -q --call-graph dwarf,16384 $rate -o "$tmp/data" -e "$event" \
+perf record -q --call-graph $graph $rate -o "$tmp/data" -e "$event" \
     setarch "$(uname -m)" -R "$bin" run "$cell" --samples 1 >/dev/null 2>&1
 # Load address of the binary in that run.
 base=$(perf script -i "$tmp/data" --show-mmap-events 2>/dev/null |

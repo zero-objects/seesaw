@@ -13,6 +13,13 @@
 # fingerprint are not in the tables.
 #
 # `SUITE_FEATURES` (a comma list) builds the suite with those features.
+#
+# `SUITE_CALLGRAPH=fp` builds with frame pointers and lets perf walk
+# them. The default copies 16 KiB of stack per sample and unwinds with
+# the debug data; a sample whose chain is longer than that copy does
+# not reach the section and is left out, which loses the deep
+# recursions first (measured on `pde/open/java40`: a third to a half of
+# the samples of the section).
 set -eu
 cell=$1
 lines=${2:-40}
@@ -21,7 +28,19 @@ cd "$(dirname "$0")/../.."
 # The binary of this set of features, from cargo's own output: a set
 # that is built already is not linked again, so the newest file in the
 # directory may belong to another set.
-bin=$(CARGO_PROFILE_BENCH_DEBUG=1 CARGO_TARGET_DIR=target/prof \
+case ${SUITE_CALLGRAPH:-dwarf} in
+fp)
+    RUSTFLAGS="${RUSTFLAGS:-} -C force-frame-pointers=yes"
+    export RUSTFLAGS
+    dir=target/prof-fp
+    graph=fp
+    ;;
+*)
+    dir=target/prof
+    graph=dwarf,16384
+    ;;
+esac
+bin=$(CARGO_PROFILE_BENCH_DEBUG=1 CARGO_TARGET_DIR=$dir \
     cargo bench -q --bench suite ${SUITE_FEATURES:+--features "$SUITE_FEATURES"} --no-run \
     --message-format=json 2>/dev/null |
     grep -o '"executable":"[^"]*/suite-[^"]*"' | tail -1 | sed 's/^"executable":"//; s/"$//')
@@ -32,7 +51,7 @@ instructions*) rate="-c 1000003" ;;
 cache-misses*) rate="-c 10007" ;;
 *) rate="-F 4000" ;;
 esac
-perf record -q --call-graph dwarf,16384 $rate -o "$data" -e "$event" \
+perf record -q --call-graph $graph $rate -o "$data" -e "$event" \
     "$bin" run "$cell" --samples 1 >/dev/null 2>&1
 perf script -i "$data" --no-inline -F ip,sym 2>/dev/null |
     awk -v lines="$lines" -v cell="$cell" -v event="$event" '
