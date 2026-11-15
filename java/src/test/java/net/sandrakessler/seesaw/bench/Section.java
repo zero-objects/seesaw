@@ -27,7 +27,12 @@ import java.util.List;
  *     anderen Werten und zählt nicht mit.</li>
  * </ul>
  *
- * <p>Eine Strecke wird einmal gestartet und einmal beendet.
+ * <p>Eine Strecke wird einmal gestartet und einmal beendet. Dazwischen
+ * kann sie mit {@link #pause} und {@link #resume} in Stücke geteilt
+ * werden (Gegenstück zu {@code measure::Meter}): gezählt wird, was
+ * zwischen {@link #start} oder {@link #resume} und dem folgenden
+ * {@link #pause} oder {@link #stop} läuft, die Werte sind die Summen
+ * der Stücke.
  */
 public final class Section {
     private static final com.sun.management.ThreadMXBean THREADS =
@@ -37,8 +42,12 @@ public final class Section {
     private static final MemoryMXBean MEMORY = ManagementFactory.getMemoryMXBean();
 
     private final boolean liveHeap;
-    private boolean started, stopped;
+    private boolean started, running, stopped;
+    /** Wall-Zeit bei {@link #start}, für {@link #elapsedNanos}. */
+    private long wallStart;
+    /** Stand zu Beginn des laufenden Stücks. */
     private long wall0, cpu0, alloc0, gcMillis0, gcCount0;
+    /** Summen der beendeten Stücke. */
     private long wallNanos, cpuNanos, allocBytes, gcMillis, gcCount;
     private long heapBytes = -1;
 
@@ -64,6 +73,40 @@ public final class Section {
     public void start() {
         if (started) throw new IllegalStateException("Messstrecke schon gestartet");
         started = true;
+        begin();
+        wallStart = wall0;
+    }
+
+    /** Beendet das laufende Stück; was bis {@link #resume} läuft, zählt
+     *  nicht. */
+    public void pause() {
+        long[] now = now();
+        if (!running) throw new IllegalStateException("Messstrecke läuft nicht");
+        end(now);
+    }
+
+    /** Beginnt das nächste Stück nach {@link #pause}. */
+    public void resume() {
+        if (!started || running || stopped) {
+            throw new IllegalStateException("Messstrecke nicht unterbrochen");
+        }
+        begin();
+    }
+
+    /** Beendet die Strecke, auch aus der Unterbrechung heraus. */
+    public void stop() {
+        long[] now = now();
+        if (!started || stopped) throw new IllegalStateException("Messstrecke nicht gestartet");
+        if (running) end(now);
+        stopped = true;
+        if (liveHeap) {
+            System.gc();
+            heapBytes = MEMORY.getHeapMemoryUsage().getUsed();
+        }
+    }
+
+    private void begin() {
+        running = true;
         gcMillis0 = gcMillisNow();
         gcCount0 = gcCountNow();
         alloc0 = THREADS.getCurrentThreadAllocatedBytes();
@@ -71,27 +114,29 @@ public final class Section {
         wall0 = System.nanoTime();
     }
 
-    public void stop() {
+    /** Wall, CPU, Allokation, GC-Zeit, GC-Läufe, in umgekehrter
+     *  Reihenfolge von {@link #begin} gelesen. */
+    private static long[] now() {
         long wall = System.nanoTime();
         long cpu = THREADS.getCurrentThreadCpuTime();
         long alloc = THREADS.getCurrentThreadAllocatedBytes();
         long ms = gcMillisNow();
         long n = gcCountNow();
-        if (!started || stopped) throw new IllegalStateException("Messstrecke nicht gestartet");
-        stopped = true;
-        wallNanos = wall - wall0;
-        cpuNanos = cpu - cpu0;
-        allocBytes = alloc - alloc0;
-        gcMillis = ms - gcMillis0;
-        gcCount = n - gcCount0;
-        if (liveHeap) {
-            System.gc();
-            heapBytes = MEMORY.getHeapMemoryUsage().getUsed();
-        }
+        return new long[] {wall, cpu, alloc, ms, n};
     }
 
-    /** Wall-Zeit seit {@link #start}, für eine Teilzeit in der Strecke. */
-    public long elapsedNanos() { return System.nanoTime() - wall0; }
+    private void end(long[] now) {
+        running = false;
+        wallNanos += now[0] - wall0;
+        cpuNanos += now[1] - cpu0;
+        allocBytes += now[2] - alloc0;
+        gcMillis += now[3] - gcMillis0;
+        gcCount += now[4] - gcCount0;
+    }
+
+    /** Wall-Zeit seit {@link #start}, Unterbrechungen eingeschlossen,
+     *  für eine Teilzeit in der Strecke. */
+    public long elapsedNanos() { return System.nanoTime() - wallStart; }
 
     public long wallNanos() { return wallNanos; }
 

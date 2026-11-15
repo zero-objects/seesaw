@@ -60,7 +60,11 @@ public final class JavaSuite {
      * ({@code k700/n2000}, {@code k700/n20000}, {@code f20000}) für die
      * Messung, die kleinen ({@code k50/n2000}, {@code f2000}) für den
      * Vergleich der Fingerprints. {@code delta-change-same} hat die
-     * Java-Seite nicht.
+     * Java-Seite nicht. Dazu je Protokoll eines Hosts im Verzeichnis
+     * {@code SEESAW_PDE_DUMP} die Zellen {@code pde/load/<name>},
+     * {@code pde/graph/<name>}, {@code pde/open/<name>} und für
+     * {@code <name>-edit} {@code pde/edit/<name>} ({@link PdeReplay});
+     * ohne die Variable keine.
      */
     static List<Cell> cells() {
         List<Cell> out = new ArrayList<>();
@@ -107,6 +111,18 @@ public final class JavaSuite {
             out.add(new Cell("f2p/delta-delete/" + size + "/d1000",
                     "1000 gelöschte Mitglieder, eine Welle je Löschung",
                     s -> F2p.deltaDelete(families, 1000, s)));
+        }
+        for (PdeReplay.Trace t : PdeReplay.records()) {
+            for (PdeReplay.Part part : List.of(PdeReplay.Part.LOAD, PdeReplay.Part.GRAPH,
+                    PdeReplay.Part.OPEN)) {
+                out.add(new Cell("pde/" + part.cell + "/" + t.name(), part.about,
+                        s -> PdeReplay.run(t.path(), part, s)));
+            }
+            if (t.name().endsWith("-edit")) {
+                PdeReplay.Part part = PdeReplay.Part.EDIT;
+                out.add(new Cell("pde/" + part.cell + "/" + t.name(), part.about,
+                        s -> PdeReplay.run(t.path(), part, s)));
+            }
         }
         return out;
     }

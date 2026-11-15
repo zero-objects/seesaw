@@ -425,6 +425,15 @@ public final class Langpack {
      * Reihenfolge. Die ersten 16 Hex-Zeichen von blake3.
      */
     public static String fingerprint(Graph g, Engine e, Map<Id, String> vals) {
+        return fingerprint(g, List.of(e), vals);
+    }
+
+    /**
+     * Dasselbe über einen Graphen und mehrere Engines
+     * ({@code fingerprint::of_all}): der Graph, dann die Kaskade jeder
+     * Engine in der gegebenen Reihenfolge.
+     */
+    public static String fingerprint(Graph g, List<Engine> engines, Map<Id, String> vals) {
         Blake3 h = new Blake3();
         List<Node> nodes = g.allNodes();
         nodes.sort((x, y) -> x.id.compareTo(y.id));
@@ -457,16 +466,18 @@ public final class Langpack {
             h.update(c.id().b);
             var(h, c.status());
         }
-        u64(h, e.cascade.size());
-        for (Engine.Entry entry : e.cascade) {
-            u64(h, entry.ruleIx);
-            u64(h, entry.rank);
-            u64(h, entry.refs.length);
-            for (Id id : entry.refs) h.update(id.b);
-            u64(h, entry.created.size());
-            for (Id id : entry.created) h.update(id.b);
-            u64(h, entry.createdEdges.size());
-            for (Id id : entry.createdEdges) h.update(id.b);
+        for (Engine e : engines) {
+            u64(h, e.cascade.size());
+            for (Engine.Entry entry : e.cascade) {
+                u64(h, entry.ruleIx);
+                u64(h, entry.rank);
+                u64(h, entry.refs.length);
+                for (Id id : entry.refs) h.update(id.b);
+                u64(h, entry.created.size());
+                for (Id id : entry.created) h.update(id.b);
+                u64(h, entry.createdEdges.size());
+                for (Id id : entry.createdEdges) h.update(id.b);
+            }
         }
         byte[] out = new byte[32];
         h.finalize32(out);
