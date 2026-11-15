@@ -26,7 +26,10 @@ pub struct Sizes {
     /// Matches recorded, whether applied, recognised as duplicates,
     /// dead or still to do.
     pub matches: usize,
-    /// Nodes and connections that stand in a recorded match.
+    /// Elements under which recorded matches are filed: the nodes of
+    /// the matches and, without the feature `opt_a`, the connections
+    /// their patterns ask for. A value read with one setting of
+    /// `opt_a` is a hint of the wrong size for the other.
     pub elements: usize,
     /// Nodes created by applied steps.
     pub products: usize,
@@ -67,6 +70,10 @@ impl Engine<'_> {
     /// nodes and connections of their rules' plans and one cascade
     /// entry each. Reads the todo once.
     pub fn reserve_for_recorded(&mut self, g: &mut Graph) {
+        // As at every door with a graph: what `element_removed` left
+        // open comes first, so that the todo counted below is the one
+        // the next step sees.
+        self.settle_removed(g);
         // Per rule: nodes and connections of its plan. A dynamic leaf
         // with an attribute correspondence adds that correspondence
         // and its two connections.
