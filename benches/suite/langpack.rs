@@ -325,6 +325,37 @@ pub fn delta_change(spec: Spec, delta: usize) -> Outcome {
     outcome(&m.g, &e, &m.vs, steps, usage)
 }
 
+/// `delta` value changes of ONE `rule` leaf, which goes back and forth
+/// between two kinds, one wave per change. A match that is retracted
+/// and found again gets a new record while the old one stays in the
+/// engine's lists, so the cost of the k-th change of one place shows
+/// whether it grows with k.
+pub fn delta_change_same(spec: Spec, delta: usize) -> Outcome {
+    let (mut m, rules) = synchronised(spec);
+    let mut e = Engine::new(&rules);
+    e.elements_added(&m.g, &m.vs, &m.all);
+    saturate(&mut e, &mut m.g, &m.vs);
+    let half = spec.kinds / 2;
+    let ix = 1 + m.rng.below(m.lang.len() - 1);
+    let l = m.lang[ix];
+    let kinds = [l.kind % half, (l.kind % half + 1) % half];
+    let (steps, usage) = measure::section(|| {
+        let mut steps = 0;
+        for i in 0..delta {
+            let kind = kinds[(i + 1) % 2];
+            m.vs.insert(l.rule_leaf, format!("k{kind}"));
+            e.admit_delta(&[DeltaDomain::Source]);
+            e.element_removed(&l.rule_leaf);
+            e.element_changed(&mut m.g, &l.rule_leaf);
+            e.elements_added(&m.g, &m.vs, &[l.rule_leaf]);
+            steps += saturate(&mut e, &mut m.g, &m.vs);
+            e.consolidate(&mut m.g);
+        }
+        steps
+    });
+    outcome(&m.g, &e, &m.vs, steps, usage)
+}
+
 /// `delta` deletions of a language node, one wave per deletion.
 pub fn delta_delete(spec: Spec, delta: usize) -> Outcome {
     let (mut m, rules) = synchronised(spec);

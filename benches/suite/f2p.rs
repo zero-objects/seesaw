@@ -90,6 +90,8 @@ struct Model {
     vs: ValueStore,
     reg: GhostId,
     all: Vec<GhostId>,
+    /// The `Member` nodes, in creation order.
+    members: Vec<GhostId>,
     families: usize,
 }
 
@@ -106,6 +108,7 @@ impl Model {
             vs,
             reg,
             all: vec![reg, regname],
+            members: Vec::new(),
             families: 0,
         };
         for _ in 0..families {
@@ -131,6 +134,7 @@ impl Model {
                 .add_baseline(&format!("f{i}/{role}/m/fn"), "firstName");
             self.g.connect(m, leaf, Status::Solid);
             self.vs.insert(leaf, format!("{role}-{i}"));
+            self.members.push(m);
             new.extend([r, m, leaf]);
         }
         self.all.extend(&new);
@@ -201,6 +205,37 @@ pub fn delta_add(families: usize, delta: usize) -> Outcome {
         steps
     });
     assert_eq!(e.cascade.len(), 4 * (families + delta) + 1);
+    Outcome {
+        usage,
+        steps,
+        applied: e.cascade.len() as u64,
+        nodes: m.g.node_count() as u64,
+        fingerprint: fingerprint::of(&m.g, &e, &m.vs),
+    }
+}
+
+/// `delta` deletions of a member on a synchronised model, one wave per
+/// deletion. The members are spread evenly over the model.
+pub fn delta_delete(families: usize, delta: usize) -> Outcome {
+    let mut m = Model::new(families);
+    let rules = rules(&mut m.g);
+    let mut e = Engine::new(&rules);
+    e.elements_added(&m.g, &m.vs, &m.all);
+    saturate(&mut e, &mut m.g, &m.vs);
+    let stride = (m.members.len() / delta).max(1);
+    let (steps, usage) = measure::section(|| {
+        let mut steps = 0;
+        for i in 0..delta {
+            let member = m.members[(i * stride) % m.members.len()];
+            m.g.set_node_status(&member, Status::Tombstone);
+            e.admit_delta(&[DeltaDomain::Source]);
+            e.element_removed(&member);
+            e.element_deleted(&mut m.g, &member);
+            steps += saturate(&mut e, &mut m.g, &m.vs);
+            e.consolidate(&mut m.g);
+        }
+        steps
+    });
     Outcome {
         usage,
         steps,

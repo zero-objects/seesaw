@@ -78,6 +78,13 @@ fn cells() -> Vec<Cell> {
             "200 changed leaf values, one wave each",
             Box::new(move || langpack::delta_change(spec, 200)),
         );
+        for delta in [20, 200] {
+            cell(
+                format!("langpack/delta-change-same/{size}/d{delta}"),
+                "one leaf changed back and forth, one wave each",
+                Box::new(move || langpack::delta_change_same(spec, delta)),
+            );
+        }
         cell(
             format!("langpack/delta-delete/{size}/d200"),
             "200 deleted nodes, one wave each",
@@ -106,6 +113,11 @@ fn cells() -> Vec<Cell> {
             format!("f2p/delta-add/f{families}/d1000"),
             "1000 added families, one wave each",
             Box::new(move || f2p::delta_add(families, 1000)),
+        );
+        cell(
+            format!("f2p/delta-delete/f{families}/d1000"),
+            "1000 deleted members, one wave each",
+            Box::new(move || f2p::delta_delete(families, 1000)),
         );
     }
     out

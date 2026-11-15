@@ -120,9 +120,21 @@ fn regeldatei_treibt_eine_kaskade() {
 /// Statt eines Hashs die Sache selbst: lebende Knoten mit Typ, Wert
 /// und ausgehenden Verbindungen, nach Id sortiert. Ein Unterschied
 /// zwischen den Sprachen ist damit lesbar statt nur ungleich.
+// Der Java-Baum liegt hier unter `java/`, nicht als Geschwister-Crate
+// `../../seesaw-java` wie im Entwicklungsbaum. Mit dem Entwicklungspfad
+// fand der Vergleich die Datei nicht und uebersprang sich selbst.
 #[cfg(test)]
-const CASCADE_FIXTURE: &str =
-    "../../seesaw-java/src/test/resources/fixtures/uml_java_min.cascade.json";
+const CASCADE_FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/java/src/test/resources/fixtures/uml_java_min.cascade.json"
+);
+
+/// Das Java-Golden der Identitaets-Ableitung, von Rust geschrieben.
+#[cfg(test)]
+const IDENT_GOLDEN: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/java/src/test/resources/fixtures/ident_golden.json"
+);
 
 fn cascade_state(g: &Graph, vs: &ValueStore) -> serde_json::Value {
     let mut nodes: Vec<serde_json::Value> = g
@@ -204,6 +216,8 @@ fn schreibt_kaskaden_endzustand() {
 /// Die Datei im Java-Baum deckt sich mit einem frischen Lauf.
 #[test]
 fn kaskaden_endzustand_ist_aktuell() {
+    // Das veroeffentlichte Paket enthaelt den Java-Baum nicht
+    // (`exclude` in Cargo.toml), dort gibt es nichts zu vergleichen.
     let Ok(on_disk) = std::fs::read_to_string(CASCADE_FIXTURE) else {
         eprintln!("SKIPPED: {CASCADE_FIXTURE} fehlt");
         return;
@@ -213,7 +227,7 @@ fn kaskaden_endzustand_ist_aktuell() {
         on_disk,
         run_min_cascade(),
         "der Kaskaden-Endzustand im Java-Baum ist veraltet -- neu schreiben mit \
-         `cargo test -p seesaw-core --test format -- --ignored`"
+         `cargo test --test format -- --ignored schreibt_kaskaden_endzustand`"
     );
 }
 
@@ -312,7 +326,16 @@ fn materialisiertes_erzeugnis_wird_zurueckgezogen() {
 #[test]
 #[ignore = "manuell: schreibt das Java-Golden der Identitaets-Ableitung"]
 fn schreibt_ident_golden() {
-    let path = "../../seesaw-java/src/test/resources/fixtures/ident_golden.json";
+    std::fs::write(
+        IDENT_GOLDEN,
+        serde_json::to_string_pretty(&ident_golden()).expect("serialisiert"),
+    )
+    .expect("Schreibversuch");
+    eprintln!("Ident-Golden nach {IDENT_GOLDEN} geschrieben");
+}
+
+/// Die Werte des Ident-Golden aus den Ableitungen dieser Fassung.
+fn ident_golden() -> serde_json::Value {
     let cls = seesaw_tgg::graph::preview_baseline_id("uml:/Person");
     let name = seesaw_tgg::graph::preview_baseline_id("uml:/Person/name");
     let getter =
@@ -320,7 +343,7 @@ fn schreibt_ident_golden() {
             seesaw_tgg::rules::transform::Prim::Capitalize,
             seesaw_tgg::rules::transform::Prim::Prefix("get".into()),
         ]));
-    let j = serde_json::json!({
+    serde_json::json!({
         "baseline_class": cls.hex(),
         "baseline_name": name.hex(),
         "ghost": seesaw_tgg::graph::preview_ghost_id(&cls, "Member").hex(),
@@ -328,13 +351,24 @@ fn schreibt_ident_golden() {
         "connection": seesaw_tgg::graph::preview_connection_id(&cls, &name).hex(),
         "corr": seesaw_tgg::graph::preview_corr_id(&cls, "Corr", &[cls, name]).hex(),
         "konst": seesaw_tgg::graph::preview_konst_id(&cls, "Op", "mkOp", 3).hex(),
-    });
-    std::fs::write(
-        path,
-        serde_json::to_string_pretty(&j).expect("serialisiert"),
-    )
-    .expect("Schreibversuch");
-    eprintln!("Ident-Golden nach {path} geschrieben");
+    })
+}
+
+/// Die Datei im Java-Baum deckt sich mit den Ableitungen dieser
+/// Fassung. Java liest dieselbe Datei (`GhostIdGoldenTest`).
+#[test]
+fn ident_golden_ist_aktuell() {
+    let Ok(on_disk) = std::fs::read_to_string(IDENT_GOLDEN) else {
+        eprintln!("SKIPPED: {IDENT_GOLDEN} fehlt");
+        return;
+    };
+    let on_disk: serde_json::Value = serde_json::from_str(&on_disk).expect("parst");
+    assert_eq!(
+        on_disk,
+        ident_golden(),
+        "das Ident-Golden im Java-Baum ist veraltet -- neu schreiben mit \
+         `cargo test --test format -- --ignored schreibt_ident_golden`"
+    );
 }
 
 /// **Löschen entlang der Korrespondenz: der Host löscht das Erzeugnis.**
