@@ -18,6 +18,8 @@
 # The run has address space randomisation switched off (`setarch -R`),
 # so that a sample address minus the load address is the address in
 # the file.
+#
+# `SUITE_FEATURES` (a comma list) builds the suite with those features.
 set -eu
 cell=$1
 pattern=$2
@@ -30,7 +32,7 @@ cache-misses*) rate="-c 10007" ;;
 esac
 cd "$(dirname "$0")/../.."
 CARGO_PROFILE_BENCH_DEBUG=1 CARGO_TARGET_DIR=target/prof \
-    cargo bench -q --bench suite --no-run 2>/dev/null
+    cargo bench -q --bench suite ${SUITE_FEATURES:+--features "$SUITE_FEATURES"} --no-run 2>/dev/null
 bin=$(ls -t target/prof/release/deps/suite-* | grep -v '\.d$' | head -1)
 tmp=$(mktemp -d /tmp/suite-lines.XXXXXX)
 perf record -q --call-graph dwarf,16384 $rate -o "$tmp/data" -e "$event" \

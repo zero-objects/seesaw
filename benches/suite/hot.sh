@@ -11,13 +11,15 @@
 # chain below the section), and self per function (the function is the
 # top of the chain). Model construction, rule loading and the
 # fingerprint are not in the tables.
+#
+# `SUITE_FEATURES` (a comma list) builds the suite with those features.
 set -eu
 cell=$1
 lines=${2:-40}
 event=${3:-instructions:u}
 cd "$(dirname "$0")/../.."
 CARGO_PROFILE_BENCH_DEBUG=1 CARGO_TARGET_DIR=target/prof \
-    cargo bench -q --bench suite --no-run 2>/dev/null
+    cargo bench -q --bench suite ${SUITE_FEATURES:+--features "$SUITE_FEATURES"} --no-run 2>/dev/null
 bin=$(ls -t target/prof/release/deps/suite-* | grep -v '\.d$' | head -1)
 data=$(mktemp /tmp/suite-perf.XXXXXX)
 case $event in
