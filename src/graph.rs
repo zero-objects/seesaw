@@ -556,6 +556,11 @@ pub struct Graph {
     /// The participants: nodes with their participations, connections,
     /// the nodes' insertion order and the type index.
     store: Store,
+    /// The identity of this graph instance: a number of its own for
+    /// every graph and every copy. The field is private, so it moves
+    /// only with the participants it stands for. The engine's index of
+    /// unheld links is about one graph and reads it.
+    pub(crate) uid: TableUid,
     pub types: TypeTable,
     /// Rule constants (source-material table, §3b.4).
     pub konsts: KonstTable,

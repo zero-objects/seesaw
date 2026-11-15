@@ -465,9 +465,11 @@ impl AnchorIndex {
     /// takes the index of its rule set from a store of the process and
     /// builds it only if no engine over a rule set of the same content
     /// has done so before. The store holds the indices of the last 32
-    /// rule sets and is not emptied on its own. A host that is done
+    /// rule sets and is not emptied on its own: the index of a 33rd rule
+    /// set pushes out the one used longest ago. A host that is done
     /// with its rule sets gives the memory back with this call. Engines
-    /// alive keep their index.
+    /// alive keep their index. The next engine over a rule set that is
+    /// no longer kept builds its index again.
     pub fn forget_shared() {
         own::forget();
     }

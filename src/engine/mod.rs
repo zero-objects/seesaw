@@ -2288,7 +2288,7 @@ mod tests {
         assert_eq!(e.step(&mut g, &vs), Some(true), "one Child");
         assert_eq!(
             e.links.unheld.as_ref().map(|u| u.graph),
-            Some(g.types.uid.get()),
+            Some(g.uid.get()),
             "an index for this graph"
         );
         assert_eq!(e.todo.len(), 2);
@@ -2327,7 +2327,7 @@ mod tests {
         );
         assert_eq!(
             e.links.unheld.as_ref().map(|u| u.graph),
-            Some(copy.types.uid.get()),
+            Some(copy.uid.get()),
             "an index for the copy"
         );
         assert_eq!(filed(&e), 5);
@@ -2375,9 +2375,199 @@ mod tests {
         e.consolidate(&mut copy);
         assert_eq!(
             e.links.unheld.as_ref().map(|u| u.graph),
-            Some(copy.types.uid.get()),
+            Some(copy.uid.get()),
             "an index for the copy"
         );
+    }
+
+    /// The graph of the tests above: `a` with `n` children of type `X`,
+    /// the rules of [`context_link_rules`] loaded into it.
+    fn context_link_graph(n: usize) -> (Graph, GhostId, Vec<GhostId>, Vec<DirectedRule>) {
+        let file = context_link_rules();
+        let mut g = Graph::new();
+        let a = g.add_baseline("a", "A");
+        let mut xs = Vec::new();
+        for i in 0..n {
+            let x = g.add_baseline(&format!("a/x{i}"), "X");
+            g.connect(a, x, Status::Solid);
+            xs.push(x);
+        }
+        let rules = crate::rules::load_file(&file, &mut g).expect("rules lower");
+        (g, a, xs, rules)
+    }
+
+    /// How many matches the index of unheld links holds under `id`.
+    fn in_unheld(e: &Engine<'_>, id: &GhostId) -> usize {
+        e.links
+            .unheld
+            .as_ref()
+            .and_then(|u| u.by_id.get(id))
+            .map_or(0, |ixs| ixs.as_slice().len())
+    }
+
+    /// The index is about the graph, not about its type table. `types`
+    /// is a public field: a host that moves it into another graph
+    /// carries the number of the table along. The index built for the
+    /// first graph must not answer for the second.
+    #[test]
+    fn the_index_is_about_the_graph_not_its_type_table() {
+        let (mut g, a, xs, rules) = context_link_graph(2);
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        assert_eq!(e.step(&mut g, &vs), Some(true), "Root");
+        assert_eq!(e.todo.len(), 2, "the candidates of Child");
+        // The first question builds the index for g. g holds a → x0, so
+        // that link is not in it.
+        let nothing = crate::graph::preview_connection_id(&xs[0], &xs[1]);
+        assert!(e.filed_under(&g, &nothing).as_slice().is_empty());
+        let held = g.connection_id(&a, &xs[0]).expect("a → x0");
+        assert_eq!(in_unheld(&e, &held), 0);
+        // Another graph with the type table of g: the same baseline
+        // nodes, without a → x0.
+        let mut h = Graph::new();
+        h.types = std::mem::take(&mut g.types);
+        assert_eq!(h.add_baseline("a", "A"), a);
+        assert_eq!(h.add_baseline("a/x0", "X"), xs[0]);
+        assert_eq!(h.add_baseline("a/x1", "X"), xs[1]);
+        h.connect(a, xs[1], Status::Solid);
+        assert!(h.connection(&held).is_none() && h.node(&held).is_none());
+        // As in 2.0.2: the match of Child over x0 rests on a → x0.
+        let resting = e.filed_under(&h, &held);
+        assert_eq!(resting.as_slice().len(), 1, "the match of Child over x0");
+        assert_eq!(
+            e.links.unheld.as_ref().map(|u| u.graph),
+            Some(h.uid.get()),
+            "an index for h"
+        );
+    }
+
+    /// A match recorded after the index was built is filed in it, and a
+    /// question about the id is answered from it.
+    #[test]
+    fn a_match_recorded_after_the_index_is_answered_from_it() {
+        let (mut g, a, xs, rules) = context_link_graph(2);
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        assert_eq!(e.step(&mut g, &vs), Some(true), "Root");
+        let corr = g.iter_nodes().find(|n| n.is_corr).expect("AB").id;
+        let named = crate::graph::preview_connection_id(&corr, &a);
+        let nothing = crate::graph::preview_connection_id(&xs[0], &xs[1]);
+        assert!(e.filed_under(&g, &nothing).as_slice().is_empty());
+        assert_eq!(in_unheld(&e, &named), 2);
+        let x = g.add_baseline("a/x2", "X");
+        g.connect(a, x, Status::Solid);
+        e.elements_added(&g, &vs, &[x]);
+        assert_eq!(e.todo.len(), 3, "the candidates of Child");
+        assert_eq!(in_unheld(&e, &named), 3, "the new match is filed by record");
+        let resting = e.filed_under(&g, &named);
+        assert_eq!(resting.as_slice().len(), 3, "every match of Child");
+        e.element_removed(&named);
+        assert_eq!(
+            e.step(&mut g, &vs),
+            None,
+            "the candidates of Child are dead"
+        );
+        assert_eq!(e.cascade.len(), 1, "Root only");
+    }
+
+    /// The connection of a link filed in the index comes later, in the
+    /// direction of the link. The id is known now: the matches are
+    /// found from its ends, and the answer is the same.
+    #[test]
+    fn a_connection_that_comes_later_gives_the_same_answer() {
+        let (mut g, a, xs, rules) = context_link_graph(2);
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        assert_eq!(e.step(&mut g, &vs), Some(true), "Root");
+        let corr = g.iter_nodes().find(|n| n.is_corr).expect("AB").id;
+        let named = crate::graph::preview_connection_id(&corr, &a);
+        let nothing = crate::graph::preview_connection_id(&xs[0], &xs[1]);
+        assert!(e.filed_under(&g, &nothing).as_slice().is_empty());
+        assert_eq!(in_unheld(&e, &named), 2);
+        g.connect(corr, a, Status::Solid);
+        assert!(g.connection(&named).is_some(), "corr → a is held now");
+        let resting = e.filed_under(&g, &named);
+        assert_eq!(resting.as_slice().len(), 2, "both matches of Child");
+        e.element_removed(&named);
+        assert_eq!(
+            e.step(&mut g, &vs),
+            None,
+            "the candidates of Child are dead"
+        );
+        assert_eq!(e.cascade.len(), 1, "Root only");
+    }
+
+    /// The materialized copy leaves out a connection that was a
+    /// tombstone. The match resting on it is found from the index for
+    /// the copy and dies, the others are applied.
+    #[test]
+    fn a_connection_the_copy_left_out_kills_the_match_resting_on_it() {
+        let (mut g, a, xs, rules) = context_link_graph(3);
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        assert_eq!(e.step(&mut g, &vs), Some(true), "Root");
+        assert_eq!(e.todo.len(), 3, "the candidates of Child");
+        let link = g.connection_id(&a, &xs[0]).expect("a → x0");
+        g.set_connection_status(&link, Status::Tombstone);
+        let mut copy = g.materialize();
+        assert!(copy.connection(&link).is_none() && copy.node(&link).is_none());
+        e.element_removed(&link);
+        let _ = e.run_remaining(&mut copy, &vs);
+        assert_eq!(
+            e.links.unheld.as_ref().map(|u| u.graph),
+            Some(copy.uid.get()),
+            "an index for the copy"
+        );
+        assert_eq!(e.cascade.len(), 3, "Root and the Child of x1 and x2");
+        let corrs_at = |x: &GhostId| {
+            copy.parts(x)
+                .filter(|p| copy.node(&p.other).is_some_and(|n| n.is_corr))
+                .count()
+        };
+        assert_eq!(corrs_at(&xs[0]), 0, "the Child of x0 is dead");
+        assert_eq!(corrs_at(&xs[1]), 1);
+        assert_eq!(corrs_at(&xs[2]), 1);
+    }
+
+    /// A pattern that has a link twice (a host can push one into a
+    /// loaded rule): the match rests on the connection twice, found
+    /// from its ends as from the index.
+    #[test]
+    fn a_link_twice_in_a_pattern_files_the_match_twice() {
+        let (mut g, a, xs, mut rules) = context_link_graph(2);
+        for r in &mut rules {
+            let directed: Vec<crate::engine::matcher::Link> = r
+                .pattern
+                .links
+                .iter()
+                .filter(|l| l.kind == crate::engine::matcher::LinkKind::Directed)
+                .copied()
+                .collect();
+            r.pattern.links.extend(directed);
+        }
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        assert_eq!(e.step(&mut g, &vs), Some(true), "Root");
+        assert_eq!(e.todo.len(), 2, "the candidates of Child");
+        let link = g.connection_id(&a, &xs[0]).expect("a → x0");
+        let from_ends = e.filed_under(&g, &link);
+        assert_eq!(from_ends.as_slice().len(), 2, "one match, twice");
+        assert_eq!(from_ends.as_slice()[0], from_ends.as_slice()[1]);
+        g.set_connection_status(&link, Status::Tombstone);
+        let copy = g.materialize();
+        assert!(copy.connection(&link).is_none() && copy.node(&link).is_none());
+        let from_index = e.filed_under(&copy, &link);
+        assert_eq!(from_index.as_slice(), from_ends.as_slice());
     }
 
     impl<'r> Engine<'r> {

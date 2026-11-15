@@ -52,8 +52,10 @@ struct Links {
 /// are found from its ends, this entry is not read any more), but one
 /// it holds stays. For another graph the index is built anew.
 struct Unheld {
-    /// The graph the index is about: the number of its type table
-    /// (`TableUid`), which every graph and every copy has for itself.
+    /// The graph the index is about: its number (`Graph::uid`), which
+    /// every graph and every copy has for itself. Not the number of its
+    /// type table: `types` is a public field, and a host that moves it
+    /// into another graph carries that number along.
     graph: u64,
     by_id: crate::hash::FxHashMap<GhostId, Ixs>,
 }
@@ -114,7 +116,7 @@ fn file_unheld(
     let Some(unheld) = &mut links.unheld else {
         return;
     };
-    if unheld.graph != g.types.uid.get() {
+    if unheld.graph != g.uid.get() {
         links.unheld = None;
         return;
     }
@@ -211,7 +213,7 @@ impl Engine<'_> {
     /// which is built here if there is none for this graph: one pass
     /// over the match store, once per graph.
     fn unheld_under(&mut self, g: &Graph, id: &GhostId) -> Ixs {
-        let graph = g.types.uid.get();
+        let graph = g.uid.get();
         if self.links.unheld.as_ref().map(|u| u.graph) != Some(graph) {
             self.links.unheld = Some(self.unheld_of(g));
         }
@@ -248,7 +250,7 @@ impl Engine<'_> {
             }
         }
         Unheld {
-            graph: g.types.uid.get(),
+            graph: g.uid.get(),
             by_id,
         }
     }

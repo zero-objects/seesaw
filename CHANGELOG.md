@@ -214,7 +214,11 @@ instructions in every cell but one: filing under nodes only saves
   direction the graph holds, or a graph the host has replaced by a
   materialized copy) the engine keeps an index of the links whose
   connection the graph does not hold. It is built at the first such
-  question and costs nothing before.
+  question and costs nothing before. From then on `record` files the
+  unheld links of every new match in it, until the engine is handed
+  another graph. The engine asks such a question itself when a
+  retraction on a materialized copy looks for products the copy left
+  out.
 - `step` looks a pulled match up once. The candidate in the todo
   carries the number of its match, "already applied" is a mark on that
   number, and one access per anchor answers both "tentatively
@@ -405,8 +409,8 @@ a feature are to be compared with one codegen unit
   one; the engine keeps its matches in a record of its own.
 - The `Debug` output of `Graph`, `TypeTable`, `KonstTable` and
   `ChainTable` has other fields than in 2.0.2, among them a number per
-  table instance: a counter of the process, so it depends on what the
-  process created before.
+  graph and per table instance: a counter of the process, so it
+  depends on what the process created before.
 - `perf_trace` (feature, off by default): the module now holds the
   counters of the current engine. The fields of the first generation
   had no call site left and are gone. The module is a diagnostic of the

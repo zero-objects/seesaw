@@ -1,13 +1,15 @@
-// Which table instance a table is: a number of its own for every
-// table that is created, and for every copy.
+// Which instance a table or a graph is: a number of its own for every
+// table and every graph that is created, and for every copy.
 
-/// The identity of one table instance.
+/// The identity of one table or graph instance.
 ///
 /// The engine keeps the ids a rule's names resolved to in a table and
 /// has to know whether the table at hand is that table.
 /// The tables only grow, so what was resolved in an instance stays
-/// true for it. A copy gets a number of its own: copy and original
-/// can receive different entries afterwards.
+/// true for it. The same holds for the connections of a graph, which
+/// the engine's index of unheld links is about. A copy gets a number
+/// of its own: copy and original can receive different entries
+/// afterwards.
 #[derive(Debug)]
 pub(crate) struct TableUid(u64);
 
