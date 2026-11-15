@@ -181,6 +181,22 @@ public final class Matcher {
         return out;
     }
 
+    /**
+     * Wie {@link #findMatchesWithFixed}, mit einem Plan, der fuer
+     * dieselben festen Positionen schon gebaut ist. Der Plan haengt nur
+     * daran, WELCHE Positionen fest sind, nicht an ihren Knoten: er
+     * laesst sich je Regel und Ankerposition einmal bauen
+     * ({@link AnchorIndex#plan}). Die Suche liest ihn nur.
+     */
+    static List<Id[]> findMatchesPlanned(Graph g, Map<Id, String> vals, Rule r, List<Step> plan,
+            Id[] fixed) {
+        Id[] cur = fixed.clone();
+        List<Id[]> out = new ArrayList<>();
+        enumerate(g, vals, r, plan, 0, cur, out, new boolean[1], false);
+        out.sort(Matcher::compareBindings);
+        return out;
+    }
+
 // ── Matcher (Spiegel von matcher.rs) ──
 static final class Step {
     public int nodeIx;
