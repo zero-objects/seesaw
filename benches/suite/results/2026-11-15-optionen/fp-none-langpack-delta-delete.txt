@@ -1,0 +1,36 @@
+== langpack/delta-delete/k700/n20000/d2000, instructions:u: 263 of 3173 samples in the section
+-- inclusive, % of section
+ 89.35	seesaw_tgg::engine::Engine::element_deleted
+ 89.35	seesaw_tgg::engine::Engine::retract_wave
+ 84.41	seesaw_tgg::engine::Engine::drain_retraction
+ 45.63	seesaw_tgg::engine::Engine::retract_match
+ 11.03	hashbrown::raw::RawTable<T,A>::remove_entry
+ 10.27	seesaw_tgg::engine::Engine::consolidate
+  4.94	hashbrown::map::HashMap<K,V,S,A>::insert
+  3.04	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  3.04	_ZN102_$LT$core..iter..adapters..map..Map$LT$I$C$F$GT$$u20$as$u20$core..iter..traits..iterator..Iter
+  2.28	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  1.90	__memmove_avx_unaligned
+  1.90	__memmove_avx_unaligned_erms
+  0.38	[unknown]
+  0.38	_RNvCsfLfy6EI15iL_7___rustc12___rust_alloc
+  0.38	_RNvNtCslNYArtu3iFV_5alloc4sync32arcinner_layout_for_value_layout
+  0.38	alloc::sync::Arc<T,A>::drop_slow
+  0.38	malloc
+  0.38	seesaw_tgg::engine::Engine::element_removed
+-- self, % of section
+ 34.98	seesaw_tgg::engine::Engine::retract_match
+ 33.46	seesaw_tgg::engine::Engine::drain_retraction
+ 11.03	hashbrown::raw::RawTable<T,A>::remove_entry
+  6.84	seesaw_tgg::engine::Engine::consolidate
+  3.04	_ZN102_$LT$core..iter..adapters..map..Map$LT$I$C$F$GT$$u20$as$u20$core..iter..traits..iterator..Iter
+  2.66	hashbrown::map::HashMap<K,V,S,A>::insert
+  1.90	__memmove_avx_unaligned
+  1.90	__memmove_avx_unaligned_erms
+  1.90	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  0.38	[unknown]
+  0.38	_RNvCsfLfy6EI15iL_7___rustc12___rust_alloc
+  0.38	_RNvNtCslNYArtu3iFV_5alloc4sync32arcinner_layout_for_value_layout
+  0.38	alloc::sync::Arc<T,A>::drop_slow
+  0.38	malloc
+  0.38	seesaw_tgg::engine::Engine::element_removed

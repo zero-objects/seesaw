@@ -1,0 +1,93 @@
+== pde/open/open5, instructions:u: 44594 of 52645 samples in the section
+-- inclusive, % of section
+ 99.99	suite::pde::World::run
+ 98.50	seesaw_tgg::engine::Engine::step_with_limit
+ 93.84	seesaw_tgg::engine::Engine::expand_at
+ 48.93	seesaw_tgg::engine::Engine::record
+ 40.02	seesaw_tgg::engine::matcher::find_matches_planned
+ 27.46	_ZN10seesaw_tgg6engine7matcher9enumerate17h30ae88185ca9ead5E
+ 27.45	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+ 12.54	core::slice::sort::stable::drift::sort
+ 12.54	core::slice::sort::stable::driftsort_main
+ 12.50	core::slice::sort::stable::quicksort::quicksort
+ 10.54	seesaw_tgg::graph::Graph::connection_id_typed
+  7.25	alloc::collections::btree::map::BTreeMap<K,V,A>::insert
+  4.67	seesaw_tgg::graph::Parts::of_type
+  4.43	seesaw_tgg::graph::Graph::resolve_value
+  4.17	alloc::collections::btree::navigate::>::find_leaf_edges_spanning_range
+  4.14	core::slice::sort::shared::smallsort::small_sort_general_with_scratch
+  3.93	_ZN61_$LT$seesaw_tgg..ident..GhostId$u20$as$u20$core..cmp..Ord$GT$3cmp17h26af279b259471a6E
+  3.74	hashbrown::rustc_entry::>::rustc_entry
+  3.17	__memmove_avx_unaligned_erms
+  2.29	__memmove_avx_unaligned
+  2.12	_blake3_compress_in_place_sse41
+  2.06	hashbrown::map::HashMap<K,V,S,A>::contains_key
+  2.03	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  2.00	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  1.85	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h2d94be73a58931c5E
+  1.80	_ZN4core5slice4sort6shared9smallsort11insert_tail17h9d71837913ee99c2E
+  1.70	blake3::Hasher::update
+  1.53	_ZN4core5slice4sort6shared9smallsort19bidirectional_merge17h74f942c781a74df9E
+  1.51	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_value
+  1.48	alloc::collections::btree::search::>::find_lower_bound_index
+  1.35	hashbrown::map::HashMap<K,V,S,A>::insert
+  1.19	alloc::collections::btree::map::entry::VacantEntry<K,V,A>::insert_entry
+  1.09	alloc::collections::btree::search::>::find_upper_bound_index
+  0.82	[unknown]
+  0.77	_ZN4core5slice4sort6shared9smallsort12sort4_stable17h9e127e35dc988d39E
+  0.63	seesaw_tgg::engine::Engine::expand_at::_$u7b$$u7b$closure$u7d$$u7d$
+  0.50	alloc::collections::btree::map::entry::OccupiedEntry<K,V,A>::remove_kv
+  0.46	alloc::collections::btree::remove::,alloc::collections::btree::node::marker::KV>>::remove_kv_trackin
+  0.45	__memcmp_avx2_movbe
+  0.34	core::slice::sort::shared::pivot::median3_rec
+  0.33	<core::iter::adapters::map::Map<I,F> as core::iter::traits::iterator::Iterator>::try_fold
+  0.31	seesaw_tgg::plan::apply_creation_at
+  0.28	<seesaw_tgg::ident::GhostId as core::cmp::Ord>::cmp
+  0.28	seesaw_tgg::graph::Graph::with_node_value
+  0.26	alloc::raw_vec::RawVec<T,A>::grow_one
+-- self, % of section
+ 22.83	seesaw_tgg::engine::Engine::record
+ 11.54	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  7.94	core::slice::sort::stable::quicksort::quicksort
+  7.72	seesaw_tgg::graph::Graph::connection_id_typed
+  6.32	_ZN10seesaw_tgg6engine7matcher9enumerate17h30ae88185ca9ead5E
+  3.93	_ZN61_$LT$seesaw_tgg..ident..GhostId$u20$as$u20$core..cmp..Ord$GT$3cmp17h26af279b259471a6E
+  3.14	__memmove_avx_unaligned_erms
+  3.01	seesaw_tgg::graph::Parts::of_type
+  2.76	alloc::collections::btree::map::BTreeMap<K,V,A>::insert
+  2.74	hashbrown::rustc_entry::>::rustc_entry
+  2.28	__memmove_avx_unaligned
+  2.19	seesaw_tgg::graph::Graph::resolve_value
+  2.12	_blake3_compress_in_place_sse41
+  2.06	hashbrown::map::HashMap<K,V,S,A>::contains_key
+  1.89	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  1.80	_ZN4core5slice4sort6shared9smallsort11insert_tail17h9d71837913ee99c2E
+  1.69	alloc::collections::btree::navigate::>::find_leaf_edges_spanning_range
+  1.53	_ZN4core5slice4sort6shared9smallsort19bidirectional_merge17h74f942c781a74df9E
+  1.48	alloc::collections::btree::search::>::find_lower_bound_index
+  1.09	alloc::collections::btree::search::>::find_upper_bound_index
+  1.04	seesaw_tgg::engine::Engine::step_with_limit
+  0.82	[unknown]
+  0.77	_ZN4core5slice4sort6shared9smallsort12sort4_stable17h9e127e35dc988d39E
+  0.63	seesaw_tgg::engine::Engine::expand_at::_$u7b$$u7b$closure$u7d$$u7d$
+  0.60	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h2d94be73a58931c5E
+  0.45	__memcmp_avx2_movbe
+  0.41	alloc::collections::btree::map::entry::VacantEntry<K,V,A>::insert_entry
+  0.37	hashbrown::map::HashMap<K,V,S,A>::insert
+  0.35	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_value
+  0.34	core::slice::sort::shared::pivot::median3_rec
+  0.28	<seesaw_tgg::ident::GhostId as core::cmp::Ord>::cmp
+  0.25	seesaw_tgg::graph::TypeTable::lookup
+  0.22	alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections:
+  0.22	blake3::ChunkState::update
+  0.21	_RNvCsfLfy6EI15iL_7___rustc12___rust_alloc
+  0.19	_RNvCsfLfy6EI15iL_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+  0.19	core::ops::function::impls:: for &mut F>::call_mut
+  0.17	seesaw_tgg::rules::transform::Chain::apply
+  0.15	suite::pde::World::run
+  0.14	_RNvXs4_NtCslNYArtu3iFV_5alloc6stringNtB5_6StringNtNtCsgEmfK2I1SDS_4core5clone5Clone5clone
+  0.14	blake3::Hasher::update
+  0.12	_RNvCsfLfy6EI15iL_7___rustc14___rust_dealloc
+  0.11	seesaw_tgg::graph::Graph::with_node_value
+  0.10	blake3::Hasher::final_output
+  0.10	cfree@GLIBC_2.2.5

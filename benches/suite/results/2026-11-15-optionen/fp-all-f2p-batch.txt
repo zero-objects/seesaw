@@ -1,0 +1,93 @@
+== f2p/batch/f20000, instructions:u: 2186 of 7723 samples in the section
+-- inclusive, % of section
+ 99.95	seesaw_tgg::engine::Engine::run
+ 86.28	seesaw_tgg::engine::Engine::step_with_limit
+ 36.28	seesaw_tgg::plan::apply_creation_at
+ 23.56	seesaw_tgg::graph::Graph::connect_reporting
+ 15.51	seesaw_tgg::engine::Engine::expand_at
+ 13.40	seesaw_tgg::graph::ident::connection
+ 13.13	seesaw_tgg::engine::Engine::seed
+ 12.40	seesaw_tgg::engine::Engine::record
+ 10.93	_ZN10seesaw_tgg5graph5Store11insert_node17h67b5a8862e335809E
+ 10.29	_ZN10seesaw_tgg6engine7matcher9enumerate17ha8ade2d3e74e2391E
+ 10.20	_blake3_compress_in_place_sse41
+  8.92	seesaw_tgg::engine::matcher::find_matches_with_fixed
+  8.14	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  6.82	blake3::Hasher::update
+  6.36	seesaw_tgg::graph::Parts::of_type
+  5.81	alloc::collections::binary_heap::BinaryHeap<T,A>::pop
+  5.72	seesaw_tgg::engine::Ixs::push
+  5.72	seesaw_tgg::graph::Graph::node_parts
+  5.35	seesaw_tgg::graph::Store::insert_connection
+  5.12	seesaw_tgg::graph::Graph::node
+  4.39	<seesaw_tgg::engine::Candidate as core::cmp::PartialOrd>::partial_cmp
+  3.66	seesaw_tgg::graph::Graph::connection
+  3.61	[unknown]
+  3.39	seesaw_tgg::graph::preview_ghost_id
+  3.25	seesaw_tgg::engine::matcher::find_matches_planned
+  2.93	hashbrown::rustc_entry::>::rustc_entry
+  2.88	blake3::Hasher::new
+  2.65	seesaw_tgg::engine::matcher::node_ok
+  2.42	__memmove_avx_unaligned
+  2.06	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  1.97	seesaw_tgg::graph::Parts::insert
+  1.65	core::slice::sort::stable::drift::sort
+  1.65	core::slice::sort::stable::driftsort_main
+  1.60	core::slice::sort::stable::quicksort::quicksort
+  0.91	blake3::Hasher::finalize
+  0.91	seesaw_tgg::engine::anchor::AnchorIndex::walk
+  0.78	__memmove_avx_unaligned_erms
+  0.73	blake3::ChunkState::update
+  0.64	<core::iter::adapters::map::Map<I,F> as core::iter::traits::iterator::Iterator>::try_fold
+  0.64	seesaw_tgg::graph::Graph::parts_by_other_type
+  0.59	alloc::collections::binary_heap::BinaryHeap<T,A>::push
+  0.59	core::slice::sort::shared::smallsort::small_sort_general_with_scratch
+  0.46	blake3::Hasher::final_output
+  0.41	blake3::Hasher::merge_cv_stack
+  0.41	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$
+-- self, % of section
+ 10.16	_blake3_compress_in_place_sse41
+  9.52	_ZN10seesaw_tgg5graph5Store11insert_node17h67b5a8862e335809E
+  6.63	seesaw_tgg::engine::Engine::record
+  6.36	seesaw_tgg::engine::Engine::step_with_limit
+  6.36	seesaw_tgg::graph::Parts::of_type
+  5.72	seesaw_tgg::engine::Ixs::push
+  5.72	seesaw_tgg::graph::Graph::node_parts
+  5.08	seesaw_tgg::graph::Graph::node
+  4.39	<seesaw_tgg::engine::Candidate as core::cmp::PartialOrd>::partial_cmp
+  4.21	seesaw_tgg::graph::Store::insert_connection
+  3.66	seesaw_tgg::graph::Graph::connection
+  3.61	[unknown]
+  2.88	blake3::Hasher::new
+  2.79	hashbrown::rustc_entry::>::rustc_entry
+  2.56	seesaw_tgg::graph::Graph::connect_reporting
+  2.42	__memmove_avx_unaligned
+  1.83	seesaw_tgg::graph::Parts::insert
+  1.60	alloc::collections::binary_heap::BinaryHeap<T,A>::pop
+  1.42	_ZN10seesaw_tgg6engine7matcher9enumerate17ha8ade2d3e74e2391E
+  1.24	seesaw_tgg::plan::apply_creation_at
+  0.91	core::slice::sort::stable::quicksort::quicksort
+  0.91	seesaw_tgg::engine::matcher::node_ok
+  0.78	__memmove_avx_unaligned_erms
+  0.73	blake3::ChunkState::update
+  0.64	seesaw_tgg::graph::Graph::parts_by_other_type
+  0.59	alloc::collections::binary_heap::BinaryHeap<T,A>::push
+  0.59	seesaw_tgg::engine::anchor::AnchorIndex::walk
+  0.55	seesaw_tgg::engine::Engine::expand_at
+  0.50	core::slice::sort::shared::smallsort::small_sort_general_with_scratch
+  0.46	<core::iter::adapters::map::Map<I,F> as core::iter::traits::iterator::Iterator>::try_fold
+  0.46	blake3::Hasher::final_output
+  0.46	blake3::Hasher::finalize
+  0.46	blake3::Hasher::update
+  0.41	blake3::Hasher::merge_cv_stack
+  0.41	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  0.41	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  0.32	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closur
+  0.27	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  0.23	malloc
+  0.23	seesaw_tgg::graph::ident::connection
+  0.18	_RNvCsfLfy6EI15iL_7___rustc12___rust_alloc
+  0.14	_RNvCsfLfy6EI15iL_7___rustc35___rust_no_alloc_shim_is_unstable_v2
+  0.14	core::hash::Hash::hash_slice
+  0.14	seesaw_tgg::engine::matcher::find_matches_planned
+  0.14	seesaw_tgg::graph::Graph::mark_corr

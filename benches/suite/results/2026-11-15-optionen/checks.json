@@ -1,0 +1,67 @@
+[
+ {
+  "name": "<code>cargo fmt --check</code>, <code>cargo clippy --all-targets -- -D warnings</code>",
+  "at": "keine und alle elf",
+  "result": "rc 0"
+ },
+ {
+  "name": "<code>cargo test</code>",
+  "at": "keine",
+  "result": "193 bestanden, 0 fehlgeschlagen, 7 ignoriert"
+ },
+ {
+  "name": "<code>cargo test</code>",
+  "at": "alle elf",
+  "result": "205 bestanden, 0 fehlgeschlagen, 7 ignoriert"
+ },
+ {
+  "name": "<code>cargo test</code> mit <code>--cfg seesaw_checks</code>",
+  "at": "alle elf",
+  "result": "205 bestanden, 0 fehlgeschlagen, 7 ignoriert"
+ },
+ {
+  "name": "<code>cargo test</code> mit <code>perf_trace</code>",
+  "at": "alle elf",
+  "result": "205 bestanden, 0 fehlgeschlagen, 7 ignoriert"
+ },
+ {
+  "name": "Differenztest gegen 2.0.2, Standardzahl der Fälle",
+  "at": "keine und alle elf",
+  "result": "je 8 Tests bestanden"
+ },
+ {
+  "name": "Differenztest gegen 2.0.2, 1 500 Fälle (sechs Eigenschaften) und <code>family_agrees</code> mit 400",
+  "at": "alle elf",
+  "result": "bestanden. Mit <code>opt_j</code> sät der Treiber über <code>seed_with_threads</code>, mit <code>opt_b</code> gibt er Hinweise"
+ },
+ {
+  "name": "Fingerprint, angewandte Schritte, Knotenzahl je Zelle",
+  "at": "25 Schalterstellungen",
+  "result": "gleich in allen 20 Zellen"
+ },
+ {
+  "name": "Wiedergabe der pde-Protokolle mit Prüfung je Aufruf",
+  "at": "25 Schalterstellungen",
+  "result": "durchgelaufen (java40, open5, open2, open2-edit)"
+ },
+ {
+  "name": "<code>cargo +1.88.0 check --lib --target wasm32-unknown-unknown</code>",
+  "at": "alle elf",
+  "result": "rc 0"
+ },
+ {
+  "name": "<code>cargo +1.88.0 check --all-targets</code> mit <code>-D warnings</code>",
+  "at": "alle elf",
+  "result": "rc 0"
+ },
+ {
+  "name": "<code>cargo doc --no-deps</code> mit <code>-D warnings</code>",
+  "at": "alle elf",
+  "result": "rc 0"
+ },
+ {
+  "name": "s390x, <code>cargo publish --dry-run</code>, Java-Tests des Hauptzweigs, Konsumenten (Dev-Kopie, dry-cleaner), Tests von zerodds-pde",
+  "at": "–",
+  "result": "mit den Schaltern nicht gelaufen"
+ }
+]

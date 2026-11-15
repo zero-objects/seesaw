@@ -1,0 +1,83 @@
+== pde/open/java40, cache-misses:u: 19761 of 25662 samples in the section
+-- inclusive, % of section
+ 99.99	suite::pde::World::run
+ 85.60	seesaw_tgg::engine::Engine::expand_at
+ 65.25	seesaw_tgg::engine::Engine::step_with_limit
+ 41.19	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+ 38.36	seesaw_tgg::engine::matcher::find_matches_planned
+ 38.27	_ZN10seesaw_tgg6engine7matcher9enumerate17ha8ade2d3e74e2391E
+ 37.43	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+ 36.05	seesaw_tgg::engine::anchor::AnchorIndex::walk
+ 29.12	seesaw_tgg::engine::anchor::AnchorIndex::enter
+ 18.08	seesaw_tgg::graph::Parts::of_type
+ 11.62	seesaw_tgg::graph::Graph::node_parts
+ 10.56	seesaw_tgg::graph::Graph::connection
+  7.00	seesaw_tgg::engine::matcher::node_ok
+  6.45	seesaw_tgg::plan::apply_creation_at
+  6.08	seesaw_tgg::graph::Graph::node
+  5.35	seesaw_tgg::values::numbered::see
+  5.30	seesaw_tgg::engine::Engine::record
+  5.28	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$
+  3.97	seesaw_tgg::graph::Graph::connect_reporting
+  2.32	_blake3_compress_in_place_sse41
+  2.17	blake3::Hasher::update
+  2.04	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_number
+  1.94	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closur
+  1.85	seesaw_tgg::engine::Ixs::push
+  1.51	seesaw_tgg::graph::ident::connection
+  1.49	hashbrown::rustc_entry::>::rustc_entry
+  1.45	_ZN10seesaw_tgg5graph5Store11insert_node17h67b5a8862e335809E
+  1.41	alloc::collections::binary_heap::BinaryHeap<T,A>::pop
+  1.13	seesaw_tgg::engine::anchor::AnchorIndex::pair::_$u7b$$u7b$closure$u7d$$u7d$
+  1.08	seesaw_tgg::graph::Store::insert_connection
+  1.03	<seesaw_tgg::engine::Candidate as core::cmp::PartialOrd>::partial_cmp
+  1.00	core::hash::Hash::hash_slice
+  0.98	_ZN10seesaw_tgg5graph5ident5konst17hb2ec979bbe3a03a6E
+  0.96	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  0.88	seesaw_tgg::graph::Graph::parts_by_other_type
+  0.69	seesaw_tgg::graph::preview_ghost_id
+  0.64	hashbrown::map::HashMap<K,V,S,A>::insert
+  0.63	[unknown]
+  0.55	seesaw_tgg::graph::Parts::insert
+  0.54	seesaw_tgg::engine::Engine::expand_at::_$u7b$$u7b$closure$u7d$$u7d$
+-- self, % of section
+ 17.65	seesaw_tgg::graph::Parts::of_type
+ 11.62	seesaw_tgg::graph::Graph::node_parts
+ 11.20	seesaw_tgg::engine::anchor::AnchorIndex::walk
+ 10.56	seesaw_tgg::graph::Graph::connection
+  6.08	seesaw_tgg::graph::Graph::node
+  4.84	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  3.34	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$
+  2.35	_ZN10seesaw_tgg6engine7matcher9enumerate17ha8ade2d3e74e2391E
+  2.32	_blake3_compress_in_place_sse41
+  2.10	seesaw_tgg::engine::Engine::record
+  2.04	<seesaw_tgg::graph::ValueStore as seesaw_tgg::graph::ValueResolver>::baseline_number
+  2.04	seesaw_tgg::values::numbered::see
+  1.91	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$::_$u7b$$u7b$closur
+  1.84	seesaw_tgg::engine::Ixs::push
+  1.83	seesaw_tgg::engine::matcher::node_ok
+  1.82	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  1.22	_ZN10seesaw_tgg5graph5Store11insert_node17h67b5a8862e335809E
+  1.18	seesaw_tgg::engine::Engine::step_with_limit
+  1.03	<seesaw_tgg::engine::Candidate as core::cmp::PartialOrd>::partial_cmp
+  1.00	core::hash::Hash::hash_slice
+  0.96	seesaw_tgg::graph::Store::insert_connection
+  0.87	seesaw_tgg::graph::Graph::parts_by_other_type
+  0.78	seesaw_tgg::engine::anchor::AnchorIndex::enter
+  0.74	seesaw_tgg::graph::Graph::connect_reporting
+  0.66	seesaw_tgg::engine::anchor::AnchorIndex::pair::_$u7b$$u7b$closure$u7d$$u7d$
+  0.63	[unknown]
+  0.56	hashbrown::map::HashMap<K,V,S,A>::insert
+  0.54	seesaw_tgg::engine::Engine::expand_at::_$u7b$$u7b$closure$u7d$$u7d$
+  0.52	__memmove_avx_unaligned_erms
+  0.46	alloc::collections::binary_heap::BinaryHeap<T,A>::pop
+  0.42	seesaw_tgg::graph::Parts::insert
+  0.40	seesaw_tgg::engine::Engine::expand_at
+  0.36	__memmove_avx_unaligned
+  0.36	seesaw_tgg::plan::apply_creation_at
+  0.31	blake3::ChunkState::update
+  0.29	alloc::collections::btree::search::>::find_lower_bound_index
+  0.29	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  0.27	hashbrown::rustc_entry::>::rustc_entry
+  0.26	alloc::collections::binary_heap::BinaryHeap<T,A>::push
+  0.24	blake3::Hasher::update

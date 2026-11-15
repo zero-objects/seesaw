@@ -1,0 +1,52 @@
+== langpack/delta-delete/k700/n20000/d2000, instructions:u: 265 of 2956 samples in the section
+-- inclusive, % of section
+ 84.91	seesaw_tgg::engine::Engine::element_deleted
+ 84.91	seesaw_tgg::engine::Engine::retract_wave
+ 81.89	seesaw_tgg::engine::Engine::drain_retraction
+ 38.11	seesaw_tgg::engine::Engine::retract_match
+ 14.34	seesaw_tgg::engine::Engine::filed_under
+ 12.45	seesaw_tgg::engine::Engine::consolidate
+ 10.94	hashbrown::map::HashMap<K,V,S,A>::insert
+ 10.94	seesaw_tgg::graph::Graph::retract_node
+  7.92	seesaw_tgg::graph::Graph::retract_connection
+  5.28	seesaw_tgg::graph::Graph::settle_connection
+  4.53	core::hash::Hash::hash_slice
+  4.53	hashbrown::raw::RawTable<T,A>::remove_entry
+  4.53	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  3.02	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  2.64	_ZN102_$LT$core..iter..adapters..map..Map$LT$I$C$F$GT$$u20$as$u20$core..iter..traits..iterator..Iter
+  1.89	__memmove_avx_unaligned
+  1.89	__memmove_avx_unaligned_erms
+  1.89	seesaw_tgg::graph::Graph::settle_node
+  1.13	seesaw_tgg::graph::Graph::node
+  0.75	alloc::sync::Arc<T,A>::drop_slow
+  0.75	seesaw_tgg::engine::Engine::element_removed
+  0.38	[unknown]
+  0.38	_RNvCsfLfy6EI15iL_7___rustc11___rdl_alloc
+  0.38	cfree@GLIBC_2.2.5
+  0.38	seesaw_tgg::graph::Graph::connection
+-- self, % of section
+ 15.09	seesaw_tgg::engine::Engine::drain_retraction
+ 13.96	seesaw_tgg::engine::Engine::filed_under
+ 11.70	seesaw_tgg::engine::Engine::retract_match
+ 10.94	seesaw_tgg::graph::Graph::retract_node
+  7.92	seesaw_tgg::graph::Graph::retract_connection
+  6.42	hashbrown::map::HashMap<K,V,S,A>::insert
+  5.28	seesaw_tgg::graph::Graph::settle_connection
+  4.53	core::hash::Hash::hash_slice
+  4.53	hashbrown::raw::RawTable<T,A>::remove_entry
+  4.15	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  2.64	_ZN102_$LT$core..iter..adapters..map..Map$LT$I$C$F$GT$$u20$as$u20$core..iter..traits..iterator..Iter
+  1.89	__memmove_avx_unaligned
+  1.89	__memmove_avx_unaligned_erms
+  1.89	seesaw_tgg::graph::Graph::settle_node
+  1.51	seesaw_tgg::engine::Engine::consolidate
+  1.13	seesaw_tgg::graph::Graph::node
+  1.13	suite::measure::section
+  0.75	alloc::sync::Arc<T,A>::drop_slow
+  0.75	seesaw_tgg::engine::Engine::element_removed
+  0.38	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  0.38	[unknown]
+  0.38	_RNvCsfLfy6EI15iL_7___rustc11___rdl_alloc
+  0.38	cfree@GLIBC_2.2.5
+  0.38	seesaw_tgg::graph::Graph::connection

@@ -1,0 +1,93 @@
+== f2p/add/f20000, instructions:u: 2875 of 8371 samples in the section
+-- inclusive, % of section
+ 75.37	seesaw_tgg::engine::Engine::step_with_limit
+ 37.29	seesaw_tgg::engine::Engine::expand_at
+ 34.23	seesaw_tgg::plan::apply_creation_at
+ 20.14	seesaw_tgg::graph::Graph::connect_reporting
+ 17.32	seesaw_tgg::engine::Engine::record
+ 10.43	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  7.72	seesaw_tgg::engine::matcher::find_matches_planned
+  7.48	_ZN10seesaw_tgg6engine7matcher9enumerate17h30ae88185ca9ead5E
+  7.44	seesaw_tgg::graph::Store::insert_connection
+  7.10	_blake3_compress_in_place_sse41
+  5.74	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h2d94be73a58931c5E
+  5.50	seesaw_tgg::graph::Parts::of_type
+  5.46	blake3::Hasher::update
+  5.11	[unknown]
+  4.83	<core::iter::adapters::map::Map<I,F> as core::iter::traits::iterator::Iterator>::try_fold
+  4.63	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  4.42	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  4.35	<core::ops::try_trait::Wrapped<T,A,F> as core::ops::function::FnMut<(A,)>>::call_mut
+  3.65	alloc::collections::btree::map::BTreeMap<K,V,A>::insert
+  3.03	_ZN10seesaw_tgg5graph5Store11insert_node17hbb537ac24fd7642eE
+  2.92	__memmove_avx_unaligned_erms
+  2.92	core::ops::function::impls:: for &mut F>::call_mut
+  2.54	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$
+  2.50	seesaw_tgg::engine::Engine::expand_at::_$u7b$$u7b$closure$u7d$$u7d$
+  1.95	seesaw_tgg::graph::TypeTable::intern
+  1.91	alloc::collections::btree::map::entry::OccupiedEntry<K,V,A>::remove_kv
+  1.91	hashbrown::rustc_entry::>::rustc_entry
+  1.88	alloc::collections::btree::remove::,alloc::collections::btree::node::marker::KV>>::remove_kv_trackin
+  1.63	hashbrown::map::HashMap<K,V,S,A>::insert
+  1.50	alloc::collections::btree::remove::,alloc::collections::btree::node::marker::KV>>::remove_leaf_kv
+  1.43	hashbrown::map::HashMap<K,V,S,A>::contains_key
+  1.36	seesaw_tgg::rules::transform::ChainTable::intern
+  1.04	__memmove_avx_unaligned
+  1.01	alloc::collections::btree::map::entry::VacantEntry<K,V,A>::insert_entry
+  1.01	seesaw_tgg::rules::transform::Chain::normalized
+  0.97	seesaw_tgg::graph::Parts::insert
+  0.90	blake3::Hasher::finalize
+  0.73	_ZN10seesaw_tgg5graph5ident7derived17hefc52e49aaf3ebe1E
+  0.73	seesaw_tgg::graph::TypeTable::lookup
+  0.66	__memcmp_avx2_movbe
+  0.63	blake3::ChunkState::update
+  0.52	blake3::Hasher::new
+  0.49	blake3::Hasher::final_output
+  0.38	seesaw_tgg::graph::Graph::connection_id_typed
+  0.28	alloc::collections::btree::node::BalancingContext<K,V>::bulk_steal_right
+-- self, % of section
+ 13.91	seesaw_tgg::engine::Engine::step_with_limit
+  9.98	seesaw_tgg::engine::Engine::record
+  7.10	_blake3_compress_in_place_sse41
+  5.50	seesaw_tgg::graph::Parts::of_type
+  5.36	seesaw_tgg::graph::Store::insert_connection
+  5.11	[unknown]
+  5.11	seesaw_tgg::plan::apply_creation_at
+  4.35	<core::ops::try_trait::Wrapped<T,A,F> as core::ops::function::FnMut<(A,)>>::call_mut
+  4.14	seesaw_tgg::engine::anchor::AnchorIndex::candidates
+  2.92	core::ops::function::impls:: for &mut F>::call_mut
+  2.75	_ZN10seesaw_tgg5graph5Store11insert_node17hbb537ac24fd7642eE
+  2.64	alloc::collections::btree::map::BTreeMap<K,V,A>::insert
+  2.54	seesaw_tgg::engine::anchor::AnchorIndex::candidates::_$u7b$$u7b$closure$u7d$$u7d$
+  2.50	seesaw_tgg::engine::Engine::expand_at::_$u7b$$u7b$closure$u7d$$u7d$
+  1.95	seesaw_tgg::graph::TypeTable::intern
+  1.91	_ZN10seesaw_tgg6engine7matcher9enumerate17h30ae88185ca9ead5E
+  1.91	hashbrown::raw::RawTable<T,A>::reserve_rehash
+  1.43	_ZN10seesaw_tgg6engine6anchor11AnchorIndex4walk17h2d94be73a58931c5E
+  1.43	hashbrown::map::HashMap<K,V,S,A>::contains_key
+  1.22	alloc::collections::btree::remove::,alloc::collections::btree::node::marker::KV>>::remove_leaf_kv
+  1.15	seesaw_tgg::engine::matcher::enumerate::_$u7b$$u7b$closure$u7d$$u7d$
+  1.11	seesaw_tgg::graph::Graph::connect_reporting
+  1.04	__memmove_avx_unaligned
+  1.04	seesaw_tgg::engine::Engine::expand_at
+  1.01	seesaw_tgg::rules::transform::Chain::normalized
+  0.90	__memmove_avx_unaligned_erms
+  0.90	hashbrown::rustc_entry::>::rustc_entry
+  0.73	seesaw_tgg::graph::Parts::insert
+  0.73	seesaw_tgg::graph::TypeTable::lookup
+  0.66	__memcmp_avx2_movbe
+  0.63	blake3::ChunkState::update
+  0.63	hashbrown::map::HashMap<K,V,S,A>::insert
+  0.59	blake3::Hasher::update
+  0.52	blake3::Hasher::new
+  0.49	blake3::Hasher::final_output
+  0.42	alloc::collections::btree::map::entry::VacantEntry<K,V,A>::insert_entry
+  0.42	blake3::Hasher::finalize
+  0.38	seesaw_tgg::graph::Graph::connection_id_typed
+  0.38	seesaw_tgg::rules::transform::ChainTable::intern
+  0.28	alloc::collections::btree::node::BalancingContext<K,V>::bulk_steal_right
+  0.28	alloc::collections::btree::node::Handle<alloc::collections::btree::node::NodeRef<alloc::collections:
+  0.24	seesaw_tgg::engine::anchor::AnchorIndex::in_order
+  0.24	seesaw_tgg::engine::matcher::find_matches_planned
+  0.21	<alloc::vec::Vec<T> as alloc::vec::spec_from_iter_nested::SpecFromIterNested<T,I>>::from_iter
+  0.21	<core::iter::adapters::map::Map<I,F> as core::iter::traits::iterator::Iterator>::try_fold
