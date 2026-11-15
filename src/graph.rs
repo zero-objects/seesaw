@@ -260,8 +260,8 @@ impl Slot {
 }
 
 /// The participation list of one participant: a set, in the order of
-/// [`Participation`]. A sorted vector while it is short, a B-tree from
-/// [`PARTS_TREE_AT`] entries on. Most nodes have a handful of
+/// [`Participation`]. A sorted vector while it is short, a B-tree once
+/// it holds more than [`PARTS_TREE_AT`] entries. Most nodes have a handful of
 /// participations, for which a B-tree leaf (room for eleven entries of
 /// 72 bytes) was the largest part of the node's memory; a few hubs have
 /// many, for which inserting into a vector would move too much.
@@ -271,7 +271,8 @@ enum Parts {
     Tree(BTreeSet<Participation>),
 }
 
-/// From this many entries on a participation list is a B-tree.
+/// A participation list with more entries than this is a B-tree (the
+/// vector holds up to this many).
 const PARTS_TREE_AT: usize = 48;
 
 impl Default for Parts {

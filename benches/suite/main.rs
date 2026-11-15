@@ -10,7 +10,8 @@
 //! ```
 //!
 //! Columns: label, cell, samples, user CPU (minimum and median, ms),
-//! wall time (minimum, ms), peak memory (MB), steps, applied steps,
+//! wall time (minimum, ms), peak memory at the end of the measured
+//! section of the first sample (MiB), steps, applied steps,
 //! nodes, fingerprint, instructions retired in user mode (minimum;
 //! Linux, 0 elsewhere), the hardware events of `measure::HARDWARE`
 //! (minimum each), then the structural counters (with `perf_trace`). Time is user CPU of the measured section only, model
@@ -174,6 +175,9 @@ fn run(cell: &Cell, samples: usize, label: &str) -> String {
         assert_eq!(o.usage.counters, first.usage.counters);
     }
     let (steps, applied, nodes) = (first.steps, first.applied, first.nodes);
+    // The peak of the first sample: later ones include the fingerprint
+    // of the samples before them.
+    let peak_rss = first.usage.peak_rss;
     let fingerprint = first.fingerprint.clone();
     let counters = first.usage.counters.clone();
     let wall_min = outcomes.iter().map(|o| o.usage.wall_ns).min().unwrap_or(0);
@@ -202,10 +206,7 @@ fn run(cell: &Cell, samples: usize, label: &str) -> String {
         ms(user_min),
         ms(user_med),
         ms(wall_min),
-        format!(
-            "{:.0}",
-            measure::peak_rss_bytes() as f64 / (1024.0 * 1024.0)
-        ),
+        format!("{:.0}", peak_rss as f64 / (1024.0 * 1024.0)),
         steps.to_string(),
         applied.to_string(),
         nodes.to_string(),

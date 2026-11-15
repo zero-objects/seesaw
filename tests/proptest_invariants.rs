@@ -767,12 +767,15 @@ proptest! {
         let vorher = korrespondenzen(&g);
 
         // Change: einen Blattwert umschreiben.
-        let blaetter: Vec<GhostId> = g
+        // `Graph::nodes` hat keine festgelegte Reihenfolge. Sortiert
+        // waehlt derselbe Index auf jedem Stand dasselbe Blatt.
+        let mut blaetter: Vec<GhostId> = g
             .nodes()
             .filter(|n| n.status.is_matchable()
                 && g.types.name(n.typ) == "firstName")
             .map(|n| n.id)
             .collect();
+        blaetter.sort();
         if blaetter.is_empty() {
             return Ok(());
         }

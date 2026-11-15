@@ -41,6 +41,40 @@ use crate::rules::predicate::Predicate;
 /// cut path is still a necessary condition.
 const MAX_DEPTH: usize = 6;
 
+/// Capacity up to which the set of visited pairs is kept from one walk
+/// to the next.
+const VISITED_KEEP: usize = 1024;
+
+/// Digest of what the index reads from a rule set: per rule the pattern
+/// nodes (type, value predicate) and the links.
+fn shape(rules: &[DirectedRule]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = crate::hash::FxHasher::default();
+    rules.len().hash(&mut h);
+    for rule in rules {
+        let pattern = &rule.pattern;
+        pattern.nodes.len().hash(&mut h);
+        for n in &pattern.nodes {
+            n.typ.hash(&mut h);
+            match &n.value {
+                None => 0u8.hash(&mut h),
+                Some(Predicate::Exists) => 1u8.hash(&mut h),
+                Some(Predicate::Equals(v)) => (2u8, v).hash(&mut h),
+                Some(Predicate::Prefix(p)) => (3u8, p).hash(&mut h),
+                Some(Predicate::Regex(r)) => (4u8, r.as_str()).hash(&mut h),
+                Some(Predicate::NumericRange { min, max }) => {
+                    (5u8, min.to_bits(), max.to_bits()).hash(&mut h);
+                }
+            }
+        }
+        pattern.links.len().hash(&mut h);
+        for l in &pattern.links {
+            (l.from, l.to, l.kind as u8).hash(&mut h);
+        }
+    }
+    h.finish()
+}
+
 /// Children of a prefix-tree node that share direction and type: one
 /// participation range of the graph serves all of them.
 #[derive(Debug)]
@@ -151,6 +185,8 @@ pub(crate) struct Walk {
 /// A host that runs several engines over the same rules builds it once
 /// with [`AnchorIndex::build`] and hands it to
 /// [`Engine::with_anchor_index`](crate::engine::Engine::with_anchor_index).
+/// The index is `Send` and `Sync`: engines on several threads can read
+/// one index.
 #[derive(Debug, Default)]
 pub struct AnchorIndex {
     nodes: Vec<PathNode>,
@@ -171,6 +207,8 @@ pub struct AnchorIndex {
     by_type: FxHashMap<TypeId, TypeIndex>,
     /// The rule slice the index was built for (address, length).
     built_for: (usize, usize),
+    /// Digest of what the index read from the rules ([`shape`]).
+    shape: u64,
 }
 
 /// Working memory of [`AnchorIndex::build`]: the breadth-first spanning
@@ -255,6 +293,7 @@ impl AnchorIndex {
             plan_at,
             by_type: FxHashMap::default(),
             built_for: (rules.as_ptr() as usize, rules.len()),
+            shape: shape(rules),
         };
         let mut tree = Tree::default();
         for (ri, rule) in rules.iter().enumerate() {
@@ -394,10 +433,22 @@ impl AnchorIndex {
         self.plans[self.plan_at[rule] + pos].get_or_init(|| plan_anchored(pattern, pos))
     }
 
-    /// Was the index built for this rule slice?
+    /// Was the index built from this very rule slice (same address and
+    /// length)? A cheap check; it does not see a slice that was changed
+    /// in place or freed and allocated again. [`AnchorIndex::fits`]
+    /// compares the content.
     #[must_use]
     pub fn built_for(&self, rules: &[DirectedRule]) -> bool {
         self.built_for == (rules.as_ptr() as usize, rules.len())
+    }
+
+    /// Do the patterns of `rules` equal the ones the index was built
+    /// from? Compares a digest of the pattern nodes (type, value
+    /// predicate) and links of all rules, which is everything the index
+    /// reads; one pass over the rules.
+    #[must_use]
+    pub fn fits(&self, rules: &[DirectedRule]) -> bool {
+        self.shape == shape(rules)
     }
 
     /// Marks every prefix-tree node below `at` that a walk from the
@@ -411,9 +462,6 @@ impl AnchorIndex {
         st: &mut Walk,
         skip: &dyn Fn(&GhostId) -> bool,
     ) {
-        if !st.visited.insert((x, at)) {
-            return;
-        }
         trace!(anchor_walk_visits);
         for group in &self.nodes[at as usize].groups {
             let valued = !group.equals.is_empty() || !group.other.is_empty();
@@ -469,6 +517,12 @@ impl AnchorIndex {
         if self.nodes[id as usize].groups.is_empty() {
             return;
         }
+        // The same node on the same path again (two ways to it): its
+        // walk has run. The walk from the root is not noted, it runs
+        // once per node and no path leads back to the root.
+        if !st.visited.insert((x, id)) {
+            return;
+        }
         self.walk(g, v, x, id, st, skip);
     }
 
@@ -513,7 +567,13 @@ impl AnchorIndex {
             if !node.status.is_matchable() {
                 continue;
             }
-            st.visited.clear();
+            // Clearing costs the capacity, not the entries: after one
+            // large walk (a hub) the set is given back instead.
+            if st.visited.capacity() > VISITED_KEEP {
+                st.visited = std::collections::HashSet::default();
+            } else {
+                st.visited.clear();
+            }
             self.walk(g, v, *x, ti.root, st, &|id| skip(ni, id));
             // The places filed under a marked node, and the places
             // without a path. Each place is filed once, so none comes
@@ -781,6 +841,18 @@ mod tests {
         }
         assert_ne!(e.verdict(), Termination::Contradiction);
         e.cascade.len()
+    }
+
+    /// A hub: the walk from the root enters every child, more pairs
+    /// than the set of visited pairs keeps between walks.
+    #[test]
+    fn the_index_keeps_the_matches_below_a_hub() {
+        let children = super::VISITED_KEEP + 200;
+        let t = Tree {
+            nodes: (0..children).map(|_| ("cls".into(), 0, None)).collect(),
+        };
+        // Root and one class per child.
+        assert_eq!(cascade(&t, true), children + 1);
     }
 
     #[test]

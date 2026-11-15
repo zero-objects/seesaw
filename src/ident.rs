@@ -59,9 +59,19 @@ pub struct GhostId([u8; 32]);
 // An identity is the output of a cryptographic hash, so any eight of
 // its bytes are as good a hash of it as all 32. Feeding the maps one
 // word instead of the array (length and four words through an
-// un-inlined call) takes that cost out of every lookup. The first and
-// the last word are combined so that an identity a host built by hand
-// (`from_raw`) with a constant head still spreads.
+// un-inlined call) takes that cost out of every lookup.
+//
+// The word is the first eight bytes combined with the last eight. That
+// is enough for hash output. It is not a good hash of identities built
+// by hand (`from_raw`): with the engine's hasher (`crate::hash`) the
+// bucket depends on the low half of the word, so identities that differ
+// only in bytes 0 to 3 or 24 to 27 share few buckets (measured on a
+// model of the two formulas: 100 000 counters in bytes 0 to 3 start at
+// 32 of 2^18 buckets), and identities whose first and last eight bytes
+// are equal all hash alike. Folding the word would spread them and
+// costs two instructions on every lookup (measured: +1.4 % instructions
+// in `langpack/add` and `f2p/add`, +3 % in `langpack/delta-delete`), so
+// it is left out; see `from_raw`.
 impl std::hash::Hash for GhostId {
     #[inline]
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
@@ -136,6 +146,12 @@ impl GhostId {
 
     /// Constructs from raw bytes (identity derivation; domain
     /// separation is the caller's responsibility).
+    ///
+    /// The bytes are expected to be hash output. As keys of the maps of
+    /// [`crate::hash`], identities that are not (a counter in a few
+    /// bytes, the rest constant) can fall into few buckets: the hash of
+    /// a `GhostId` is its first eight bytes combined with its last
+    /// eight.
     pub fn from_raw(bytes: [u8; 32]) -> Self {
         Self(bytes)
     }

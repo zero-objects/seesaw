@@ -8,6 +8,10 @@
 //!
 //! The counters are per thread. [`reset`] before a run, [`snapshot`]
 //! after it.
+//!
+//! A diagnostic of the implementation, not a stable interface: the
+//! counters follow the engine's internals and change with them, also
+//! in a minor release.
 
 use std::cell::RefCell;
 

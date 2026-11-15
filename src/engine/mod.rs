@@ -34,17 +34,36 @@ fn self_node_tt(g: &Graph, id: &GhostId) -> bool {
 
 /// Match record (spec §1): a record living in the same world as nodes
 /// and connections — participants via `Engine::by_element`.
+///
+/// The engine keeps its matches in a record of its own (the ref
+/// sequence shared with its indexes) and hands none out; this type is
+/// what 2.0.2 published and stays for source compatibility.
+#[deprecated(note = "no API hands out or takes a `MatchRec`; the engine's \
+                     match store is private")]
 #[derive(Debug, Clone)]
 pub struct MatchRec {
     pub rule_ix: usize,
-    /// The ref sequence, shared with the engine's indexes.
-    pub refs: std::sync::Arc<[GhostId]>,
+    pub refs: Bindings,
     pub dead: bool,
     /// Provenance edge match → cascade entry: `Some(cascade-ix)` if
     /// this match WAS APPLIED (for 1:1, the `applied` guard prevents a
     /// double application), otherwise `None`. Materializes the edge so
     /// `retract_for` can follow provenance without a cascade scan.
     pub entry: Option<u32>,
+}
+
+/// A match in the engine's store.
+#[derive(Debug, Clone)]
+struct Stored {
+    rule_ix: usize,
+    /// The ref sequence, shared with the engine's indexes.
+    refs: Refs,
+    dead: bool,
+    /// Provenance edge match → cascade entry: `Some(cascade-ix)` if
+    /// this match WAS APPLIED (for 1:1, the `applied` guard prevents a
+    /// double application), otherwise `None`. Materializes the edge so
+    /// `retract_for` can follow provenance without a cascade scan.
+    entry: Option<u32>,
 }
 
 /// Cascade entry: what was applied (ref sequence = μ = identity).
@@ -204,7 +223,7 @@ pub struct Engine<'r> {
     /// Match store (records logically live in the map; physically
     /// here, referenced from `by_element` — realization of the spec
     /// map).
-    matches: Vec<MatchRec>,
+    matches: Vec<Stored>,
     /// adj[k] → match refs (spec §1.6: "which matches contain k?").
     by_element: crate::hash::FxHashMap<GhostId, Ixs>,
     /// Duplicate memory: ref sequences already applied per rule.
@@ -275,8 +294,14 @@ enum AnchorSlot<'r> {
     Unbuilt,
     /// Built by the engine itself.
     Owned(Box<AnchorIndex>),
-    /// Handed in by the host ([`Engine::with_anchor_index`]).
-    Shared(&'r AnchorIndex),
+    /// Handed in by the host ([`Engine::with_anchor_index`]), with the
+    /// rule slice (address, length) it was accepted for.
+    Shared(&'r AnchorIndex, (usize, usize)),
+}
+
+/// Address and length of a rule slice.
+fn slice_of(rules: &[DirectedRule]) -> (usize, usize) {
+    (rules.as_ptr() as usize, rules.len())
 }
 
 impl AnchorSlot<'_> {
@@ -284,7 +309,7 @@ impl AnchorSlot<'_> {
     fn index(&self) -> &AnchorIndex {
         match self {
             AnchorSlot::Owned(a) => a,
-            AnchorSlot::Shared(a) => a,
+            AnchorSlot::Shared(a, _) => a,
             AnchorSlot::Unbuilt => unreachable!("taken from `take_index`"),
         }
     }
@@ -453,10 +478,15 @@ impl<'r> Engine<'r> {
     /// Like [`Engine::new`], with an [`AnchorIndex`] the host built once
     /// for `rules` (several engines over the same rules share it). An
     /// index built for other rules is not used; the engine then builds
-    /// its own.
+    /// its own. Whether the index belongs to `rules` is decided here by
+    /// the patterns ([`AnchorIndex::fits`]), so an index built from an
+    /// equal copy of the rules is taken, and one built from other rules
+    /// at the same address is not.
     pub fn with_anchor_index(rules: &'r [DirectedRule], index: &'r AnchorIndex) -> Self {
         let mut e = Self::new(rules);
-        e.anchor = AnchorSlot::Shared(index);
+        if index.fits(rules) {
+            e.anchor = AnchorSlot::Shared(index, slice_of(rules));
+        }
         e
     }
 
@@ -556,7 +586,7 @@ impl<'r> Engine<'r> {
         self.todo
             .insert(todo_key(self.rules[rule_ix].rank, &refs, rule_ix));
         self.by_key.insert(key, ix);
-        self.matches.push(MatchRec {
+        self.matches.push(Stored {
             rule_ix,
             refs,
             dead: false,
@@ -694,7 +724,9 @@ impl<'r> Engine<'r> {
         let usable = match &self.anchor {
             AnchorSlot::Unbuilt => false,
             AnchorSlot::Owned(a) => a.built_for(rules),
-            AnchorSlot::Shared(a) => a.built_for(rules),
+            // Accepted for the slice the engine was created with; the
+            // field `rules` is public and may have been set since.
+            AnchorSlot::Shared(_, accepted) => *accepted == slice_of(rules),
         };
         if !usable {
             self.anchor = AnchorSlot::Owned(Box::new(AnchorIndex::build(rules)));
@@ -2260,6 +2292,105 @@ mod tests {
         let mut e = Engine::new(&rules);
         let _ = e.run(&mut g, &vs, 100);
         assert_eq!(e.cascade[0].rank, 900, "the highest rank first");
+    }
+}
+
+#[cfg(test)]
+mod contract_tests {
+    use super::*;
+
+    /// Hosts keep rules and index in statics and run engines on several
+    /// threads. Losing `Send` or `Sync` (a `Cell` in the index, say) is
+    /// to fail here and not in the host's build.
+    #[test]
+    fn engine_types_are_send_and_sync() {
+        fn ok<T: Send + Sync>() {}
+        ok::<AnchorIndex>();
+        ok::<Engine<'static>>();
+        ok::<crate::graph::Graph>();
+        ok::<crate::graph::ValueStore>();
+        ok::<DirectedRule>();
+    }
+
+    /// Sizes of the records the engine keeps per element and per match
+    /// (64-bit targets). A change here is a change of the engine's
+    /// memory per node and of what a growing map moves.
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn sizes_of_the_hot_records() {
+        use std::mem::size_of;
+        let sizes = [
+            ("Ixs", size_of::<Ixs>()),
+            ("(GhostId, Ixs)", size_of::<(GhostId, Ixs)>()),
+            ("TodoKey", size_of::<TodoKey>()),
+            ("Stored", size_of::<Stored>()),
+            ("Entry", size_of::<Entry>()),
+        ];
+        assert_eq!(
+            sizes,
+            [
+                ("Ixs", 32),
+                ("(GhostId, Ixs)", 64),
+                ("TodoKey", 48),
+                ("Stored", 40),
+                ("Entry", 88),
+            ]
+        );
+    }
+
+    fn rules_of(kind: &str, g: &mut Graph) -> Vec<DirectedRule> {
+        let file = serde_json::json!({
+            "format": 3, "name": "contract",
+            "rules": [{
+                "name": "R", "rank": 1,
+                "left": {"anchor": "a", "nodes": [
+                    {"name": "a", "type": "A"},
+                    {"name": "k", "type": "kind", "context": true,
+                     "predicate": {"kind": "equals", "value": kind}}
+                ], "links": [["a", "k"]]},
+                "right": {"anchor": "b", "nodes": [{"name": "b", "type": "B"}]},
+                "corrs": [{"type": "AB", "left": "a", "right": "b", "role": "establishes"}]
+            }]
+        });
+        crate::rules::load(&file.to_string(), g).expect("rules load")
+    }
+
+    /// An index is taken for the rules whose patterns it was built
+    /// from, wherever they stand, and not for other rules that stand
+    /// where its rules stood.
+    #[test]
+    fn a_shared_index_is_matched_to_the_rules_by_their_patterns() {
+        let mut g = Graph::new();
+        let a = g.add_baseline("a", "A");
+        let k = g.add_baseline("k", "kind");
+        g.connect(a, k, Status::Solid);
+        let mut vs = crate::graph::ValueStore::default();
+        vs.insert(k, "two");
+
+        let mut rules = rules_of("one", &mut g);
+        let index_one = AnchorIndex::build(&rules);
+        assert!(index_one.built_for(&rules) && index_one.fits(&rules));
+        // An equal copy at another address.
+        let copy = rules.clone();
+        assert!(!index_one.built_for(&copy) && index_one.fits(&copy));
+        assert!(!AnchorIndex::default().fits(&rules));
+
+        // Other rules in the same buffer: same address, same length.
+        let other = rules_of("two", &mut g);
+        rules.clear();
+        rules.extend(other);
+        assert!(
+            index_one.built_for(&rules),
+            "the address alone does not tell them apart"
+        );
+        assert!(!index_one.fits(&rules));
+
+        // The engine does not use the index of the other rules: the
+        // rule for "two" applies.
+        let mut e = Engine::with_anchor_index(&rules, &index_one);
+        e.elements_added(&g, &vs, &[a, k]);
+        while e.step(&mut g, &vs).is_some() {}
+        assert_eq!(e.cascade.len(), 1);
     }
 }
 

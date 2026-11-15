@@ -12,7 +12,7 @@
 
 use crate::ident::{GhostId, Status};
 
-use crate::engine::matcher::Pattern;
+use crate::engine::matcher::{Bindings, Pattern};
 use crate::graph::{Graph, PlanTransform};
 
 // ── Spec (JSON) ────────────────────────────────────────────────────────────
@@ -124,10 +124,12 @@ pub struct DirectedRule {
 /// (created nodes, created edges) — kept separate because retraction
 /// treats them differently (nodes have provenance children, edges
 /// don't; different status setters).
+// `&Bindings` is the signature 2.0.2 published.
+#[allow(clippy::ptr_arg)]
 pub fn apply_creation(
     g: &mut Graph,
     rule: &DirectedRule,
-    bindings: &[GhostId],
+    bindings: &Bindings,
 ) -> (Vec<GhostId>, Vec<GhostId>) {
     apply_creation_at(g, rule, bindings, None)
 }

@@ -21,6 +21,10 @@ pub struct Usage {
     /// section. They depend on the machine and, less than time, on what
     /// else runs on it.
     pub hardware: [u64; HARDWARE.len()],
+    /// Peak resident set size of the process at the end of the section
+    /// (bytes): model, rules and engine, without what the fingerprint
+    /// allocates afterwards.
+    pub peak_rss: u64,
     /// Structural counters (name, value); empty without `perf_trace`.
     pub counters: Vec<(&'static str, u64)>,
 }
@@ -41,7 +45,7 @@ fn user_ns() -> u64 {
 }
 
 /// Peak resident set size of the process so far, in bytes.
-pub fn peak_rss_bytes() -> u64 {
+fn peak_rss_bytes() -> u64 {
     let raw = rusage().ru_maxrss as u64;
     // macOS reports bytes, Linux kilobytes.
     if cfg!(target_os = "macos") {
@@ -206,6 +210,7 @@ pub fn section<T>(f: impl FnOnce() -> T) -> (T, Usage) {
     let (instructions, hardware) = (0, [0; HARDWARE.len()]);
     let user_ns = user_ns() - user;
     let wall_ns = wall.elapsed().as_nanos() as u64;
+    let peak_rss = peak_rss_bytes();
     #[cfg(feature = "perf_trace")]
     let counters = seesaw_tgg::perf_trace::snapshot().fields().to_vec();
     #[cfg(not(feature = "perf_trace"))]
@@ -217,6 +222,7 @@ pub fn section<T>(f: impl FnOnce() -> T) -> (T, Usage) {
             wall_ns,
             instructions,
             hardware,
+            peak_rss,
             counters,
         },
     )
