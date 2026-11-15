@@ -206,6 +206,19 @@ public final class Graph {
         return out;
     }
 
+    /** Zahl der Knoten eines Typs, gleich welchen Status. */
+    public int typeCount(int typ) {
+        ArrayList<Id> ids = byType.get(typ);
+        return ids == null ? 0 : ids.size();
+    }
+
+    /** Zahl aller Knoten, gleich welchen Status. */
+    public int nodeCount() {
+        int n = 0;
+        for (ArrayList<Id> ids : byType.values()) n += ids.size();
+        return n;
+    }
+
     public List<Id> nodesOfType(int typ) {
         ArrayList<Id> out = new ArrayList<>();
         for (Id id : byType.getOrDefault(typ, new ArrayList<>())) {
