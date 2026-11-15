@@ -24,13 +24,15 @@
 //!
 //! ## Features
 //!
-//! - `low_memory`: less memory for more time. The graph keeps nodes
+//! - `low_memory`: less memory for more work. The graph keeps nodes
 //!   and connections in dense vectors behind a map of numbers, the
 //!   engine its lists of indices per element in 16 bytes instead of
-//!   32. Measured on the performance suite: 20 to 26 % less peak
-//!   memory, about 2 % more instructions (6 to 7 % where a run
-//!   deletes), 6 to 9 % more time. Graph, cascade and verdicts are the
-//!   same with and without it.
+//!   32. Measured on the performance suite: 17 to 24 % less peak
+//!   memory in four of five large cells (1 % in the fifth), up to 4 %
+//!   more instructions (6 to 8 % where a run deletes). Time on a
+//!   machine under load: 7 to 9 % more on the two recorded host runs,
+//!   no difference beyond the noise on the generated workloads. Graph,
+//!   cascade and verdicts are the same with and without it.
 //! - `parallel_seed`: `Engine::seed_with_threads`, the searches of a
 //!   seed on several threads with the matches recorded in the order of
 //!   `Engine::seed`. Not on wasm32.

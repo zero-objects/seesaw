@@ -37,7 +37,7 @@ index built for other rules is ignored and the engine builds its own.
 Measured with the Java pack of zerodds-pde (1 395 rules, 2 790 directed)
 on 40 files of commonmark-java: cascade steps of the forward wave
 131.5 s → 3.9 s, of the backward wave 60.3 s → 2.7 s; identical graph
-and output. Rust only; the Java implementation is unchanged.
+and output. The Java implementation has the index as well (below).
 
 ### Further changes to expansion, seed, matcher and graph
 
@@ -197,6 +197,135 @@ on a big-endian target (s390x under qemu).
 (1 401 rules over one structural type per side), not the Java pack
 above. Raw data: `benches/suite/results/`.
 
+### Options measured in combination, and the ones taken
+
+Eleven further changes were each built behind a switch of its own and
+kept until all were there. Then every setting was measured: none, all,
+each alone, all but each one. The effect of an option alone and its
+effect among all others differ by at most three percentage points of
+instructions in every cell but one: filing under nodes only saves
+2.6 % alone and 11.2 % among the others in
+`langpack/engines/k700/n200/e34`. Taken into the engine:
+
+- A match is filed under its nodes only. 2.0.2 filed it also under the
+  connection of every link of its pattern; the matches that rest on a
+  removed connection are now found from the lists of its two ends. For
+  an id the graph does not know (a link the pattern reads against the
+  direction the graph holds, or a graph the host has replaced by a
+  materialized copy) the engine keeps an index of the links whose
+  connection the graph does not hold. It is built at the first such
+  question and costs nothing before.
+- `step` looks a pulled match up once. The candidate in the todo
+  carries the number of its match, "already applied" is a mark on that
+  number, and one access per anchor answers both "tentatively
+  retracted" and "already translated".
+- The type, constant and chain ids a rule's plan names are resolved in
+  the tables of a graph once and kept per rule.
+- An engine that was handed no anchor index takes the one of its rule
+  set from a store of the process (the last 32 rule sets, compared by
+  what an index reads from the rules). A host that makes one engine per
+  run builds the index once. `AnchorIndex::forget_shared()` empties the
+  store.
+- The walk over the anchor index passes once over the participation
+  list of a node where the prefix-tree node has four or more groups
+  and the list has at most eight entries per group, instead of asking
+  the list for one range per group. This is the shape of rule sets
+  with many node types.
+- Capacity hints: `Graph::reserve`, `Engine::reserve(Sizes)`,
+  `Engine::sizes()`, `Engine::reserve_for_recorded`. The engine
+  reserves nothing on its own.
+
+Two features, off by default:
+
+- `low_memory`: the graph keeps nodes and connections in dense vectors
+  behind a map of numbers, and the engine's lists of indices per
+  element take 16 bytes instead of 32. Less memory for more
+  instructions (numbers below).
+- `parallel_seed`: `Engine::seed_with_threads` runs the searches of a
+  seed on several threads and records the matches in the order of
+  `seed`. Not on wasm32. A second engine seeding a translated model of
+  126 359 nodes took 301 ms on one thread, 115 ms on four and 100 ms on
+  eight (wall time, minimum of three samples on a machine under
+  load); with 80 001 families 438, 262 and 252 ms. A first seed over a
+  model that is not translated finds little, its work is in the steps.
+
+Built, measured and not taken (they stay on the branch `perf/options`):
+
+- The todo as a binary heap. Between 2.2 % fewer and 1.9 % more
+  instructions; in `pde/open/open5`, where 9 197 of 1 347 266 steps
+  apply a rule, 5.1 % more alone and 8.2 % more among the others.
+- `Equals` predicates compared by numbers of values instead of text.
+  Among the others at most 1.5 % fewer instructions, 5 to 7 % more
+  peak memory in the three `pde` cells below 250 MB, and a new method
+  on `ValueResolver`.
+
+The rules of an engine are not to be exchanged while it holds matches:
+what a match rests on is read from the pattern of its rule, and its
+place in the todo from the rule's rank. `Engine::rules` says so.
+
+Instructions in millions, binaries built with one codegen unit (the
+table above was measured with sixteen; with a switch more or less the
+split of the crate into units moved, which changed cells by up to a
+few percent without a change to the code that runs). "before" is the
+state of the sections above:
+
+| cell | 2.0.2 | before | now | now, `low_memory` |
+|---|---|---|---|---|
+| `langpack/add/k700/n2000` | 158 773 | 178 | 155 | 159 |
+| `langpack/backward/k700/n2000` | 81 825 | 150 | 138 | 140 |
+| `langpack/seed/k700/n2000` | 108 919 | 181 | 158 | 161 |
+| `langpack/add/k700/n20000` | not run | 1 305 | 1 038 | 1 071 |
+| `langpack/delta-add/k700/n20000/d200` | not run | 23.5 | 11.4 | 11.6 |
+| `langpack/delta-change/k700/n20000/d200` | not run | 289 | 252 | 262 |
+| `langpack/delta-delete/k700/n20000/d200` | not run | 59.0 | 52.9 | 56.9 |
+| `f2p/batch/f20000` | 8 842 | 3 196 | 2 661 | 2 723 |
+| `f2p/add/f20000` | 14 512 | 3 544 | 3 009 | 3 081 |
+| `f2p/delta-add/f20000/d1000` | 594 | 199 | 189 | 191 |
+| `f2p/delta-delete/f20000/d1000` | 20.5 | 9.7 | 9.4 | 10.0 |
+| `pde/open/java40` | not run | 17 475 | 12 895 | 13 178 |
+| `pde/open/open5` | not run | 56 752 | 31 809 | 32 934 |
+| `langpack/engines/k700/n200/e34` | not run | 2 180 | 473 | 481 |
+
+Peak memory at the end of the measured section (MB, before → now →
+`low_memory`): `f2p/add/f20000` 744 → 636 → 484,
+`langpack/add/k700/n20000` 215 → 187 → 146, `pde/open/java40`
+1 048 → 998 → 832, `pde/open/open5` 2 171 → 1 919 → 1 895.
+
+User CPU, before → now, the two states measured in alternation on a
+machine under load (minimum of three runs of two samples each):
+`f2p/add/f20000` 1 089 → 998 ms, `f2p/batch/f20000` 1 033 → 765 ms,
+`langpack/add/k700/n20000` 330 → 258 ms, `pde/open/java40`
+5 168 → 4 401 ms, `pde/open/open5` 7 346 → 4 062 ms. The second sample
+of a run takes the anchor index from the store of the process.
+
+`low_memory` against the default, six runs in alternation:
+`pde/open/java40` 4 358 → 4 739 ms and `pde/open/open5`
+3 971 → 4 262 ms, more in every run (2.5 to 12.7 %). On
+`f2p/add/f20000`, `f2p/batch/f20000` and `langpack/add/k700/n20000`
+the difference changes its sign from run to run (−9 to +16 %), the
+minima lie within 5 % of each other.
+
+The `pde` cells replay recorded runs of zerodds-pde (below). `engines`
+runs 34 engines one after the other in one process, the rules loaded
+anew for each. Graph and cascade of every cell are the same in all
+states, the thirteen small cells and seven of these equal 2.0.2. The
+consumers were run against this state: the development copy with the
+dry-cleaner fixtures and the dry-cleaner crates pass with the test
+counts of 2.0.2, the forward runs of the 34 fixtures take 127 ms
+(2.0.2: 377 ms).
+
+### Java: anchor index
+
+The Java engine searches through the anchor index in the expansion and
+in the seed (`engine/AnchorIndex.java`). The way of 2.0.2 stays
+selectable: `new Engine(rules, false)` or `-Dseesaw.anchorIndex=false`;
+with `-Dseesaw.checks=true` both ways run and are compared. Java
+reproduces steps, applied steps, node count and fingerprint of the Rust
+cells of the language-pack workload at the sizes `k50/n2000`,
+`k700/n2000` and `k700/n20000`. `add k700/n2000`: 62 893 ms → 431 ms,
+30 769 505 searches → 9 905 (Java 21, one machine under load). Not
+ported: leaving the earlier nodes of a delta out of the search.
+
 ### Tests
 
 - `difftest/` is a package of its own, not published, that depends on
@@ -205,7 +334,10 @@ above. Raw data: `benches/suite/results/`.
   links, deleted products, seeds, `run` with a step budget, waves that
   stop before saturation) go through both; after every wave graph,
   cascade, the results of `step`, `saw_contradiction` and the verdicts
-  of `run` are compared. `cd difftest && cargo test --release`.
+  of `run` are compared. `cd difftest && cargo test --release`. The
+  driver gives graph and engine a capacity hint; the features
+  `low_memory` and `parallel_seed` are passed on, with the second the
+  driver seeds through `seed_with_threads`.
 - `--cfg seesaw_checks` compiles the engine's checks of the expansion
   and the seed against the unfiltered search into the library, so that
   the integration tests run under them
@@ -237,6 +369,24 @@ With `--features perf_trace` a cell also reports structural counters
 (searches, candidates, node checks, value resolutions, identity hashes
 and others). They do not depend on the machine.
 
+The workload `pde` replays a protocol of the calls a host made to
+graph, rule loader, anchor index and engines, and checks every call
+(ids, the result of each `step`, cascade length, node count); it stops
+at the first deviation. The protocols recorded from zerodds-pde are not
+in the repository; `SEESAW_PDE_DUMP` names their directory, without it
+the cells do not exist. The cells `langpack/engines/…` and
+`langpack/index/…` run many engines in one process; with the feature
+`parallel_seed` there are cells for the seed on several threads. The
+suite gives capacity hints as a host would (`benches/suite/hints.rs`).
+
+`hot.sh` and `lines.sh` build with the features in `SUITE_FEATURES`
+and, with `SUITE_CALLGRAPH=fp`, walk frame pointers instead of copying
+16 KiB of stack per sample: the copy loses the samples of deep
+recursions, a third to a half of the measured section on the `pde`
+cells, and not the same share in two states. Two states that differ in
+a feature are to be compared with one codegen unit
+(`CARGO_PROFILE_BENCH_CODEGEN_UNITS=1`).
+
 ### Added
 
 - `engine::AnchorIndex` (`build`, `built_for`, `fits`) and
@@ -245,11 +395,18 @@ and others). They do not depend on the machine.
 - `ValueResolver::baseline_str` (provided, lends nothing by default),
   `Graph::with_value`, `Graph::with_node_value`, `Graph::connection_id`,
   `Graph::type_count`.
+- `Graph::reserve`, `Engine::reserve`, `Engine::sizes`, `engine::Sizes`,
+  `Engine::reserve_for_recorded`, `AnchorIndex::forget_shared`.
+- Features `low_memory` and `parallel_seed` (`Engine::seed_with_threads`).
 
 ### Changed
 
 - `engine::MatchRec` is deprecated. No function hands one out or takes
   one; the engine keeps its matches in a record of its own.
+- The `Debug` output of `Graph`, `TypeTable`, `KonstTable` and
+  `ChainTable` has other fields than in 2.0.2, among them a number per
+  table instance: a counter of the process, so it depends on what the
+  process created before.
 - `perf_trace` (feature, off by default): the module now holds the
   counters of the current engine. The fields of the first generation
   had no call site left and are gone. The module is a diagnostic of the
