@@ -31,7 +31,7 @@ use std::collections::VecDeque;
 use std::sync::OnceLock;
 
 use crate::engine::matcher::{plan_anchored, LinkKind, Pattern, Plan};
-use crate::graph::{Graph, TypeId, ValueResolver};
+use crate::graph::{Graph, Node, Parts, TypeId, ValueResolver};
 use crate::hash::{FxBuildHasher, FxHashMap};
 use crate::ident::GhostId;
 use crate::plan::DirectedRule;
@@ -40,6 +40,10 @@ use crate::rules::predicate::Predicate;
 /// Longest path read from a position (links). Paths are cut there; a
 /// cut path is still a necessary condition.
 const MAX_DEPTH: usize = 6;
+
+/// A graph node as a walk has looked it up: not yet (`None`), missing
+/// (`Some(None)`), or the node with its participation list.
+type Looked<'g> = Option<Option<(&'g Node, &'g Parts)>>;
 
 /// Capacity up to which the set of visited pairs is kept from one walk
 /// to the next.
@@ -451,13 +455,14 @@ impl AnchorIndex {
         self.shape == shape(rules)
     }
 
-    /// Marks every prefix-tree node below `at` that a walk from the
-    /// graph node `x` realises without entering a node `skip` names.
-    fn walk(
+    /// Marks every prefix-tree node below `at` that a walk from a graph
+    /// node realises without entering a node `skip` names. `parts` is
+    /// the participation list of the node the walk stands at.
+    fn walk<'g>(
         &self,
-        g: &Graph,
+        g: &'g Graph,
         v: &dyn ValueResolver,
-        x: GhostId,
+        parts: &'g Parts,
         at: u32,
         st: &mut Walk,
         skip: &dyn Fn(&GhostId) -> bool,
@@ -465,7 +470,7 @@ impl AnchorIndex {
         trace!(anchor_walk_visits);
         for group in &self.nodes[at as usize].groups {
             let valued = !group.equals.is_empty() || !group.other.is_empty();
-            for p in g.parts_by_other_type(&x, group.typ) {
+            for p in parts.of_type(group.typ) {
                 if group.outgoing.is_some_and(|o| o != p.outgoing) {
                     continue;
                 }
@@ -481,17 +486,25 @@ impl AnchorIndex {
                 // element. Reading the status costs two map lookups per
                 // participation of every walk, the retracted elements
                 // are few. The type is that of the participation range.
+                //
+                // The neighbour is looked up at most once, when its
+                // value or its participations are needed.
+                let mut other: Looked<'g> = None;
                 if let Some(id) = group.any {
-                    self.enter(g, v, p.other, id, st, skip);
+                    self.enter(g, v, &p.other, id, st, skip, &mut other);
                 }
                 if valued {
-                    g.with_value(&p.other, v, |val| {
+                    let Some((node, _)) = *other.get_or_insert_with(|| g.node_parts(&p.other))
+                    else {
+                        continue;
+                    };
+                    g.with_node_value(node, v, |val| {
                         if let Some(&id) = val.and_then(|s| group.equals.get(s)) {
-                            self.enter(g, v, p.other, id, st, skip);
+                            self.enter(g, v, &p.other, id, st, skip, &mut other);
                         }
                         for (_, pred, id) in &group.other {
                             if pred.matches(val) {
-                                self.enter(g, v, p.other, *id, st, skip);
+                                self.enter(g, v, &p.other, *id, st, skip, &mut other);
                             }
                         }
                     });
@@ -500,14 +513,18 @@ impl AnchorIndex {
         }
     }
 
-    fn enter(
+    /// The walk has reached the prefix-tree node `id` at the graph node
+    /// `x`: marks it and walks on from there.
+    #[allow(clippy::too_many_arguments)]
+    fn enter<'g>(
         &self,
-        g: &Graph,
+        g: &'g Graph,
         v: &dyn ValueResolver,
-        x: GhostId,
+        x: &GhostId,
         id: u32,
         st: &mut Walk,
         skip: &dyn Fn(&GhostId) -> bool,
+        looked: &mut Looked<'g>,
     ) {
         if !st.marked[id as usize] {
             st.marked[id as usize] = true;
@@ -520,10 +537,12 @@ impl AnchorIndex {
         // The same node on the same path again (two ways to it): its
         // walk has run. The walk from the root is not noted, it runs
         // once per node and no path leads back to the root.
-        if !st.visited.insert((x, id)) {
+        if !st.visited.insert((*x, id)) {
             return;
         }
-        self.walk(g, v, x, id, st, skip);
+        if let Some((_, parts)) = *looked.get_or_insert_with(|| g.node_parts(x)) {
+            self.walk(g, v, parts, id, st, skip);
+        }
     }
 
     /// The (rule, index into `nodes`, position) triples at which an
@@ -560,7 +579,9 @@ impl AnchorIndex {
             if skip(ni, x) {
                 continue;
             }
-            let Some(node) = g.node(x) else { continue };
+            let Some((node, parts)) = g.node_parts(x) else {
+                continue;
+            };
             let Some(ti) = self.by_type.get(&node.typ) else {
                 continue;
             };
@@ -574,7 +595,7 @@ impl AnchorIndex {
             } else {
                 st.visited.clear();
             }
-            self.walk(g, v, *x, ti.root, st, &|id| skip(ni, id));
+            self.walk(g, v, parts, ti.root, st, &|id| skip(ni, id));
             // The places filed under a marked node, and the places
             // without a path. Each place is filed once, so none comes
             // twice; the triples are sorted below. Of the places that
@@ -586,40 +607,43 @@ impl AnchorIndex {
                     .map(|&id| &self.filed[id as usize])
                     .chain(std::iter::once(&ti.free))
             };
-            // The value of the node, where a reached place asks for it:
-            // by value (`equals`) or with another predicate (`valued`).
-            let value = if reached().any(|f| !f.equals.is_empty() || f.valued) {
-                g.resolve_value(x, v)
-            } else {
-                None
-            };
-            let mut check = |place_ix: u32, value_holds: bool| {
-                trace!(anchor_places);
-                let place = &ti.places[place_ix as usize];
-                let needs = &self.needs[place.needs.start as usize..place.needs.end as usize];
-                if !needs.iter().all(|&n| st.marked[n as usize]) {
-                    return;
-                }
-                if !value_holds {
-                    if let Some(pred) = &place.value {
-                        if !pred.matches(value.as_deref()) {
-                            return;
+            // The places a node with the value `value` stands at.
+            let mut offer = |value: Option<&str>| {
+                let mut check = |place_ix: u32, value_holds: bool| {
+                    trace!(anchor_places);
+                    let place = &ti.places[place_ix as usize];
+                    let needs = &self.needs[place.needs.start as usize..place.needs.end as usize];
+                    if !needs.iter().all(|&n| st.marked[n as usize]) {
+                        return;
+                    }
+                    if !value_holds {
+                        if let Some(pred) = &place.value {
+                            if !pred.matches(value) {
+                                return;
+                            }
+                        }
+                    }
+                    if active(place.rule) {
+                        out.push((place.rule, ni, place.pos));
+                    }
+                };
+                for f in reached() {
+                    for &place_ix in &f.any {
+                        check(place_ix, false);
+                    }
+                    if let Some(places) = value.and_then(|s| f.equals.get(s)) {
+                        for &place_ix in places {
+                            check(place_ix, true);
                         }
                     }
                 }
-                if active(place.rule) {
-                    out.push((place.rule, ni, place.pos));
-                }
             };
-            for f in reached() {
-                for &place_ix in &f.any {
-                    check(place_ix, false);
-                }
-                if let Some(places) = value.as_deref().and_then(|s| f.equals.get(s)) {
-                    for &place_ix in places {
-                        check(place_ix, true);
-                    }
-                }
+            // The value of the node, where a reached place asks for it:
+            // by value (`equals`) or with another predicate (`valued`).
+            if reached().any(|f| !f.equals.is_empty() || f.valued) {
+                g.with_node_value(node, v, offer);
+            } else {
+                offer(None);
             }
             // Reset only what this walk marked.
             for id in st.list.drain(..) {

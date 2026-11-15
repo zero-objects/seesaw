@@ -266,7 +266,7 @@ impl Slot {
 /// 72 bytes) was the largest part of the node's memory; a few hubs have
 /// many, for which inserting into a vector would move too much.
 #[derive(Clone, Debug)]
-enum Parts {
+pub(crate) enum Parts {
     Flat(Vec<Participation>),
     Tree(BTreeSet<Participation>),
 }
@@ -316,7 +316,7 @@ impl Parts {
     /// The entries whose counterpart has type `typ`, in order. The
     /// type is the first component of the order, so in a vector the
     /// range is found by comparing types only.
-    fn of_type(&self, typ: TypeId) -> PartsIter<'_> {
+    pub(crate) fn of_type(&self, typ: TypeId) -> PartsIter<'_> {
         match self {
             Self::Flat(v) => {
                 let from = v.partition_point(|x| x.other_typ < typ);
@@ -348,7 +348,7 @@ impl Parts {
 }
 
 /// Iterator over (a range of) a [`Parts`].
-enum PartsIter<'a> {
+pub(crate) enum PartsIter<'a> {
     Flat(std::slice::Iter<'a, Participation>),
     Range(std::collections::btree_set::Range<'a, Participation>),
     All(std::collections::btree_set::Iter<'a, Participation>),
@@ -804,29 +804,69 @@ impl Graph {
         target: GhostId,
         status: Status,
     ) -> Option<(GhostId, bool)> {
-        let (styp, sstatus, ttyp, tstatus) = {
-            let s = self.node(&source)?;
-            let t = self.node(&target)?;
-            if s.status == Status::Tombstone || t.status == Status::Tombstone {
-                return None;
-            }
-            (s.typ, s.status, t.typ, t.status)
+        if source == target {
+            return self.connect_to_itself(source, status);
+        }
+        // Both endpoints in one access each: status, reclaim and the
+        // participations are read and written on the two slots.
+        let [s, t] = self.map.get_disjoint_mut([&source, &target]);
+        let (
+            Some(Slot::Node {
+                node: s,
+                parts: s_parts,
+            }),
+            Some(Slot::Node {
+                node: t,
+                parts: t_parts,
+            }),
+        ) = (s, t)
+        else {
+            return None;
         };
+        if s.status == Status::Tombstone || t.status == Status::Tombstone {
+            return None;
+        }
         // Reclaim through USE (M5): whoever derives a live connection
         // to a tentatively retracted node re-legitimizes it
         // (consolidation only clears the unreclaimed) — e.g. a family
         // survives the deletion of its creator as long as one member
         // still uses it.
         if status != Status::Tombstone && status != Status::TentativeTombstone {
-            for (id, node_status) in [(source, sstatus), (target, tstatus)] {
-                if node_status == Status::TentativeTombstone {
-                    if let Some(n) = self.map.get_mut(&id).and_then(Slot::node_mut) {
-                        n.status = Status::Ghost;
-                    }
+            for node in [&mut *s, &mut *t] {
+                if node.status == Status::TentativeTombstone {
+                    node.status = Status::Ghost;
                 }
             }
         }
         let id = ident::connection(&source, &target);
+        // The participations before the connection itself: the two
+        // slots are at hand. Where the connection exists already they
+        // stand in the lists, and inserting them again changes nothing.
+        s_parts.insert(Participation {
+            other_typ: t.typ,
+            other: target,
+            outgoing: true,
+            connection: id,
+        });
+        t_parts.insert(Participation {
+            other_typ: s.typ,
+            other: source,
+            outgoing: false,
+            connection: id,
+        });
+        Some((id, self.insert_connection(id, source, target, status)))
+    }
+
+    /// Writes the connection `id` into its slot. `true`: it is new.
+    /// `false`: it existed; a tentatively retracted one is revived
+    /// (M5).
+    fn insert_connection(
+        &mut self,
+        id: GhostId,
+        source: GhostId,
+        target: GhostId,
+        status: Status,
+    ) -> bool {
         let connection = Connection {
             id,
             source,
@@ -843,28 +883,44 @@ impl Graph {
                     if c.status == Status::TentativeTombstone {
                         c.status = status;
                     }
-                    return Some((id, false));
+                    return false;
                 }
                 debug_assert!(matches!(slot, Slot::Empty));
                 *slot = Slot::Connection(connection);
             }
         }
-        // Both endpoints are nodes (read above).
-        if let Some(parts) = self.map.get_mut(&source).and_then(Slot::parts_mut) {
-            parts.insert(Participation {
-                other_typ: ttyp,
-                other: target,
-                outgoing: true,
-                connection: id,
-            });
+        true
+    }
+
+    /// [`Graph::connect_reporting`] for a connection from a node to
+    /// itself, where the two endpoints are one slot.
+    fn connect_to_itself(&mut self, node: GhostId, status: Status) -> Option<(GhostId, bool)> {
+        let (typ, node_status) = {
+            let n = self.node(&node)?;
+            (n.typ, n.status)
+        };
+        if node_status == Status::Tombstone {
+            return None;
         }
-        if let Some(parts) = self.map.get_mut(&target).and_then(Slot::parts_mut) {
-            parts.insert(Participation {
-                other_typ: styp,
-                other: source,
-                outgoing: false,
-                connection: id,
-            });
+        if status != Status::Tombstone
+            && status != Status::TentativeTombstone
+            && node_status == Status::TentativeTombstone
+        {
+            self.set_node_status(&node, Status::Ghost);
+        }
+        let id = ident::connection(&node, &node);
+        if !self.insert_connection(id, node, node, status) {
+            return Some((id, false));
+        }
+        if let Some(parts) = self.map.get_mut(&node).and_then(Slot::parts_mut) {
+            for outgoing in [true, false] {
+                parts.insert(Participation {
+                    other_typ: typ,
+                    other: node,
+                    outgoing,
+                    connection: id,
+                });
+            }
         }
         Some((id, true))
     }
@@ -895,6 +951,14 @@ impl Graph {
 
     pub fn node(&self, id: &GhostId) -> Option<&Node> {
         self.map.get(id).and_then(Slot::node)
+    }
+
+    /// A node with its participation list, in one access.
+    pub(crate) fn node_parts(&self, id: &GhostId) -> Option<(&Node, &Parts)> {
+        match self.map.get(id)? {
+            Slot::Node { node, parts } => Some((node, parts)),
+            _ => None,
+        }
     }
 
     /// Every node in the graph, in no particular order. Callers that
@@ -936,6 +1000,17 @@ impl Graph {
     /// it again.
     pub fn connection_id(&self, source: &GhostId, target: &GhostId) -> Option<GhostId> {
         let typ = self.node(target)?.typ;
+        self.connection_id_typed(source, target, typ)
+    }
+
+    /// [`Graph::connection_id`] for a `target` whose type the caller
+    /// knows (`typ`), without looking the target up.
+    pub(crate) fn connection_id_typed(
+        &self,
+        source: &GhostId,
+        target: &GhostId,
+        typ: TypeId,
+    ) -> Option<GhostId> {
         let lo = Participation {
             other_typ: typ,
             other: *target,

@@ -286,6 +286,8 @@ pub struct Engine<'r> {
     walk: anchor::Walk,
     /// Working memory of the anchored searches.
     scratch: crate::engine::matcher::Scratch,
+    /// Working memory of a step: the identities of its plan's nodes.
+    ids: Vec<GhostId>,
 }
 
 /// Where the engine's [`AnchorIndex`] comes from.
@@ -436,6 +438,82 @@ fn is_translated(g: &Graph, rule: &DirectedRule, refs: &[GhostId]) -> bool {
             .all(|(typ, pos, endpoint_typ)| anchor_translated(g, typ, endpoint_typ, &refs[*pos]))
 }
 
+/// What the graph holds of a rule's creation plan for one match.
+enum Planned {
+    /// Every node and every link of the plan exists, alive: applying
+    /// the rule would create nothing.
+    Exists,
+    /// A node of the plan is a tombstone.
+    Tombstone,
+    /// Something of the plan is missing or tentatively retracted.
+    Missing,
+}
+
+/// Derives the identities of the nodes of `rule`'s creation plan for
+/// the match `refs` into `ids` (plan-indexed; a dynamic leaf without a
+/// source gets a placeholder that is never read) and reports what the
+/// graph holds of the plan. Each identity is derived once, for the
+/// duplicate check, for the tombstone check and for the application.
+///
+/// The duplicate check asks whether everything the plan would create
+/// already exists, matchable (ids are purely derivable). After a
+/// tombstone `ids` is incomplete.
+fn plan_of(g: &Graph, rule: &DirectedRule, refs: &[GhostId], ids: &mut Vec<GhostId>) -> Planned {
+    ids.clear();
+    let mut all_alive = true;
+    for cn in &rule.create_nodes {
+        let parent = match cn.parent {
+            Ref::Matched(p) => refs[p],
+            Ref::New(ix) => ids[ix],
+        };
+        let id = if cn.corr_full_match {
+            crate::graph::preview_corr_id(&parent, &cn.typ, refs)
+        } else if let Some((anchor, ref attr, ref t)) = cn.derived_dyn {
+            match g.child_leaf_of_type(&refs[anchor], attr) {
+                // apply-if-present: without a source nothing would be
+                // created.
+                None => {
+                    ids.push(parent); // placeholder (never referenced)
+                    continue;
+                }
+                Some(src) => crate::graph::preview_derived_id(&parent, &cn.typ, &src, t),
+            }
+        } else {
+            match (&cn.konst, &cn.derived) {
+                (Some(_), _) => {
+                    crate::graph::preview_konst_id(&parent, &cn.typ, &rule.name, ids.len() as u32)
+                }
+                (None, Some((leaf, t))) => {
+                    crate::graph::preview_derived_id(&parent, &cn.typ, &refs[*leaf], t)
+                }
+                (None, None) => crate::graph::preview_ghost_id(&parent, &cn.typ),
+            }
+        };
+        match g.node(&id).map(|n| n.status) {
+            Some(Status::Tombstone) => return Planned::Tombstone,
+            Some(Status::Solid | Status::Ghost) => {}
+            _ => all_alive = false,
+        }
+        ids.push(id);
+    }
+    if !all_alive {
+        return Planned::Missing;
+    }
+    let at = |r: Ref| match r {
+        Ref::Matched(p) => refs[p],
+        Ref::New(ix) => ids[ix],
+    };
+    if rule
+        .create_links
+        .iter()
+        .all(|&(a, b)| g.connected_alive(&at(a), &at(b)))
+    {
+        Planned::Exists
+    } else {
+        Planned::Missing
+    }
+}
+
 /// Up to this many new nodes, "stands earlier among the new nodes" is
 /// answered by a scan of the slice; above it by a map.
 const LINEAR_NEW: usize = 8;
@@ -472,6 +550,7 @@ impl<'r> Engine<'r> {
             anchor: AnchorSlot::Unbuilt,
             walk: anchor::Walk::default(),
             scratch: Default::default(),
+            ids: Vec::new(),
         }
     }
 
@@ -544,11 +623,13 @@ impl<'r> Engine<'r> {
     fn record(&mut self, g: &Graph, rule_ix: usize, refs: &[GhostId]) {
         trace!(record_calls);
         let refs: Refs = refs.into();
-        let key = (rule_ix, refs.clone());
-        if self.by_key.contains_key(&key) {
-            trace!(record_known);
-            return;
-        }
+        let slot = match self.by_key.entry((rule_ix, refs.clone())) {
+            std::collections::hash_map::Entry::Occupied(_) => {
+                trace!(record_known);
+                return;
+            }
+            std::collections::hash_map::Entry::Vacant(slot) => slot,
+        };
         let ix = self.matches.len() as u32;
         for id in refs.iter() {
             self.by_element.entry(*id).or_default().push(ix);
@@ -566,7 +647,8 @@ impl<'r> Engine<'r> {
         // move. Sandra ruled that state out on 2026-08-12: a delta
         // changes or deletes, and a temporary multi-ownership makes no
         // technical sense.
-        for l in &self.rules[rule_ix].pattern.links {
+        let pattern = &self.rules[rule_ix].pattern;
+        for l in &pattern.links {
             // SameValue is a join over two leaf values, not an edge —
             // there is no connection in the graph to index.
             if l.kind == crate::engine::matcher::LinkKind::SameValue {
@@ -577,15 +659,16 @@ impl<'r> Engine<'r> {
                 // where the connection exists, derived otherwise (a
                 // direction-free link the graph holds the other way
                 // round). Both are the same id.
+                // The type of `b` is that of its position.
                 let e = g
-                    .connection_id(a, b)
+                    .connection_id_typed(a, b, pattern.nodes[l.to].typ)
                     .unwrap_or_else(|| crate::graph::preview_connection_id(a, b));
                 self.by_element.entry(e).or_default().push(ix);
             }
         }
         self.todo
             .insert(todo_key(self.rules[rule_ix].rank, &refs, rule_ix));
-        self.by_key.insert(key, ix);
+        slot.insert(ix);
         self.matches.push(Stored {
             rule_ix,
             refs,
@@ -1292,64 +1375,6 @@ impl<'r> Engine<'r> {
         }
     }
 
-    /// Duplicate check BEFORE application: does everything the plan
-    /// would create already exist, matchable? (Ids are purely
-    /// derivable.)
-    fn creation_exists(&self, g: &Graph, rule: &DirectedRule, refs: &[GhostId]) -> bool {
-        let mut ids: Vec<GhostId> = Vec::with_capacity(rule.create_nodes.len());
-        for cn in &rule.create_nodes {
-            let parent = match cn.parent {
-                Ref::Matched(p) => refs[p],
-                Ref::New(ix) => ids[ix],
-            };
-            let id = if cn.corr_full_match {
-                crate::graph::preview_corr_id(&parent, &cn.typ, refs)
-            } else if let Some((anchor, ref attr, ref t)) = cn.derived_dyn {
-                match g.child_leaf_of_type(&refs[anchor], attr) {
-                    // apply-if-present: without a source nothing would
-                    // be created.
-                    None => {
-                        ids.push(parent); // placeholder (never referenced)
-                        continue;
-                    }
-                    Some(src) => crate::graph::preview_derived_id(&parent, &cn.typ, &src, t),
-                }
-            } else {
-                match (&cn.konst, &cn.derived) {
-                    (Some(_), _) => crate::graph::preview_konst_id(
-                        &parent,
-                        &cn.typ,
-                        &rule.name,
-                        ids.len() as u32,
-                    ),
-                    (None, Some((leaf, t))) => {
-                        crate::graph::preview_derived_id(&parent, &cn.typ, &refs[*leaf], t)
-                    }
-                    (None, None) => crate::graph::preview_ghost_id(&parent, &cn.typ),
-                }
-            };
-            if g.node_alive(&id) {
-                ids.push(id);
-            } else {
-                return false;
-            }
-        }
-        for &(a, b) in &rule.create_links {
-            let s = match a {
-                Ref::Matched(p) => refs[p],
-                Ref::New(ix) => ids[ix],
-            };
-            let t = match b {
-                Ref::Matched(p) => refs[p],
-                Ref::New(ix) => ids[ix],
-            };
-            if !g.connected_alive(&s, &t) {
-                return false;
-            }
-        }
-        true
-    }
-
     /// One step: pull the highest-ranked live candidate.
     /// `ceiling`: only candidates strictly BELOW the bound (def. 3.10,
     /// position-local — the caller manages the position).
@@ -1365,33 +1390,43 @@ impl<'r> Engine<'r> {
             let key = match ceiling {
                 None if !filtered => {
                     trace!(todo_scanned);
-                    self.todo.first().cloned()
+                    self.todo.pop_first()
                 }
-                None => self
-                    .todo
-                    .iter()
-                    .find(|k| {
-                        trace!(todo_scanned);
-                        self.rule_active(k.3)
-                    })
-                    .cloned(),
+                None => {
+                    let key = self
+                        .todo
+                        .iter()
+                        .find(|k| {
+                            trace!(todo_scanned);
+                            self.rule_active(k.3)
+                        })
+                        .cloned();
+                    if let Some(key) = &key {
+                        self.todo.remove(key);
+                    }
+                    key
+                }
                 Some(b) => {
                     // Strictly below the bound = in the BTreeSet
                     // strictly AFTER the bound key (reverse order).
                     let bound = todo_key(b.rank, &Refs::from(b.refs.as_slice()), 0);
-                    self.todo
+                    let key = self
+                        .todo
                         .range(bound.clone()..)
                         .find(|k| {
                             trace!(todo_scanned);
                             !(k.0 == bound.0 && k.2 == bound.2)
                                 && (!filtered || self.rule_active(k.3))
                         })
-                        .cloned()
+                        .cloned();
+                    if let Some(key) = &key {
+                        self.todo.remove(key);
+                    }
+                    key
                 }
             };
             let key = key?;
-            self.todo.remove(&key);
-            let (rule_ix, refs) = (key.3, (key.2).0.clone());
+            let (rule_ix, refs) = (key.3, (key.2).0);
             let rule = &self.rules[rule_ix];
             if self.applied.contains(&(rule_ix, refs.clone())) {
                 continue;
@@ -1414,67 +1449,33 @@ impl<'r> Engine<'r> {
             // this type with a MATCHABLE counterpart — the element is
             // translated, regardless of which direction/variant ⇒ a
             // duplicate.
-            let translated = is_translated(g, rule, &refs);
-            if translated || self.creation_exists(g, rule, &refs) {
+            if is_translated(g, rule, &refs) {
                 // Duplicate: nothing new — note it for the verdict.
                 self.applied.insert((rule_ix, refs));
                 return Some(false);
             }
-            // V7 guard: reusing tombstone substance is a contradiction
-            // with history (not TT — that's the legitimate resurrection
-            // zone).
-            // The identities of the plan's nodes, derived once: for this
-            // check and for the application below.
-            let (ids, contradicts) = {
-                let mut ids: Vec<GhostId> = Vec::with_capacity(rule.create_nodes.len());
-                let mut bad = false;
-                'outer: for cn in &rule.create_nodes {
-                    let parent = match cn.parent {
-                        Ref::Matched(p) => refs[p],
-                        Ref::New(ix) => ids[ix],
-                    };
-                    let id = if cn.corr_full_match {
-                        crate::graph::preview_corr_id(&parent, &cn.typ, &refs)
-                    } else if let Some((anchor, ref attr, ref t)) = cn.derived_dyn {
-                        match g.child_leaf_of_type(&refs[anchor], attr) {
-                            None => {
-                                ids.push(parent);
-                                continue;
-                            }
-                            Some(src) => {
-                                crate::graph::preview_derived_id(&parent, &cn.typ, &src, t)
-                            }
-                        }
-                    } else {
-                        match (&cn.konst, &cn.derived) {
-                            (Some(_), _) => crate::graph::preview_konst_id(
-                                &parent,
-                                &cn.typ,
-                                &rule.name,
-                                ids.len() as u32,
-                            ),
-                            (None, Some((leaf, t))) => {
-                                crate::graph::preview_derived_id(&parent, &cn.typ, &refs[*leaf], t)
-                            }
-                            (None, None) => crate::graph::preview_ghost_id(&parent, &cn.typ),
-                        }
-                    };
-                    if let Some(n) = g.node(&id) {
-                        if n.status == Status::Tombstone {
-                            bad = true;
-                            break 'outer;
-                        }
-                    }
-                    ids.push(id);
+            let mut ids = std::mem::take(&mut self.ids);
+            match plan_of(g, rule, &refs, &mut ids) {
+                Planned::Exists => {
+                    // Duplicate as well: everything the plan would
+                    // create is there.
+                    self.ids = ids;
+                    self.applied.insert((rule_ix, refs));
+                    return Some(false);
                 }
-                (ids, bad)
-            };
-            if contradicts {
-                self.saw_contradiction = true;
-                continue;
+                Planned::Tombstone => {
+                    // V7 guard: reusing tombstone substance is a
+                    // contradiction with history (not TT — that's the
+                    // legitimate resurrection zone).
+                    self.ids = ids;
+                    self.saw_contradiction = true;
+                    continue;
+                }
+                Planned::Missing => {}
             }
             trace!(steps_applied);
             let (created, created_edges) = apply_creation_at(g, rule, &refs, Some(&ids));
+            self.ids = ids;
             let eix = self.cascade.len() as u32;
             // Provenance, product side: every node and edge this entry
             // built points back at it.

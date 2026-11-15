@@ -225,7 +225,7 @@ pub(crate) fn apply_creation_at(
             }
         }
     }
-    let mut edges = Vec::new();
+    let mut edges = Vec::with_capacity(rule.create_links.len());
     for &(a, b) in &rule.create_links {
         let s = match a {
             Ref::Matched(p) => Some(bindings[p]),
