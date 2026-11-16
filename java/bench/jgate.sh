@@ -1,9 +1,9 @@
 #!/bin/sh
 # jgate.sh [teil ...]: Prüfungen des Java-Zweigs, auf codepit über das Board. Jede Ergebniszeile
 # beginnt mit dem Namen des Teils. Ohne Argument laufen alle Teile nacheinander (mvn fp pde
-# diff). Das dauert länger als 5 Minuten, über das Board deshalb jeden Teil als eigenen Job
-# fahren (mvn1, mvn2, mvn3, fp, pde:java40, pde:open5, pde:open2 pde:open2-edit, und die Stücke
-# von diff, siehe dort).
+# diff pde-voll). Das dauert länger als 5 Minuten, über das Board deshalb jeden Teil als eigenen
+# Job fahren (mvn1, mvn2, mvn3, fp, pde:java40, pde:open5, pde:open2 pde:open2-edit, die Stücke
+# von diff, siehe dort, und pde-voll:open2-edit).
 #
 #   mvn   mvn test in drei Stellungen, je Stellung die Zeilen
 #         "mvn MVN_RC=… run=… failures=… errors=… skipped=… [argument]" und
@@ -77,6 +77,22 @@
 #           diff:gegenprobe    nur die Gegenprobe
 #         Welten: followup family predicates predicates_no_equals. Das n steht hinter dem Teil
 #         ("diff 1500", "diff:family/gerichtet 1500").
+#   pde-voll  ein Protokoll des Hosts ganz, auch hinter der ersten Abweichung von Java 2.0.2
+#         (PdeReplay voll: je Aufruf an einer Engine eine Zeile mit Rückgabe, Länge der Kaskade
+#         und Zahl der Knoten, nach consol mit Fingerprint, am Ende "ende …" mit Fingerprint).
+#         Der Lauf geht einmal gegen die Hauptklassen von L0 (fa12974, Java 2.0.2 mit Index,
+#         JAR aus jsuite.sh build L0 fa12974, das der Teil aufruft, wenn das JAR fehlt oder zu
+#         einem anderen Stand gehört, gesendet auf dem Mac mit jsuite.sh send L0 fa12974) und
+#         einmal gegen die dieses Baums. Die Nachfahrt kommt beide Male aus diesem Baum.
+#         Verglichen werden die beiden Ausgaben Zeile für Zeile (/tmp/jgate-voll-L0.out und
+#         /tmp/jgate-voll-HEAD.out). Je Seite eine Zeile "pde-voll <name> <seite> ende=ja|nein
+#         zeilen=… sekunden=…" und die Zeile "ende …" oder "abbruch …" der Seite, dann
+#         "pde-voll <name> VERDIKT=bestanden zeilen=…" nur, wenn beide Seiten bis zum Ende
+#         kamen und die Ausgaben gleich sind, sonst "VERDIKT=durchgefallen <gründe>" mit der
+#         ersten abweichenden Zeile beider Seiten. Am Ende "pde-voll VOLL_RC=… protokolle=…
+#         bestanden=… durchgefallen=…".
+#           pde-voll           jedes Protokoll <name>-edit in SEESAW_PDE_DUMP
+#           pde-voll:<name>    nur das Protokoll <name> (für das Gate pde-voll:open2-edit)
 #
 # Exit-Code 1, wenn ein Teil nicht besteht. Gefahren wird der Baum, in dem dieses Skript liegt
 # (auf codepit /root/seesaw-java/src).
@@ -333,6 +349,90 @@ pde() {
     [ $rc -eq 0 ] || status=1
 }
 
+# Teil pde-voll. Argumente: Namen der Protokolle, ohne Argument jedes <name>-edit.
+VOLL_JARS=${SEESAW_JARS:-/root/seesaw-java/jars}
+VOLL_L0=fa12974
+VOLL_TIMEOUT=${VOLL_TIMEOUT:-120}
+pde_full() {
+    if ! build_suite voll; then
+        echo "pde-voll VOLL_RC=1 BUILD_RC=$rc"
+        status=1
+        return
+    fi
+    # Die Hauptklassen von L0, gebaut von jsuite.sh, wenn sie fehlen oder zu einem anderen
+    # Stand gehören.
+    case $(cat "$VOLL_JARS/L0.commit" 2>/dev/null) in
+        "$VOLL_L0"*) ;;
+        *)
+            if ! sh "$J/bench/jsuite.sh" build L0 "$VOLL_L0" >/tmp/jgate-voll-l0build.log 2>&1; then
+                sed 's/^/pde-voll   /' /tmp/jgate-voll-l0build.log | head -10
+                echo "pde-voll VOLL_RC=1 L0_FEHLT (auf dem Mac: sh java/bench/jsuite.sh send L0 $VOLL_L0)"
+                status=1
+                return
+            fi
+            sed 's/^/pde-voll   /' /tmp/jgate-voll-l0build.log | tail -1
+            ;;
+    esac
+    head_cp="target/classes:target/test-classes:$(cat /tmp/jgate-voll.cp)"
+    l0_cp="$VOLL_JARS/L0.jar:target/test-classes:$(cat "$VOLL_JARS/L0.cp")"
+    if [ $# -gt 0 ]; then
+        names=$*
+    else
+        names=$(ls "$PDE_DIR" 2>/dev/null | sed -n 's/^\(.*-edit\)\.trace$/\1/p')
+    fi
+    echo "pde-voll verzeichnis=$PDE_DIR L0=$(cat "$VOLL_JARS/L0.commit")"
+    records=0; passed=0; failed_records=0
+    for name in $names; do
+        records=$((records + 1))
+        trace=$PDE_DIR/$name.trace
+        why=""
+        if [ ! -f "$trace" ]; then
+            echo "pde-voll $name VERDIKT=durchgefallen PROTOKOLL_FEHLT $trace"
+            failed_records=$((failed_records + 1))
+            continue
+        fi
+        for side in L0 HEAD; do
+            if [ $side = L0 ]; then cp=$l0_cp; else cp=$head_cp; fi
+            out=/tmp/jgate-voll-$side.out
+            t0=$(date +%s%N)
+            timeout "$VOLL_TIMEOUT" java $JVM -cp "$cp" net.sandrakessler.seesaw.bench.PdeReplay \
+                voll "$trace" >"$out" 2>/tmp/jgate-voll-$side.err
+            rc=$?
+            secs=$(awk -v a="$t0" -v b="$(date +%s%N)" 'BEGIN { printf "%.1f", (b - a) / 1e9 }')
+            last=$(tail -1 "$out")
+            case $last in ende\ *) fin=ja ;; *) fin=nein ;; esac
+            echo "pde-voll $name $side ende=$fin rc=$rc zeilen=$(wc -l <"$out" | tr -d ' ') sekunden=$secs"
+            echo "pde-voll   $(printf '%s\n' "$last" | cut -c1-400)"
+            if [ $fin != ja ]; then
+                why="$why ${side}_ohne_ende"
+                head -3 /tmp/jgate-voll-$side.err | cut -c1-300 | sed 's/^/pde-voll   /'
+            fi
+        done
+        n=$(wc -l </tmp/jgate-voll-HEAD.out | tr -d ' ')
+        if ! cmp -s /tmp/jgate-voll-L0.out /tmp/jgate-voll-HEAD.out; then
+            at=$(awk 'FNR == NR { a[FNR] = $0; n = FNR; next }
+                { if (!(FNR in a) || a[FNR] != $0) { print FNR; found = 1; exit } }
+                END { if (!found && FNR < n) print FNR + 1 }' \
+                /tmp/jgate-voll-L0.out /tmp/jgate-voll-HEAD.out)
+            [ -n "$at" ] || at=1
+            why="$why ungleich_ab_zeile=$at"
+            echo "pde-voll   L0:   $(sed -n "${at}p" /tmp/jgate-voll-L0.out | cut -c1-300)"
+            echo "pde-voll   HEAD: $(sed -n "${at}p" /tmp/jgate-voll-HEAD.out | cut -c1-300)"
+        fi
+        if [ -z "$why" ]; then
+            passed=$((passed + 1))
+            echo "pde-voll $name VERDIKT=bestanden zeilen=$n"
+        else
+            failed_records=$((failed_records + 1))
+            echo "pde-voll $name VERDIKT=durchgefallen$why zeilen=$n"
+        fi
+    done
+    rc=0
+    [ $records -eq 0 ] || [ $failed_records -ne 0 ] && rc=1
+    echo "pde-voll VOLL_RC=$rc protokolle=$records bestanden=$passed durchgefallen=$failed_records"
+    [ $rc -eq 0 ] || status=1
+}
+
 DIFF_REF=${SEESAW_DIFF_REF:-/root/seesaw-java/ref}
 DIFF_N=1500
 DIFF_BARGS=""
@@ -550,7 +650,7 @@ diff_part() {
     [ $rc -eq 0 ] || status=1
 }
 
-[ $# -gt 0 ] || set -- mvn fp pde diff
+[ $# -gt 0 ] || set -- mvn fp pde diff pde-voll
 while [ $# -gt 0 ]; do
     part=$1; shift
     case $part in
@@ -561,6 +661,8 @@ while [ $# -gt 0 ]; do
         fp) fp ;;
         pde) pde ;;
         pde:*) pde "${part#pde:}" ;;
+        pde-voll) pde_full ;;
+        pde-voll:*) pde_full "${part#pde-voll:}" ;;
         diff|diff:*)
             # Eine Zahl dahinter ist das n, sonst gilt 1500.
             DIFF_N=1500

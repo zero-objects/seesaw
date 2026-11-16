@@ -1,7 +1,11 @@
 package net.sandrakessler.seesaw.bench;
 
+import java.io.BufferedOutputStream;
 import java.io.BufferedReader;
+import java.io.FileDescriptor;
+import java.io.FileOutputStream;
 import java.io.IOException;
+import java.io.PrintStream;
 import java.io.UncheckedIOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
@@ -13,6 +17,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.TreeMap;
+import java.util.function.Supplier;
 
 import net.sandrakessler.seesaw.engine.AnchorIndex;
 import net.sandrakessler.seesaw.engine.Engine;
@@ -189,6 +195,15 @@ import net.sandrakessler.seesaw.rules.Rules;
  * des letzten Aufrufs an einer Engine mit Wertespeicher, dann die Kaskade
  * jeder Engine in der Reihenfolge ihrer Konstruktion
  * ({@link Langpack#fingerprint(Graph, List, Map)}).
+ *
+ * <h2>Ohne Abbruch</h2>
+ *
+ * <p>{@link #full} (Hauptprogramm {@code PdeReplay voll <protokoll>})
+ * fährt das ganze Protokoll, ohne bei einer Abweichung abzubrechen, und
+ * schreibt je Aufruf an einer Engine eine Zeile mit dem, was die Engine
+ * zurückgab. Zwei Stände der Hauptklassen lassen sich so auch über den
+ * Teil eines Protokolls vergleichen, der hinter der ersten Abweichung vom
+ * Protokoll liegt ({@code java/bench/jgate.sh pde-voll}).
  */
 public final class PdeReplay {
     private PdeReplay() {}
@@ -671,6 +686,15 @@ public final class PdeReplay {
          *  Speicher, -1 ohne. */
         int lastGraph = -1, lastStore = -1;
         long steps;
+        /** Ohne Abbruch bei einer Abweichung vom Protokoll ({@link #full}):
+         *  die Zeilen mit einer Abweichung werden gezählt. */
+        boolean full;
+        long deviations;
+        int firstDeviation = -1;
+        private int lastDeviation = -1;
+        /** Rückgabe des letzten {@code step}: {@code T}, {@code F},
+         *  {@code N}. */
+        String result = "-";
 
         World(Record r, int ruleCapacity) {
             this.r = r;
@@ -715,6 +739,18 @@ public final class PdeReplay {
             return out;
         }
 
+        /** Eine Abweichung an Zeile {@code no + 1}: wirft {@code m}, mit
+         *  {@link #full} wird sie gezählt. */
+        private void deviate(int no, Supplier<Mismatch> m) {
+            if (!full) throw m.get();
+            int line = no + 1;
+            if (firstDeviation < 0) firstDeviation = line;
+            if (line != lastDeviation) {
+                deviations++;
+                lastDeviation = line;
+            }
+        }
+
         Mismatch mismatch(int no, String call, String expected, String got) {
             int line = no + 1;
             return new Mismatch(r.path + ":" + line + ": " + call + ": erwartet " + expected
@@ -726,8 +762,8 @@ public final class PdeReplay {
             long c = engine(e).cascade.size();
             long n = graph(g).nodeCount();
             if (c != cascade || n != nodes) {
-                throw mismatch(no, call, "Kaskade " + cascade + ", Knoten " + nodes,
-                        "Kaskade " + c + ", Knoten " + n);
+                deviate(no, () -> mismatch(no, call, "Kaskade " + cascade + ", Knoten " + nodes,
+                        "Kaskade " + c + ", Knoten " + n));
             }
         }
 
@@ -752,8 +788,10 @@ public final class PdeReplay {
             if (op instanceof Step o) {
                 Boolean got = engine(o.e()).step(graph(o.g()), store(o.v()));
                 if (!Objects.equals(got, o.result())) {
-                    throw mismatch(no, "step", String.valueOf(o.result()), String.valueOf(got));
+                    deviate(no, () -> mismatch(no, "step", String.valueOf(o.result()),
+                            String.valueOf(got)));
                 }
+                result = got == null ? "N" : got ? "T" : "F";
                 if (got != null) steps++;
                 lastGraph = o.g();
                 lastStore = o.v();
@@ -761,12 +799,12 @@ public final class PdeReplay {
             } else if (op instanceof Connect o) {
                 Id got = graph(o.g()).connect(o.a(), o.b(), o.status());
                 if (!Objects.equals(got, o.id())) {
-                    throw mismatch(no, "connect", hex(o.id()), hex(got));
+                    deviate(no, () -> mismatch(no, "connect", hex(o.id()), hex(got)));
                 }
             } else if (op instanceof Base o) {
                 Id got = graph(o.g()).addBaseline(o.external(), o.typ());
                 if (!got.equals(o.id())) {
-                    throw mismatch(no, "add_baseline", hex(o.id()), hex(got));
+                    deviate(no, () -> mismatch(no, "add_baseline", hex(o.id()), hex(got)));
                 }
             } else if (op instanceof Value o) {
                 store(o.v()).put(o.id(), o.value());
@@ -809,16 +847,16 @@ public final class PdeReplay {
                 boolean got = g.node(o.id()) != null;
                 g.setNodeStatus(o.id(), o.status());
                 if (got != o.done()) {
-                    throw mismatch(no, "set_node_status", Boolean.toString(o.done()),
-                            Boolean.toString(got));
+                    deviate(no, () -> mismatch(no, "set_node_status", Boolean.toString(o.done()),
+                            Boolean.toString(got)));
                 }
             } else if (op instanceof ConnectionStatus o) {
                 Graph g = graph(o.g());
                 boolean got = g.conn(o.id()) != null;
                 g.setConnectionStatus(o.id(), o.status());
                 if (got != o.done()) {
-                    throw mismatch(no, "set_connection_status", Boolean.toString(o.done()),
-                            Boolean.toString(got));
+                    deviate(no, () -> mismatch(no, "set_connection_status",
+                            Boolean.toString(o.done()), Boolean.toString(got)));
                 }
             } else if (op instanceof Contradiction o) {
                 engine(o.e()).sawContradiction = o.value();
@@ -839,12 +877,14 @@ public final class PdeReplay {
             } else if (op instanceof Load o) {
                 List<Rule> loaded = Rules.load(o.json(), graph(o.g()));
                 if (loaded.size() != o.count() || rules.size() != o.first()) {
-                    throw mismatch(no, "load", o.count() + " Regeln ab Nummer " + o.first(),
-                            loaded.size() + " Regeln ab Nummer " + rules.size());
+                    int have = rules.size();
+                    deviate(no, () -> mismatch(no, "load", o.count() + " Regeln ab Nummer "
+                            + o.first(), loaded.size() + " Regeln ab Nummer " + have));
                 }
                 if (rules.size() + loaded.size() > ruleCapacity) {
-                    throw mismatch(no, "load", "höchstens " + ruleCapacity + " Regeln",
-                            (rules.size() + loaded.size()) + " Regeln");
+                    int total = rules.size() + loaded.size();
+                    deviate(no, () -> mismatch(no, "load", "höchstens " + ruleCapacity + " Regeln",
+                            total + " Regeln"));
                 }
                 rules.addAll(loaded);
             } else if (op instanceof IndexBuild o) {
@@ -882,8 +922,8 @@ public final class PdeReplay {
             for (Map.Entry<String, Integer> t : from.typesByName.entrySet()) {
                 int got = to.intern(t.getKey());
                 if (got != t.getValue() || got != expected) {
-                    throw mismatch(no, "clone", "Typ " + t.getKey() + " mit Nummer "
-                            + t.getValue(), "Nummer " + got);
+                    deviate(no, () -> mismatch(no, "clone", "Typ " + t.getKey() + " mit Nummer "
+                            + t.getValue(), "Nummer " + got));
                 }
                 expected++;
             }
@@ -950,6 +990,12 @@ public final class PdeReplay {
         }
         pieces.run(mark, end, part == Part.EDIT);
         pieces.finish();
+        return outcome(trace, w, measured.wallNanos());
+    }
+
+    /** Schritte, angewandte Schritte, Knoten und Fingerprint nach der
+     *  Nachfahrt, dazu die Zähler der Suchen. */
+    private static Langpack.Outcome outcome(Path trace, World w, long nanos) {
         if (w.lastGraph < 0) {
             throw new IllegalStateException(trace + ": kein Aufruf an einer Engine mit Graph");
         }
@@ -968,8 +1014,153 @@ public final class PdeReplay {
             seedsByIndex = sum(seedsByIndex, Counters.of(e, "seedsByIndex"));
         }
         return new Langpack.Outcome(w.steps, applied, g.nodeCount(),
-                Langpack.fingerprint(g, engines, v), measured.wallNanos(), 0, searches,
-                seedsByIndex);
+                Langpack.fingerprint(g, engines, v), nanos, 0, searches, seedsByIndex);
+    }
+
+    /**
+     * Fährt das ganze Protokoll {@code trace} nach, ohne bei einer
+     * Abweichung vom Protokoll abzubrechen, und schreibt nach {@code out}
+     * je Aufruf an einer Engine eine Zeile: Zeile des Protokolls, Befehl,
+     * Engine ({@code e=}), Rückgabe ({@code r=}, {@code T}, {@code F},
+     * {@code N} für {@code step}, sonst {@code -}), Länge der Kaskade der
+     * Engine ({@code c=}) und Zahl der Knoten des Graphen ({@code n=},
+     * {@code -} für einen Aufruf ohne Graph), beides nach dem Aufruf. Nach
+     * {@code consol} dazu der Fingerprint des Graphen und der Kaskade
+     * dieser Engine ({@code fp=}). Am Ende die Zeile {@code ende}: die Zahl
+     * der Aufrufe an Engines je Befehl, die Zahl der Zeilen, deren Ergebnis
+     * vom Protokoll abweicht, und die erste davon ({@code 0}: keine), dann
+     * Schritte, angewandte Schritte, Knoten und Fingerprint wie
+     * {@link #run}. Wirft ein Aufruf, steht die Ausnahme in einer Zeile
+     * {@code abbruch}, und die Nachfahrt endet dort.
+     *
+     * <p>Die Aufrufe des Hosts nach der ersten Abweichung nennen Ids aus
+     * den Ergebnissen von Rust und laufen unverändert, auch wo der Graph
+     * die Id nicht hält. Die Ausgabe ist eine Funktion der Hauptklassen:
+     * zwei Stände, die sich auf diesem Protokoll gleich verhalten, geben
+     * dieselben Zeilen aus.
+     *
+     * @return true, wenn die Nachfahrt bis zum Ende kam
+     */
+    public static boolean full(Path trace, PrintStream out) {
+        Record r = read(trace);
+        int rules = 0;
+        for (Op op : r.ops) {
+            if (op instanceof Load l) rules += l.count();
+        }
+        World w = new World(r, rules);
+        w.full = true;
+        TreeMap<String, Integer> calls = new TreeMap<>();
+        for (int no = 0; no < r.ops.size(); no++) {
+            Op op = r.ops.get(no);
+            boolean wave = isWave(op);
+            String name = wave ? callName(op) : "host";
+            w.result = "-";
+            try {
+                w.apply(no, op);
+            } catch (RuntimeException ex) {
+                out.println((no + 1) + " " + name + " abbruch " + ex);
+                out.println("abbruch zeile=" + (no + 1) + " aufrufe=" + counts(calls)
+                        + " abweichend=" + w.deviations + " erste_abweichung="
+                        + Math.max(0, w.firstDeviation));
+                return false;
+            }
+            if (!wave) continue;
+            calls.merge(name, 1, Integer::sum);
+            int e = engineOf(op);
+            int g = graphOf(op);
+            StringBuilder line = new StringBuilder();
+            line.append(no + 1).append(' ').append(name).append(" e=").append(e).append(" r=")
+                    .append(w.result).append(" c=").append(w.engine(e).cascade.size())
+                    .append(" n=").append(g < 0 ? "-" : Long.toString(w.graph(g).nodeCount()));
+            if (op instanceof Consolidate) {
+                Map<Id, String> v = w.lastStore < 0 ? Map.of() : w.store(w.lastStore);
+                line.append(" fp=").append(Langpack.fingerprint(w.graph(g), List.of(w.engine(e)), v));
+            }
+            out.println(line);
+        }
+        Langpack.Outcome o = outcome(r.path, w, 0);
+        out.println("ende aufrufe=" + counts(calls) + " abweichend=" + w.deviations
+                + " erste_abweichung=" + Math.max(0, w.firstDeviation) + " schritte=" + o.steps()
+                + " angewandt=" + o.applied() + " knoten=" + o.nodes() + " fingerprint="
+                + o.fingerprint());
+        return true;
+    }
+
+    /** {@code befehl=zahl}, durch Kommas getrennt, nach Befehl sortiert. */
+    private static String counts(TreeMap<String, Integer> calls) {
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, Integer> c : calls.entrySet()) {
+            if (sb.length() > 0) sb.append(',');
+            sb.append(c.getKey()).append('=').append(c.getValue());
+        }
+        return sb.toString();
+    }
+
+    /** Der Befehl eines Aufrufs an einer Engine, wie im Format. */
+    private static String callName(Op op) {
+        if (op instanceof Step) return "step";
+        if (op instanceof Added) return "added";
+        if (op instanceof Deleted) return "deleted";
+        if (op instanceof Changed) return "changed";
+        if (op instanceof Consolidate) return "consol";
+        if (op instanceof LinkRemoved) return "linkrm";
+        if (op instanceof LinkAdded) return "linkadd";
+        if (op instanceof Seed) return "seed";
+        if (op instanceof Removed) return "removed";
+        if (op instanceof AdmitDelta) return "admitd";
+        if (op instanceof AdmitInitial) return "admiti";
+        if (op instanceof Contradiction) return "contra";
+        if (op instanceof ActiveNone) return "active";
+        throw new IllegalStateException("kein Aufruf an einer Engine: " + op);
+    }
+
+    /** Die Engine eines Aufrufs an einer Engine. */
+    private static int engineOf(Op op) {
+        if (op instanceof Step o) return o.e();
+        if (op instanceof Added o) return o.e();
+        if (op instanceof Deleted o) return o.e();
+        if (op instanceof Changed o) return o.e();
+        if (op instanceof Consolidate o) return o.e();
+        if (op instanceof LinkRemoved o) return o.e();
+        if (op instanceof LinkAdded o) return o.e();
+        if (op instanceof Seed o) return o.e();
+        if (op instanceof Removed o) return o.e();
+        if (op instanceof AdmitDelta o) return o.e();
+        if (op instanceof AdmitInitial o) return o.e();
+        if (op instanceof Contradiction o) return o.e();
+        if (op instanceof ActiveNone o) return o.e();
+        throw new IllegalStateException("kein Aufruf an einer Engine: " + op);
+    }
+
+    /** Der Graph eines Aufrufs an einer Engine, -1 für einen Aufruf ohne
+     *  Graph. */
+    private static int graphOf(Op op) {
+        if (op instanceof Step o) return o.g();
+        if (op instanceof Added o) return o.g();
+        if (op instanceof Deleted o) return o.g();
+        if (op instanceof Changed o) return o.g();
+        if (op instanceof Consolidate o) return o.g();
+        if (op instanceof LinkRemoved o) return o.g();
+        if (op instanceof LinkAdded o) return o.g();
+        if (op instanceof Seed o) return o.g();
+        return -1;
+    }
+
+    /**
+     * {@code PdeReplay voll <protokoll>}: {@link #full} nach stdout.
+     * Exit-Code 0, wenn die Nachfahrt bis zum Ende kam, 1 nach einem
+     * Abbruch, 2 bei falschem Aufruf.
+     */
+    public static void main(String[] args) {
+        if (args.length != 2 || !args[0].equals("voll")) {
+            System.err.println("usage: PdeReplay voll <protokoll.trace>");
+            System.exit(2);
+        }
+        PrintStream out = new PrintStream(new BufferedOutputStream(
+                new FileOutputStream(FileDescriptor.out), 1 << 16), false, StandardCharsets.UTF_8);
+        boolean done = full(Path.of(args[1]), out);
+        out.flush();
+        System.exit(done ? 0 : 1);
     }
 
     /** Summe zweier Zählerstände, -1, wo einer fehlt. */
