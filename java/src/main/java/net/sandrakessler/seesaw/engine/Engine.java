@@ -3,6 +3,7 @@ package net.sandrakessler.seesaw.engine;
 import net.sandrakessler.seesaw.ident.Ident;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -99,7 +100,9 @@ public final class Engine {
     /** (Regelindex, Ref-Folge) → Index im Match-Speicher. */
     final HashMap<MatchKey, Integer> byKey = new HashMap<>();
     final ArrayList<MatchRec> matches = new ArrayList<>();
-    final HashMap<Id, ArrayList<Integer>> byElement = new HashMap<>();
+    /** Element → Indizes der Matches, die es enthalten (Knoten und
+     *  Verbindungen), in der Reihenfolge des Eintragens. */
+    final HashMap<Id, IntList> byElement = new HashMap<>();
     public final ArrayList<Entry> cascade = new ArrayList<>();
     public int cascadeLen = 0;
     public boolean sawContradiction = false;
@@ -332,7 +335,7 @@ public final class Engine {
         MatchKey k = new MatchKey(ruleIx, refs);
         if (byKey.containsKey(k)) return;
         int ix = matches.size();
-        for (Id id : refs) byElement.computeIfAbsent(id, x -> new ArrayList<>()).add(ix);
+        for (Id id : refs) byElement.computeIfAbsent(id, x -> new IntList()).add(ix);
         // Die KANTEN des Matches gehoeren ebenso in die Registratur, nicht
         // nur seine Knoten. Ein Match ruht auf den Kanten, die sein Muster
         // verlangt, also muss ihr Wegfall ihn ebenso toeten wie der eines
@@ -347,7 +350,7 @@ public final class Engine {
             if (l.from < refs.length && l.to < refs.length) {
                 Id e = g == null ? null : g.connectionId(refs[l.from], refs[l.to]);
                 if (e == null) e = Ident.identConnection(refs[l.from], refs[l.to]);
-                byElement.computeIfAbsent(e, x -> new ArrayList<>()).add(ix);
+                byElement.computeIfAbsent(e, x -> new IntList()).add(ix);
             }
         }
         byKey.put(k, ix);
@@ -357,10 +360,10 @@ public final class Engine {
 
     /** delete/modify (Spec §1.6): Matches des Elements EAGER töten. */
     public void elementRemoved(Id id) {
-        ArrayList<Integer> refs = byElement.get(id);
+        IntList refs = byElement.get(id);
         if (refs == null) return;
-        for (int mix : refs) {
-            MatchRec m = matches.get(mix);
+        for (int i = 0, n = refs.size(); i < n; i++) {
+            MatchRec m = matches.get(refs.get(i));
             if (!m.dead) {
                 m.dead = true;
                 todo.remove(new TodoKey(rules.get(m.ruleIx).rank, m.refs, m.ruleIx));
@@ -432,9 +435,13 @@ public final class Engine {
             // begruendet.
             //
             // Es NIMMT TEIL an Matches: die verlieren ihren Boden.
-            ArrayList<Integer> mixes = byElement.get(id);
+            // Ohne Kopie der Liste: retractMatch aendert byElement nicht,
+            // und eine IntList waechst nur am Ende. Die Laenge wird vor
+            // der Schleife gelesen, die Schleife sieht also genau die
+            // Eintraege, die eine Kopie gesehen haette.
+            IntList mixes = byElement.get(id);
             if (mixes != null) {
-                for (int mix : new ArrayList<>(mixes)) retractMatch(g, mix, queue);
+                for (int i = 0, n = mixes.size(); i < n; i++) retractMatch(g, mixes.get(i), queue);
             }
             // Es wurde von Eintraegen ERZEUGT: die verlieren ihr
             // Ergebnis, und mit ihnen faellt alles Weitere, das sie
@@ -511,13 +518,17 @@ public final class Engine {
     /** Kanten-Wegfall (Spiegel von link_removed): Matches, deren Refs
      *  BEIDE Endpunkte enthalten, verlieren ihre Begründung. */
     public void linkRemoved(Graph g, Id a, Id b) {
-        ArrayList<Integer> inA = byElement.get(a);
+        IntList inA = byElement.get(a);
         if (inA == null) return;
-        ArrayList<Integer> inB = byElement.get(b);
+        IntList inB = byElement.get(b);
         if (inB == null) return;
-        TreeSet<Integer> setB = new TreeSet<>(inB);
+        int[] setB = inB.toArray();
+        Arrays.sort(setB);
         ArrayList<Id> queue = new ArrayList<>();
-        for (int mix : inA) if (setB.contains(mix)) retractMatch(g, mix, queue);
+        for (int i = 0, n = inA.size(); i < n; i++) {
+            int mix = inA.get(i);
+            if (Arrays.binarySearch(setB, mix) >= 0) retractMatch(g, mix, queue);
+        }
         drainRetraction(g, queue);
     }
 

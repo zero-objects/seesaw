@@ -256,7 +256,7 @@ final class MatcherTest {
         for (Map.Entry<String, Integer> k : keys.entrySet()) {
             sb.append("k ").append(k.getKey()).append(' ').append(k.getValue()).append('\n');
         }
-        for (Map.Entry<Id, ArrayList<Integer>> x : e.byElement.entrySet()) {
+        for (Map.Entry<Id, IntList> x : e.byElement.entrySet()) {
             sb.append("e ").append(text(new Id[] {x.getKey()})).append(' ').append(x.getValue())
                     .append('\n');
         }
