@@ -45,28 +45,32 @@ public final class Engine {
         final long head0, head1;
         final Id[] refs;
         final int ruleIx;
-        /** Schluessel des Matches, derselbe wie im Match-Speicher, in
-         *  {@link #byKey} und {@link #applied}; null in einer Schranke
-         *  von {@link #stepWithLimit}. */
+        /** Schluessel des Matches, derselbe wie im Match-Speicher und in
+         *  {@link #byKey}. null in einer Schranke von
+         *  {@link #stepWithLimit}. */
         final MatchKey key;
+        /** Nummer des Matches im Match-Speicher (Rust {@code Carried}),
+         *  nimmt nicht an der Ordnung teil. -1 in einer Schranke. */
+        final int mix;
 
         /** Eine Schranke, ohne Match. */
         TodoKey(long rank, Id[] refs, int ruleIx) {
-            this(rank, refs, ruleIx, null);
+            this(rank, refs, ruleIx, null, -1);
         }
 
-        /** Der Eintrag eines Matches. */
-        TodoKey(long rank, MatchKey key) {
-            this(rank, key.refs, key.ruleIx, key);
+        /** Der Eintrag des Matches {@code mix}. */
+        TodoKey(long rank, MatchKey key, int mix) {
+            this(rank, key.refs, key.ruleIx, key, mix);
         }
 
-        private TodoKey(long rank, Id[] refs, int ruleIx, MatchKey key) {
+        private TodoKey(long rank, Id[] refs, int ruleIx, MatchKey key, int mix) {
             this.rank = rank;
             this.head0 = refs.length == 0 ? 0 : word(refs[0].b, 0);
             this.head1 = refs.length == 0 ? 0 : word(refs[0].b, 8);
             this.refs = refs;
             this.ruleIx = ruleIx;
             this.key = key;
+            this.mix = mix;
         }
 
         /** Acht Byte ab {@code from}, Big-Endian. */
@@ -110,7 +114,7 @@ public final class Engine {
         final int ruleIx;
         final Id[] refs;
         /** Regelindex und Ref-Folge als Schluessel, dasselbe Objekt im
-         *  Todo, in {@link #byKey} und in {@link #applied}. */
+         *  Todo und in {@link #byKey}. */
         final MatchKey key;
         boolean dead;
         /** Provenienz-Kante Match → Kaskaden-Eintrag (null = nicht angewandt). */
@@ -131,12 +135,9 @@ public final class Engine {
     }
 
     final TreeSet<TodoKey> todo = new TreeSet<>();
-    /**
-     * Die angewandten Matches (Rust {@code applied}). Befragt, ergaenzt,
-     * gekuerzt und auf leer geprueft, nie durchlaufen: eine Hash-Menge,
-     * ohne Ordnung.
-     */
-    final HashSet<MatchKey> applied = new HashSet<>();
+    /** Die angewandten Matches (Rust {@code applied}): eine Marke je
+     *  Nummer eines Matches, siehe {@link Applied}. */
+    final Applied applied;
     /** (Regelindex, Ref-Folge) → Index im Match-Speicher. */
     final HashMap<MatchKey, Integer> byKey = new HashMap<>();
     final ArrayList<MatchRec> matches = new ArrayList<>();
@@ -225,15 +226,35 @@ public final class Engine {
      * und die beiden Folgen von Matches werden verglichen. Weicht eine
      * ab, wirft die Engine. Gegenstueck zu {@code --cfg seesaw_checks}
      * auf der Rust-Seite; damit laufen alle Tests unter der Pruefung.
+     * Ebenso die Pruefungen von {@link #producersOf} und des Schritts
+     * ({@link #checks}).
      */
     static final boolean CHECKS = Boolean.getBoolean("seesaw.checks");
+
+    /**
+     * Prueft der Schritt, was er ueber die Nummer des gezogenen Matches
+     * weiss? Dann fuehrt {@link Applied} die Menge der angewandten
+     * Schluessel mit, der Match wird zusaetzlich ueber den Schluessel
+     * nachgeschlagen ({@link #pulledMatch}), und {@link #recognise}
+     * stellt die Anker-Fragen auch einzeln. Eine Abweichung wirft.
+     * {@link #CHECKS}, im Test auch fuer eine Engine allein gewaehlt.
+     */
+    private final boolean checks;
 
     public Engine(List<Rule> rules) { this(rules, defaultUseIndex()); }
 
     /** Mit ausdruecklicher Wahl des Suchwegs, siehe {@link #useIndex}. */
     public Engine(List<Rule> rules, boolean useIndex) {
+        this(rules, useIndex, CHECKS);
+    }
+
+    /** Mit ausdruecklicher Wahl des Suchwegs und der Pruefung des
+     *  Schritts, siehe {@link #checks}. */
+    Engine(List<Rule> rules, boolean useIndex, boolean checks) {
         this.rules = rules;
         this.useIndex = useIndex;
+        this.checks = checks;
+        this.applied = new Applied(checks);
     }
 
     /**
@@ -392,7 +413,7 @@ public final class Engine {
         int ix = matches.size();
         // Ein Nachschlagen in byKey: steht der Schluessel schon, bleibt
         // alles, wie es ist. Ein Schluessel je Match, geteilt von
-        // Match-Speicher, Todo, byKey und spaeter applied.
+        // Match-Speicher, Todo und byKey.
         if (byKey.putIfAbsent(k, ix) != null) return;
         for (Id id : refs) byElement.computeIfAbsent(id, x -> new IntList()).add(ix);
         // Die KANTEN des Matches gehoeren ebenso in die Registratur, nicht
@@ -417,7 +438,7 @@ public final class Engine {
             }
         }
         matches.add(new MatchRec(k));
-        todo.add(new TodoKey(rule.rank, k));
+        todo.add(new TodoKey(rule.rank, k, ix));
     }
 
     /** delete/modify (Spec §1.6): Matches des Elements EAGER töten. */
@@ -425,10 +446,11 @@ public final class Engine {
         IntList refs = byElement.get(id);
         if (refs == null) return;
         for (int i = 0, n = refs.size(); i < n; i++) {
-            MatchRec m = matches.get(refs.get(i));
+            int mix = refs.get(i);
+            MatchRec m = matches.get(mix);
             if (!m.dead) {
                 m.dead = true;
-                todo.remove(new TodoKey(rules.get(m.ruleIx).rank, m.key));
+                todo.remove(new TodoKey(rules.get(m.ruleIx).rank, m.key, mix));
             }
         }
     }
@@ -442,12 +464,12 @@ public final class Engine {
         Integer entry = m.entry;
         if (!m.dead) {
             m.dead = true;
-            todo.remove(new TodoKey(rules.get(m.ruleIx).rank, m.key));
+            todo.remove(new TodoKey(rules.get(m.ruleIx).rank, m.key, mix));
         }
         // Reclaim-Fähigkeit: Vermerk VERGESSEN, damit eine identische
-        // Re-Ableitung erneut anwenden (resurrektieren) kann.
-        applied.remove(m.key);
-        byKey.remove(m.key);
+        // Re-Ableitung erneut anwenden (resurrektieren) kann. Die Marke
+        // traegt der Match, der unter dem Schluessel stand.
+        applied.forget(m.key, byKey.remove(m.key));
         if (entry != null) {
             Entry e = cascade.get(entry);
             for (Id c : e.created) {
@@ -1210,44 +1232,21 @@ public final class Engine {
                 return null;
             }
             Rule rule = rules.get(k.ruleIx);
+            // Was der Schritt ueber den gezogenen Kandidaten weiss, haengt
+            // an der Nummer seines Matches, die er traegt. Nachgeschlagen
+            // wird ueber den Schluessel nur noch beim Vergessen eines
+            // Matches mit tentativ zurueckgezogenem Anker.
             MatchKey mk = k.key;
-            if (applied.contains(mk)) continue;
-            // TT-Anker feuern nicht (Reclaim-Zombie-Schutz): vergessener
-            // Match wird vom nächsten Seed neu gefunden, falls resurrektiert.
-            boolean anchorTt = false;
-            for (Object[] rec : rule.corrRecognition) {
-                int pos = (Integer) rec[1];
-                Node an = g.node(k.refs[pos]);
-                if (an != null && an.status == St.TENTATIVE_TOMBSTONE) { anchorTt = true; break; }
+            if (applied.contains(mk, k.mix)) continue;
+            Recognised recognised = recognise(g, rule, k.refs);
+            if (recognised == Recognised.TENTATIVE) {
+                // TT-Anker feuern nicht (Reclaim-Zombie-Schutz): vergessener
+                // Match wird vom nächsten Seed neu gefunden, falls resurrektiert.
+                byKey.remove(mk);
+                continue;
             }
-            if (anchorTt) { byKey.remove(mk); continue; }
-            boolean translated = !rule.corrRecognition.isEmpty();
-            for (Object[] rec : rule.corrRecognition) {
-                String typ = (String) rec[0];
-                int pos = (Integer) rec[1];
-                String endTyp = (String) rec[2];
-                boolean found = false;
-                Integer t = g.lookup(typ);
-                Integer ept = g.lookup(endTyp);
-                if (t != null && ept != null) {
-                    for (Part p : g.partsOfType(k.refs[pos], t)) {
-                        Conn c = g.conn(p.connection);
-                        Node other = g.node(p.other);
-                        if (c == null || !c.status.alive()
-                                || other == null || !other.status.alive()) continue;
-                        for (Part q : g.parts(p.other)) {
-                            if (!q.other.equals(k.refs[pos]) && q.otherTyp == ept) {
-                                Node en = g.node(q.other);
-                                if (en != null && en.status.alive()) { found = true; break; }
-                            }
-                        }
-                        if (found) break;
-                    }
-                }
-                if (!found) { translated = false; break; }
-            }
-            if (translated) {
-                applied.add(mk);
+            if (recognised == Recognised.TRANSLATED) {
+                applied.insert(mk, k.mix);
                 return false;
             }
             // Die Identitaeten der Plan-Knoten, einmal abgeleitet: fuer
@@ -1256,7 +1255,7 @@ public final class Engine {
             if (planned == Planned.EXISTS) {
                 // Ebenfalls ein Duplikat: alles, was der Plan erzeugen
                 // wuerde, ist da.
-                applied.add(mk);
+                applied.insert(mk, k.mix);
                 return false;
             }
             if (planned == Planned.TOMBSTONE) {
@@ -1277,13 +1276,135 @@ public final class Engine {
             if (byProductFiled != null) {
                 for (Id pid : cr.edges) byProductFiled.computeIfAbsent(pid, x -> new IntList()).add(eix);
             }
-            applied.add(mk);
+            applied.insert(mk, k.mix);
             // Provenienz-Kante materialisieren (für retractFor ohne Scan).
-            Integer mix = byKey.get(mk);
-            if (mix != null) matches.get(mix).entry = eix;
+            matches.get(pulledMatch(k)).entry = eix;
             expandAt(g, vals, cr.nodes);
             return true;
         }
+    }
+
+    /**
+     * Der Match des gezogenen Kandidaten {@code k}: der, dessen Nummer er
+     * traegt (Rust {@code pulled_match}). 2.0.2 schlug ihn ueber den
+     * Schluessel in {@link #byKey} nach, unter {@link #checks} geschieht
+     * das zusaetzlich, eine Abweichung wirft.
+     */
+    private int pulledMatch(TodoKey k) {
+        if (checks) {
+            Integer filed = byKey.get(k.key);
+            if (filed == null || filed != k.mix) {
+                throw new IllegalStateException("pulledMatch: der Kandidat traegt den Match " + k.mix
+                        + ", unter seinem Schluessel steht " + filed + ", Regel " + rules.get(k.ruleIx).name);
+            }
+        }
+        return k.mix;
+    }
+
+    /** Was der Graph ueber die Anker der Korrespondenzen sagt, die ein
+     *  gezogener Kandidat stiften wuerde (Rust {@code Recognised}). */
+    private enum Recognised {
+        /** Ein Anker ist tentativ zurueckgezogen. */
+        TENTATIVE,
+        /** Jeder Anker traegt seine Korrespondenz schon
+         *  ({@link Engine#isTranslated}). */
+        TRANSLATED,
+        /** Keins von beiden. */
+        OPEN
+    }
+
+    /**
+     * Ein Zugriff je Anker liefert seinen Status und seine Participations
+     * (Rust {@code recognise}): die Frage, ob ein Anker tentativ
+     * zurueckgezogen ist, und die Frage, ob er uebersetzt ist, lesen
+     * denselben Platz des Graphen. Beide lesen nur den Graphen, Anker fuer
+     * Anker gestellt geben sie also die Antworten, die erst die eine Frage
+     * ueber alle Anker und dann die andere gaebe. Unter {@link #checks}
+     * werden sie auch einzeln gestellt und verglichen, eine Abweichung
+     * wirft.
+     */
+    private Recognised recognise(Graph g, Rule rule, Id[] refs) {
+        boolean tentative = false;
+        boolean translated = !rule.corrRecognition.isEmpty();
+        for (Object[] rec : rule.corrRecognition) {
+            Id anchor = refs[(Integer) rec[1]];
+            Graph.Slot s = g.map.get(anchor);
+            if (s == null) {
+                // Kein Platz: nicht tentativ, ohne Participations nicht
+                // uebersetzt.
+                translated = false;
+                continue;
+            }
+            if (s.node != null && s.node.status == St.TENTATIVE_TOMBSTONE) {
+                tentative = true;
+                break;
+            }
+            if (translated) {
+                Integer t = g.lookup((String) rec[0]);
+                Integer ept = g.lookup((String) rec[2]);
+                translated = t != null && ept != null && s.parts != null
+                        && anchorTranslatedIn(g, s.parts.ofType(t), ept, anchor);
+            }
+        }
+        Recognised recognised = tentative ? Recognised.TENTATIVE
+                : translated ? Recognised.TRANSLATED : Recognised.OPEN;
+        if (checks) {
+            boolean anyTt = false;
+            for (Object[] rec : rule.corrRecognition) anyTt |= selfNodeTt(g, refs[(Integer) rec[1]]);
+            Recognised expected = anyTt ? Recognised.TENTATIVE
+                    : isTranslated(g, rule, refs) ? Recognised.TRANSLATED : Recognised.OPEN;
+            if (recognised != expected) {
+                throw new IllegalStateException("recognise: ein Gang ueber die Anker ergibt " + recognised
+                        + ", die beiden Fragen einzeln " + expected + ", Regel " + rule.name);
+            }
+        }
+        return recognised;
+    }
+
+    /** Ist {@code id} ein tentativ zurueckgezogener Knoten (Rust
+     *  {@code self_node_tt})? */
+    private static boolean selfNodeTt(Graph g, Id id) {
+        Node n = g.node(id);
+        return n != null && n.status == St.TENTATIVE_TOMBSTONE;
+    }
+
+    /** Traegt jeder Anker der Regel schon seine Korrespondenz mit einem
+     *  lebendigen Gegenende (Rust {@code is_translated})? Nicht ohne
+     *  Anker. */
+    private static boolean isTranslated(Graph g, Rule rule, Id[] refs) {
+        if (rule.corrRecognition.isEmpty()) return false;
+        for (Object[] rec : rule.corrRecognition) {
+            if (!anchorTranslated(g, (String) rec[0], (String) rec[2], refs[(Integer) rec[1]])) return false;
+        }
+        return true;
+    }
+
+    /** Traegt {@code anchor} schon eine lebendige Korrespondenz vom Typ
+     *  {@code typ} mit einem lebendigen Gegenende vom Typ {@code endTyp}
+     *  (Rust {@code anchor_translated})? */
+    private static boolean anchorTranslated(Graph g, String typ, String endTyp, Id anchor) {
+        Integer t = g.lookup(typ);
+        Integer ept = g.lookup(endTyp);
+        return t != null && ept != null && anchorTranslatedIn(g, g.partsOfType(anchor, t), ept, anchor);
+    }
+
+    /** {@link #anchorTranslated} fuer einen Anker, dessen Participations
+     *  zur Hand sind (Rust {@code anchor_translated_in}): {@code ofType}
+     *  sind die mit Korrespondenzen vom gesuchten Typ, {@code ept} ist der
+     *  Typ des Gegenendes. */
+    private static boolean anchorTranslatedIn(Graph g, Iterable<Part> ofType, int ept, Id anchor) {
+        for (Part p : ofType) {
+            Conn c = g.conn(p.connection);
+            Node other = g.node(p.other);
+            if (c == null || !c.status.alive() || other == null || !other.status.alive()) continue;
+            for (Part q : g.parts(p.other)) {
+                if (!q.other.equals(anchor) && q.otherTyp == ept) {
+                    Node en = g.node(q.other);
+                    if (en != null && en.status.alive()) return true;
+                }
+            }
+        }
+        return false;
     }
 
     public void runToSaturation(Graph g, Map<Id, String> vals) {
@@ -1298,6 +1419,21 @@ public final class Engine {
         if (sawContradiction) return Termination.CONTRADICTION;
         if (applied.isEmpty()) return Termination.CONVERGENCE;
         return Termination.DUPLICATION;
+    }
+
+    /**
+     * Die Schluessel der angewandten Matches, in der Folge der Matches.
+     * Jeder steht einmal darin: eine Marke traegt nur der Match, der unter
+     * seinem Schluessel in {@link #byKey} steht ({@link Applied}). Fuer
+     * Tests und den Abzug in {@code Worlds.dump}, der in 2.0.2 die Menge
+     * {@code applied} las.
+     */
+    List<MatchKey> appliedKeys() {
+        List<MatchKey> out = new ArrayList<>();
+        for (int mix = 0; mix < matches.size(); mix++) {
+            if (applied.marked(mix)) out.add(matches.get(mix).key);
+        }
+        return out;
     }
 
     /** Cascade bis Sättigung mit Schranke (Spiegel von engine::run). */

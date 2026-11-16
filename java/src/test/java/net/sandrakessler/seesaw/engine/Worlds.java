@@ -5,6 +5,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Random;
+import java.util.function.Consumer;
+import java.util.function.Function;
 
 import net.sandrakessler.seesaw.graph.Conn;
 import net.sandrakessler.seesaw.graph.Graph;
@@ -258,11 +260,13 @@ final class Worlds {
             ids(out, "refs", List.of(k.refs));
             out.append('\n');
         }
-        // applied ist eine Hash-Menge ohne Ordnung: die Zeilen in der
+        // Die angewandten Schluessel ohne Ordnung: die Zeilen in der
         // Ordnung von 2.0.2 (Regelindex, dann Ref-Folge). jgate.sh diff
-        // baut diese Datei auch gegen v2.0.2, dort ist der Elementtyp
-        // AppliedKey, hier MatchKey, daher var; beide haben ruleIx und refs.
-        var applied = new ArrayList<>(e.applied);
+        // baut diese Datei auch gegen v2.0.2 und liest dort statt des
+        // Zugangs der Engine die Menge e.applied. Dort ist der Elementtyp
+        // AppliedKey, hier MatchKey, daher var. Beide haben ruleIx und
+        // refs.
+        var applied = new ArrayList<>(e.appliedKeys());
         applied.sort((x, y) -> x.ruleIx != y.ruleIx ? Integer.compare(x.ruleIx, y.ruleIx)
                 : Matcher.compareBindings(x.refs, y.refs));
         for (var k : applied) {
@@ -285,11 +289,19 @@ final class Worlds {
 
     /** Die Rückgaben von {@code step}, ein Buchstabe je Schritt. */
     static String steps(Engine e, Graph g, Map<Id, String> vals, int limit) {
+        return steps(e, g, vals, limit, null);
+    }
+
+    /** Wie {@link #steps(Engine, Graph, Map, int)}. {@code seen} sieht
+     *  die Engine vor dem ersten Schritt und nach jedem (null: keiner). */
+    static String steps(Engine e, Graph g, Map<Id, String> vals, int limit, Consumer<Engine> seen) {
         StringBuilder steps = new StringBuilder();
+        if (seen != null) seen.accept(e);
         while (steps.length() < limit) {
             Boolean r = e.step(g, vals);
             if (r == null) break;
             steps.append(r ? 'a' : 'd');
+            if (seen != null) seen.accept(e);
         }
         return steps.toString();
     }
@@ -297,12 +309,23 @@ final class Worlds {
     /** Fährt ein Szenario durch eine Engine; ein Abzug je Welle. */
     static List<String> run(World world, boolean routed, List<Wave> waves, boolean useIndex,
             boolean indexSeed) {
+        return run(world, routed, waves, rules -> new Engine(rules, useIndex), indexSeed, null);
+    }
+
+    /**
+     * Wie {@link #run(World, boolean, List, boolean, boolean)} mit der
+     * Engine, die {@code engine} zu den Regeln baut. {@code seen} sieht
+     * sie vor dem ersten Schritt jeder Welle, nach jedem Schritt und
+     * nach jeder Konsolidierung (null: keiner).
+     */
+    static List<String> run(World world, boolean routed, List<Wave> waves,
+            Function<List<Rule>, Engine> engine, boolean indexSeed, Consumer<Engine> seen) {
         Graph g = new Graph();
         List<Rule> rules = Rules.load(world.rules(), g);
         Map<Id, String> vals = new HashMap<>();
         List<Id> nodes = new ArrayList<>();
         List<Integer> kindOf = new ArrayList<>();
-        Engine e = new Engine(rules, useIndex);
+        Engine e = engine.apply(rules);
         if (indexSeed) e.seedFactor = 0;
         List<String> dumps = new ArrayList<>();
         for (int waveIx = 0; waveIx < waves.size(); waveIx++) {
@@ -454,8 +477,11 @@ final class Worlds {
                 }
                 default -> throw new IllegalStateException();
             }
-            String steps = steps(e, g, vals, wave.limit >= 0 ? wave.limit : 2000);
-            if (wave.limit < 0) e.consolidate(g);
+            String steps = steps(e, g, vals, wave.limit >= 0 ? wave.limit : 2000, seen);
+            if (wave.limit < 0) {
+                e.consolidate(g);
+                if (seen != null) seen.accept(e);
+            }
             dumps.add(wave + " " + note + "\nsteps=" + steps + "\n" + dump(g, vals, e));
         }
         return dumps;

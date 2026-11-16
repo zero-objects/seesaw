@@ -359,10 +359,17 @@ diff_build() {
         return 1
     fi
     mkdir -p "$rj/$DIFF_PKG"
+    # Die angewandten Schlüssel liest Worlds.dump über e.appliedKeys(), v2.0.2 führt sie als Menge
+    # e.applied.
     sed -e 's/new Engine(rules, useIndex)/new Engine(rules)/' -e '/if (indexSeed) e.seedFactor = 0;/d' \
+        -e 's/e\.appliedKeys()/e.applied/' \
         "$J/$DIFF_PKG/Worlds.java" >"$rj/$DIFF_PKG/Worlds.java"
     if grep -q -e 'seedFactor' -e 'new Engine(rules, ' "$rj/$DIFF_PKG/Worlds.java"; then
         echo "diff BUILD_FEHLER Worlds.java der Referenz: Index-Argument nicht entfernt"
+        return 1
+    fi
+    if grep -q 'appliedKeys' "$rj/$DIFF_PKG/Worlds.java"; then
+        echo "diff BUILD_FEHLER Worlds.java der Referenz: appliedKeys() nicht ersetzt"
         return 1
     fi
     cp "$J/$DIFF_PKG/DiffDump.java" "$rj/$DIFF_PKG/DiffDump.java"

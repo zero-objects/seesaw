@@ -213,8 +213,9 @@ final class TodoKeyTest {
         assertTrue(verschieden > 500, "nur " + verschieden + " verschiedene Koepfe");
     }
 
-    /** Ein Schluessel je Match: matches, todo, byKey und applied halten
-     *  dasselbe Objekt, ohne Kopie der Ref-Folge. */
+    /** Ein Schluessel je Match: matches, todo und byKey halten dasselbe
+     *  Objekt, ohne Kopie der Ref-Folge. Der Kandidat im Todo traegt die
+     *  Nummer seines Matches, die angewandten sind Matches des Speichers. */
     @Test
     void einSchluesselJeMatch() {
         String json = """
@@ -232,7 +233,10 @@ final class TodoKeyTest {
         e.seed(g, Map.of());
         assertEquals(2, e.matches.size());
         Set<MatchKey> imTodo = Collections.newSetFromMap(new IdentityHashMap<>());
-        for (Engine.TodoKey t : e.todo) imTodo.add(t.key);
+        for (Engine.TodoKey t : e.todo) {
+            imTodo.add(t.key);
+            assertSame(e.matches.get(t.mix).key, t.key);
+        }
         Set<MatchKey> imIndex = Collections.newSetFromMap(new IdentityHashMap<>());
         imIndex.addAll(e.byKey.keySet());
         for (Engine.MatchRec m : e.matches) {
@@ -245,6 +249,6 @@ final class TodoKeyTest {
         assertFalse(e.applied.isEmpty());
         Set<MatchKey> imSpeicher = Collections.newSetFromMap(new IdentityHashMap<>());
         for (Engine.MatchRec m : e.matches) imSpeicher.add(m.key);
-        for (MatchKey k : e.applied) assertTrue(imSpeicher.contains(k));
+        for (MatchKey k : e.appliedKeys()) assertTrue(imSpeicher.contains(k));
     }
 }
