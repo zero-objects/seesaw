@@ -4,22 +4,24 @@ Rust: User-CPU min (main.rs Spalte 4), je Zelle Minimum über 3 Runden; --sample
 Faktor = Java Thread-CPU min / Rust User-CPU min. Java wall min = Spalte 6 (Minimum über Runden), alloc = alloc= (Minimum über Runden, MB), gc_ms = gc_ms= (Minimum über Runden)
 uptime vor der Messung (01:04:15): load average 20.30, 19.20, 19.80 (nproc 16)
 uptime nach der Messung (02:26:17): load average 18.73, 20.10, 22.09
+Last auf codepit: Der Controller maß um 02:27: top zeigt keinen Prozess mit CPU-Anteil, load average 16.02, 19.03, 21.58 bei nproc 16. Die Herkunft der Last ist außerhalb von codepit nicht geprüft.
+Tabelle berechnet mit einem Skript aus base.tsv und rust-sel.tsv (LC_ALL=C), Werte mit einer Nachkommastelle, Faktor aus den ungerundeten Werten.
 
 Zelle                                       java_cpu_ms  rust_cpu_ms   faktor java_wall_ms   alloc_MB    gc_ms
-langpack/add/k700/n2000                           386,0         22,0     17,5        387,0      618,3        0
-langpack/seed/k700/n2000                          393,0         22,0     17,9        393,0      615,6        0
-langpack/backward/k700/n2000                      282,0         18,0     15,7        282,0      437,0        0
-langpack/add/k700/n20000                         4034,0        265,0     15,2       4109,0     6202,8       70
-langpack/delta-add/k700/n20000/d200                29,0          2,0     14,5         29,0       47,5        0
-langpack/delta-change/k700/n20000/d200            852,0         75,0     11,4        897,0     1146,3       38
-langpack/delta-delete/k700/n20000/d200            190,0         21,0      9,0        191,0      117,5        0
-langpack/delta-delete/k700/n20000/d2000          1036,0        113,0      9,2       1076,0      722,6       36
-f2p/batch/f20000                                 7232,0        734,0      9,9       7701,0     9963,2      466
-f2p/add/f20000                                  10335,0       1092,0      9,5      10823,0    15392,3      456
-f2p/delta-add/f20000/d1000                        429,0         42,0     10,2        440,0      710,8        0
-f2p/delta-delete/f20000/d1000                      20,0          4,0      5,0         20,0        7,6        0
-pde/load/java40                                   375,0        238,0      1,6        376,0      280,2        0
-pde/graph/java40                                  920,0        186,0      4,9        921,0     1275,9        0
-pde/open/java40                                 50942,0       4310,0     11,8      51908,0    63776,4      876
+langpack/add/k700/n2000                           386.9         22.2     17.4        387.1      618.3        0
+langpack/seed/k700/n2000                          393.6         22.9     17.2        393.7      615.6        0
+langpack/backward/k700/n2000                      282.2         18.1     15.6        282.2      437.0        0
+langpack/add/k700/n20000                         4034.9        265.7     15.2       4109.7     6202.8       70
+langpack/delta-add/k700/n20000/d200                29.4          2.3     12.8         29.4       47.5        0
+langpack/delta-change/k700/n20000/d200            852.1         75.8     11.2        897.1     1146.3       38
+langpack/delta-delete/k700/n20000/d200            190.9         21.2      9.0        191.0      117.5        0
+langpack/delta-delete/k700/n20000/d2000          1036.4        113.2      9.2       1076.4      722.6       36
+f2p/batch/f20000                                 7232.9        734.8      9.8       7701.1     9963.2      466
+f2p/add/f20000                                  10335.2        922.1     11.2      10823.8    15392.3      456
+f2p/delta-add/f20000/d1000                        429.2         42.2     10.2        440.5      710.8        0
+f2p/delta-delete/f20000/d1000                      20.7          4.8      4.3         20.7        7.6        0
+pde/load/java40                                   375.8        238.6      1.6        376.4      280.2        0
+pde/graph/java40                                  920.7        186.7      4.9        921.7     1275.9        0
+pde/open/java40                                 50942.6       4310.1     11.8      51908.0    63776.4      876
 
 Fingerprint (Schritte, angewandte Schritte, Knoten, Fingerprint): alle 45 Java-Zeilen und alle 45 Rust-Zeilen gleich uid-cgu1.tsv (Label sel) derselben Zelle.
