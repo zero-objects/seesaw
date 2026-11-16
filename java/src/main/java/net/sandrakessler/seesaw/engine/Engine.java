@@ -198,8 +198,9 @@ public final class Engine {
      * Reihenfolge ein.
      */
     public final boolean useIndex;
-    /** Der Index: selbst gebaut beim ersten Gebrauch oder vom Host
-     *  uebergeben. */
+    /** Der Index: beim ersten Gebrauch aus dem Vorrat des Prozesses
+     *  genommen oder dort gebaut ({@link AnchorIndex#shared}), oder vom
+     *  Host uebergeben. */
     private AnchorIndex index;
     /** Groesse der Regelliste, fuer die {@link #index} gilt. */
     private int indexRules = -1;
@@ -211,6 +212,9 @@ public final class Engine {
     /** Arbeitsspeicher eines Schritts: die Identitaeten der Knoten
      *  seines Plans (Rust {@code ids}), siehe {@link #planOf}. */
     private final ArrayList<Id> ids = new ArrayList<>();
+    /** Die Namen der Plaene der Regeln und ihre Kennungen im Graphen des
+     *  Schritts (Rust {@code names}). */
+    private final Names names = new Names();
     /** Zahl der gestarteten Suchen (Expansion und Seed) und der Seeds,
      *  die ueber den Index gingen. Diagnose fuer Tests und Messung. */
     long searches;
@@ -273,9 +277,10 @@ public final class Engine {
     /**
      * Mit einem Index, den der Host fuer denselben Regelsatz einmal
      * gebaut hat ({@link AnchorIndex#build}) und den mehrere Engines
-     * teilen. Ein Index, der zu anderen Mustern gehoert
-     * ({@link AnchorIndex#fits}), wird nicht genommen: die Engine baut
-     * dann ihren eigenen.
+     * teilen. Die Engine nutzt dann den Vorrat des Prozesses nicht. Ein
+     * Index, der zu anderen Mustern gehoert ({@link AnchorIndex#fits}),
+     * wird nicht genommen: die Engine nimmt dann ihren eigenen wie ohne
+     * Index des Hosts.
      */
     public Engine(List<Rule> rules, AnchorIndex shared) {
         this(rules, true);
@@ -286,8 +291,10 @@ public final class Engine {
     }
 
     /**
-     * Der Index der Engine, gebaut, wenn er fehlt oder die Regelliste
-     * seither ihre Laenge geaendert hat. {@code null}: die Regeln
+     * Der Index der Engine, genommen, wenn er fehlt oder die Regelliste
+     * seither ihre Laenge geaendert hat: aus dem Vorrat des Prozesses,
+     * der ihn baut, wenn er keinen fuer einen Regelsatz gleichen Inhalts
+     * haelt ({@link AnchorIndex#shared}). {@code null}: die Regeln
      * sprengen die Kodierung des Index ({@link AnchorIndex#supports}),
      * gesucht wird dann ungefiltert. Eine Regel, die in der Liste an
      * ihrem Platz ERSETZT oder veraendert wird, sieht die Pruefung
@@ -295,9 +302,14 @@ public final class Engine {
      */
     private AnchorIndex index() {
         if (indexRules != rules.size()) {
-            index = AnchorIndex.supports(rules) ? AnchorIndex.build(rules) : null;
+            index = AnchorIndex.supports(rules) ? AnchorIndex.shared(rules) : null;
             indexRules = rules.size();
         }
+        return index;
+    }
+
+    /** Der Index, den die Engine haelt, ohne ihn zu nehmen. Fuer Tests. */
+    AnchorIndex anchorIndex() {
         return index;
     }
 
@@ -1139,13 +1151,23 @@ public final class Engine {
 
     /** null = dynamisches Blatt ohne Quelle (würde entfallen). */
     public Id previewCreate(Graph g, Rule r, Id[] refs, List<Id> ids, CreateNode cn) {
+        Id src = null;
+        if (!cn.corrFullMatch && cn.dynAttr != null) {
+            src = g.childLeafOfType(refs[cn.dynAnchor], cn.dynAttr);
+            if (src == null) return null;
+        }
+        return preview(r, refs, ids, cn, src);
+    }
+
+    /**
+     * {@link #previewCreate} mit dem Quellblatt {@code src} eines
+     * dynamischen Blatts, das der Aufrufer gefunden hat (nicht null fuer
+     * ein dynamisches Blatt, sonst nicht gelesen).
+     */
+    private static Id preview(Rule r, Id[] refs, List<Id> ids, CreateNode cn, Id src) {
         Id parent = cn.parent >= 0 ? refs[cn.parent] : ids.get(-cn.parent - 1);
         if (cn.corrFullMatch) return Ident.identCorr(parent, cn.typ, refs);
-        if (cn.dynAttr != null) {
-            Id src = g.childLeafOfType(refs[cn.dynAnchor], cn.dynAttr);
-            if (src == null) return null;
-            return Ident.identDerived(parent, cn.typ, src, cn.dynTransform);
-        }
+        if (cn.dynAttr != null) return Ident.identDerived(parent, cn.typ, src, cn.dynTransform);
         if (cn.konst != null) return Ident.identKonst(parent, cn.typ, r.name, ids.size());
         if (cn.derivedLeaf < 0) return Ident.identGhost(parent, cn.typ);
         return Ident.identDerived(parent, cn.typ, refs[cn.derivedLeaf], cn.derivedTransform);
@@ -1192,6 +1214,7 @@ public final class Engine {
      * abgeleitet: fuer die Duplikat-Pruefung (wie
      * {@link #creationExists}), fuer die Tombstone-Pruefung und fuer die
      * Anwendung. Nach {@code TOMBSTONE} ist {@code ids} unvollstaendig.
+     * {@code names}: die Namen von {@code r} ({@link Names#forStep}).
      *
      * <p>Die Entscheidung ist die von 2.0.2: dort pruefte
      * {@code creationExists} bis zum ersten fehlenden Knoten und danach
@@ -1199,15 +1222,20 @@ public final class Engine {
      * dieselben Identitaeten. Ein Tombstone irgendwo im Plan ist also
      * ein Widerspruch, sonst ein Duplikat, wenn alles lebendig da ist.
      */
-    private Planned planOf(Graph g, Rule r, Id[] refs, ArrayList<Id> ids) {
+    private Planned planOf(Graph g, Rule r, Id[] refs, ArrayList<Id> ids, Names names) {
         ids.clear();
         boolean allAlive = true;
-        for (CreateNode cn : r.createNodes) {
-            Id id = previewCreate(g, r, refs, ids, cn);
-            if (id == null) { // dyn ohne Quelle: nichts würde erzeugt
-                ids.add(cn.parent >= 0 ? refs[cn.parent] : ids.get(-cn.parent - 1));
-                continue;
+        for (int planIx = 0; planIx < r.createNodes.size(); planIx++) {
+            CreateNode cn = r.createNodes.get(planIx);
+            Id src = null;
+            if (!cn.corrFullMatch && cn.dynAttr != null) {
+                src = names.childLeaf(g, planIx, refs[cn.dynAnchor], cn.dynAttr);
+                if (src == null) { // dyn ohne Quelle: nichts würde erzeugt
+                    ids.add(cn.parent >= 0 ? refs[cn.parent] : ids.get(-cn.parent - 1));
+                    continue;
+                }
             }
+            Id id = preview(r, refs, ids, cn, src);
             Node n = g.node(id);
             if (n != null && n.status == St.TOMBSTONE) return Planned.TOMBSTONE;
             if (n == null || !n.status.alive()) allAlive = false;
@@ -1228,7 +1256,7 @@ public final class Engine {
     }
 
     public Created applyCreation(Graph g, Rule r, Id[] refs) {
-        return applyCreationAt(g, r, refs, null);
+        return applyCreationAt(g, r, refs, null, null);
     }
 
     /**
@@ -1236,9 +1264,12 @@ public final class Engine {
      * Identitaeten der Plan-Knoten ({@code ids}, plan-indiziert, wie
      * {@link #stepWithLimit} sie fuer seine Pruefungen ableitet). Rust
      * {@code apply_creation_at}. Der Eintrag eines dynamischen Blatts
-     * ohne Quelle wird nicht gelesen.
+     * ohne Quelle wird nicht gelesen. Mit {@code ids} kommen die
+     * Kennungen der Namen aus {@code names} (die Namen von {@code r},
+     * {@link Names#forStep}), ohne {@code ids} ist {@code names} null und
+     * jeder Name wird aufgeloest wie in 2.0.2.
      */
-    Created applyCreationAt(Graph g, Rule r, Id[] refs, List<Id> ids) {
+    Created applyCreationAt(Graph g, Rule r, Id[] refs, List<Id> ids, Names names) {
         // Plan-indiziert; null-Slot = dyn-Blatt ohne Quelle.
         List<Id> slots = new ArrayList<>();
         List<Id> created = new ArrayList<>();
@@ -1254,29 +1285,35 @@ public final class Engine {
             }
             Id id;
             if (cn.corrFullMatch) {
-                id = ids != null ? g.addCorrAt(ids.get(planIx), cn.typ) : g.addCorr(parent, cn.typ, refs);
+                id = ids != null ? names.addCorr(g, planIx, ids.get(planIx), cn.typ)
+                        : g.addCorr(parent, cn.typ, refs);
             } else if (cn.dynAttr != null) {
-                Id src = g.childLeafOfType(refs[cn.dynAnchor], cn.dynAttr);
+                Id src = ids != null ? names.childLeaf(g, planIx, refs[cn.dynAnchor], cn.dynAttr)
+                        : g.childLeafOfType(refs[cn.dynAnchor], cn.dynAttr);
                 if (src == null) { slots.add(null); continue; }
-                id = ids != null ? g.addDerivedLeafAt(ids.get(planIx), cn.typ, src, cn.dynTransform)
+                id = ids != null
+                        ? names.addDerivedLeaf(g, planIx, ids.get(planIx), cn.typ, src, cn.dynTransform)
                         : g.addDerivedLeaf(parent, cn.typ, src, cn.dynTransform);
                 // Die Attribut-Korrespondenz des dynamischen Falls.
                 // Fehlt die Quelle, entsteht kein Blatt und folglich
                 // auch keine Korrespondenz -- apply-if-present gilt
                 // fuer beide. Spiegel von apply_creation in plan.rs.
                 if (cn.attrCorr != null) {
-                    Id ac = g.addCorr(src, cn.attrCorr + "_" + cn.typ, refs);
+                    Id ac = ids != null ? names.addAttrCorr(g, planIx, src, cn.attrCorr, cn.typ, refs)
+                            : g.addCorr(src, cn.attrCorr + "_" + cn.typ, refs);
                     g.markCorr(ac);
                     dynCorrs.add(new Id[] {ac, src, id});
                 }
             } else if (cn.konst != null) {
-                id = ids != null ? g.addKonstLeafAt(ids.get(planIx), cn.typ, cn.konst)
+                id = ids != null ? names.addKonstLeaf(g, planIx, ids.get(planIx), cn.typ, cn.konst)
                         : g.addKonstLeaf(parent, cn.typ, r.name, planIx, cn.konst);
             } else if (cn.derivedLeaf < 0) {
-                id = ids != null ? g.addGhostAt(ids.get(planIx), cn.typ) : g.addGhost(parent, cn.typ);
+                id = ids != null ? names.addGhost(g, planIx, ids.get(planIx), cn.typ)
+                        : g.addGhost(parent, cn.typ);
             } else {
                 id = ids != null
-                        ? g.addDerivedLeafAt(ids.get(planIx), cn.typ, refs[cn.derivedLeaf], cn.derivedTransform)
+                        ? names.addDerivedLeaf(g, planIx, ids.get(planIx), cn.typ, refs[cn.derivedLeaf],
+                                cn.derivedTransform)
                         : g.addDerivedLeaf(parent, cn.typ, refs[cn.derivedLeaf], cn.derivedTransform);
             }
             // Die uebergebene Identitaet ist die, die hier abgeleitet
@@ -1349,7 +1386,8 @@ public final class Engine {
             // Matches mit tentativ zurueckgezogenem Anker.
             MatchKey mk = k.key;
             if (applied.contains(mk, k.mix)) continue;
-            Recognised recognised = recognise(g, rule, k.refs);
+            Names names = this.names.forStep(g, rules, k.ruleIx);
+            Recognised recognised = recognise(g, rule, k.refs, names);
             if (recognised == Recognised.TENTATIVE) {
                 // TT-Anker feuern nicht (Reclaim-Zombie-Schutz): vergessener
                 // Match wird vom nächsten Seed neu gefunden, falls resurrektiert.
@@ -1362,7 +1400,7 @@ public final class Engine {
             }
             // Die Identitaeten der Plan-Knoten, einmal abgeleitet: fuer
             // die Duplikat-Pruefung, den V7-Guard und die Anwendung.
-            Planned planned = planOf(g, rule, k.refs, ids);
+            Planned planned = planOf(g, rule, k.refs, ids, names);
             if (planned == Planned.EXISTS) {
                 // Ebenfalls ein Duplikat: alles, was der Plan erzeugen
                 // wuerde, ist da.
@@ -1376,7 +1414,7 @@ public final class Engine {
                 sawContradiction = true;
                 continue;
             }
-            Created cr = applyCreationAt(g, rule, k.refs, ids);
+            Created cr = applyCreationAt(g, rule, k.refs, ids, names);
             int eix = cascade.size();
             cascade.add(new Entry(k.ruleIx, rule.rank, k.refs, cr.nodes, cr.edges));
             cascadeLen++;
@@ -1432,12 +1470,14 @@ public final class Engine {
      * Anker gestellt geben sie also die Antworten, die erst die eine Frage
      * ueber alle Anker und dann die andere gaebe. Unter {@link #checks}
      * werden sie auch einzeln gestellt und verglichen, eine Abweichung
-     * wirft.
+     * wirft. Die Typen der Eintraege kommen aus {@code names} (die Namen
+     * von {@code rule}, {@link Names#forStep}).
      */
-    private Recognised recognise(Graph g, Rule rule, Id[] refs) {
+    private Recognised recognise(Graph g, Rule rule, Id[] refs, Names names) {
         boolean tentative = false;
         boolean translated = !rule.corrRecognition.isEmpty();
-        for (Object[] rec : rule.corrRecognition) {
+        for (int ix = 0; ix < rule.corrRecognition.size(); ix++) {
+            Object[] rec = rule.corrRecognition.get(ix);
             Id anchor = refs[(Integer) rec[1]];
             Graph.Slot s = g.map.get(anchor);
             if (s == null) {
@@ -1451,9 +1491,9 @@ public final class Engine {
                 break;
             }
             if (translated) {
-                Integer t = g.lookup((String) rec[0]);
-                Integer ept = g.lookup((String) rec[2]);
-                translated = t != null && ept != null && s.parts != null
+                int t = names.corrTyp(g, ix, (String) rec[0]);
+                int ept = names.endpointTyp(g, ix, (String) rec[2]);
+                translated = t != Names.NONE && ept != Names.NONE && s.parts != null
                         && anchorTranslatedIn(g, s.parts.ofType(t), ept, anchor);
             }
         }

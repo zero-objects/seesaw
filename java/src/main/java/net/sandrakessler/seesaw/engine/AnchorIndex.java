@@ -53,8 +53,11 @@ import net.sandrakessler.seesaw.rules.Predicate;
  *
  * <p>Nach dem Bau wird der Index nur gelesen. Mehrere Engines, auch
  * auf mehreren Threads, können einen Index teilen
- * ({@link Engine#Engine(List, AnchorIndex)}). Das Arbeitsgedächtnis
- * eines Gangs ({@link Walk}) gehört der Engine.
+ * ({@link Engine#Engine(List, AnchorIndex)}). Eine Engine ohne Index
+ * des Hosts nimmt den Index ihres Regelsatzes aus einem Vorrat des
+ * Prozesses, den sie mit den Engines über einen Regelsatz gleichen
+ * Inhalts teilt ({@link #forgetShared}). Das Arbeitsgedächtnis eines
+ * Gangs ({@link Walk}) gehört der Engine.
  */
 public final class AnchorIndex {
 
@@ -364,7 +367,9 @@ public final class AnchorIndex {
     /** Zahl der Regeln, aus denen der Index gebaut ist. */
     final int ruleCount;
 
-    private AnchorIndex(List<Rule> rules) {
+    /** {@code read}: was der Index aus {@code rules} liest
+     *  ({@link #read}). */
+    private AnchorIndex(List<Rule> rules, byte[] read) {
         ruleCount = rules.size();
         planAt = new int[ruleCount];
         int positions = 0;
@@ -373,7 +378,7 @@ public final class AnchorIndex {
             positions += rules.get(ri).patNodes.size();
         }
         plans = new AtomicReferenceArray<>(positions);
-        shape = shape(rules);
+        shape = Blake3.hash(read);
     }
 
     /**
@@ -393,7 +398,13 @@ public final class AnchorIndex {
         if (!supports(rules)) {
             throw new IllegalArgumentException("zu viele Regeln oder Musterpositionen für den Index");
         }
-        AnchorIndex index = new AnchorIndex(rules);
+        return build(rules, read(rules));
+    }
+
+    /** {@link #build} mit dem, was der Index aus {@code rules} liest
+     *  ({@link #read}). */
+    private static AnchorIndex build(List<Rule> rules, byte[] read) {
+        AnchorIndex index = new AnchorIndex(rules, read);
         Tree tree = new Tree();
         int[] chain = new int[MAX_DEPTH + 1];
         for (int ri = 0; ri < rules.size(); ri++) {
@@ -545,76 +556,209 @@ public final class AnchorIndex {
      * Gleichen die Muster von {@code rules} denen, aus denen der Index
      * gebaut wurde? Verglichen wird ein Digest der Musterknoten (Typ,
      * Wertprädikat) und der Links aller Regeln, also alles, was der
-     * Index liest. Die Typen gehen mit ihren Nummern aus der Typtabelle
-     * des Graphen ein, gegen den die Regeln gesenkt wurden. Der Index
-     * passt damit auch zu Regeln eines anderen Graphen, wenn dessen
-     * Typtabelle die Typen gleich nummeriert, und nur dann.
+     * Index liest ({@link #read}). Die Typen gehen mit ihren Nummern aus
+     * der Typtabelle des Graphen ein, gegen den die Regeln gesenkt wurden.
+     * Der Index passt damit auch zu Regeln eines anderen Graphen, wenn
+     * dessen Typtabelle die Typen gleich nummeriert, und nur dann.
      */
     public boolean fits(List<Rule> rules) {
-        return rules.size() == ruleCount && Arrays.equals(shape, shape(rules));
+        return rules.size() == ruleCount && Arrays.equals(shape, Blake3.hash(read(rules)));
     }
 
-    private static void putInt(Blake3 h, byte[] buf, int v) {
-        buf[0] = (byte) v;
-        buf[1] = (byte) (v >> 8);
-        buf[2] = (byte) (v >> 16);
-        buf[3] = (byte) (v >> 24);
-        h.update(buf, 0, 4);
+    /** Wachsende Folge von Bytes, Zahlen little-endian. */
+    private static final class Bytes {
+        byte[] a = new byte[1024];
+        int n;
+
+        private void room(int k) {
+            if (n + k > a.length) a = Arrays.copyOf(a, Math.max(n + k, a.length * 2));
+        }
+
+        void putInt(int v) {
+            room(4);
+            a[n++] = (byte) v;
+            a[n++] = (byte) (v >> 8);
+            a[n++] = (byte) (v >> 16);
+            a[n++] = (byte) (v >> 24);
+        }
+
+        void putLong(long v) {
+            room(8);
+            for (int i = 0; i < 8; i++) a[n++] = (byte) (v >> (8 * i));
+        }
+
+        void putText(String s) {
+            byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            putInt(b.length);
+            room(b.length);
+            System.arraycopy(b, 0, a, n, b.length);
+            n += b.length;
+        }
     }
 
-    private static void putLong(Blake3 h, byte[] buf, long v) {
-        for (int i = 0; i < 8; i++) buf[i] = (byte) (v >> (8 * i));
-        h.update(buf, 0, 8);
-    }
-
-    private static void putText(Blake3 h, byte[] buf, String s) {
-        byte[] b = s.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        putInt(h, buf, b.length);
-        h.update(b);
-    }
-
-    /** Digest dessen, was der Index aus einem Regelsatz liest. Jedes
-     *  Feld variabler Länge trägt seine Länge voran. */
-    private static byte[] shape(List<Rule> rules) {
-        Blake3 h = new Blake3();
-        byte[] buf = new byte[8];
-        putInt(h, buf, rules.size());
+    /**
+     * Was der Index aus einem Regelsatz liest, als Bytes (Rust
+     * {@code feed}): je Regel die Musterknoten (Typ, Wertprädikat) und die
+     * Links. Jedes Feld variabler Länge trägt seine Länge voran. Der
+     * Digest darüber steht in {@link #shape}, der Vorrat des Prozesses
+     * vergleicht die Bytes selbst. Ein regulärer Ausdruck geht mit seinem
+     * Text ein.
+     */
+    static byte[] read(List<Rule> rules) {
+        Bytes out = new Bytes();
+        out.putInt(rules.size());
         for (Rule rule : rules) {
-            putInt(h, buf, rule.patNodes.size());
+            out.putInt(rule.patNodes.size());
             for (PatNode n : rule.patNodes) {
-                putInt(h, buf, n.typ);
+                out.putInt(n.typ);
                 Predicate p = n.predicate;
                 if (p == null) {
-                    putInt(h, buf, 0);
+                    out.putInt(0);
                 } else if (p instanceof Predicate.Exists) {
-                    putInt(h, buf, 1);
+                    out.putInt(1);
                 } else if (p instanceof Predicate.Equals e) {
-                    putInt(h, buf, 2);
-                    putText(h, buf, e.expected());
+                    out.putInt(2);
+                    out.putText(e.expected());
                 } else if (p instanceof Predicate.Prefix q) {
-                    putInt(h, buf, 3);
-                    putText(h, buf, q.prefix());
+                    out.putInt(3);
+                    out.putText(q.prefix());
                 } else if (p instanceof Predicate.Regex q) {
-                    putInt(h, buf, 4);
-                    putText(h, buf, q.raw());
+                    out.putInt(4);
+                    out.putText(q.raw());
                 } else if (p instanceof Predicate.NumericRange q) {
-                    putInt(h, buf, 5);
-                    putLong(h, buf, Double.doubleToLongBits(q.min()));
-                    putLong(h, buf, Double.doubleToLongBits(q.max()));
+                    out.putInt(5);
+                    out.putLong(Double.doubleToLongBits(q.min()));
+                    out.putLong(Double.doubleToLongBits(q.max()));
                 } else {
                     throw new IllegalArgumentException("unbekanntes Prädikat: " + p);
                 }
             }
-            putInt(h, buf, rule.patLinks.size());
+            out.putInt(rule.patLinks.size());
             for (PatLink l : rule.patLinks) {
-                putInt(h, buf, l.from);
-                putInt(h, buf, l.to);
-                putInt(h, buf, l.kind.ordinal());
+                out.putInt(l.from);
+                out.putInt(l.to);
+                out.putInt(l.kind.ordinal());
             }
         }
-        byte[] out = new byte[32];
-        h.finalize32(out);
-        return out;
+        return Arrays.copyOf(out.a, out.n);
+    }
+
+    // ── Vorrat des Prozesses (Rust engine/anchor/own.rs) ──
+    //
+    // Die Indizes, die Engines ohne Index des Hosts bauen, bleiben im
+    // Prozess, wiedergefunden über das, was ein Index aus den Regeln liest
+    // (read). Eine Engine über einen Regelsatz, den der Prozess
+    // gesehen hat, nimmt den Index, der da ist, auch wenn die Regeln neu
+    // geladen wurden. Ein Index ist eine Funktion dessen, was er aus den
+    // Regeln liest, der Index eines gleichen Regelsatzes antwortet also
+    // gleich. Auch die Pläne der verankerten Suchen (plan) lesen nur die
+    // Zahl der Positionen und die Links des Musters.
+
+    /** Regelsätze, deren Index der Prozess behält. */
+    static final int KEPT = 32;
+
+    /** Was ein Index aus einem Regelsatz liest, mit einem Hash darüber
+     *  für einen ersten Vergleich. Zwei Regelsätze sind hier gleich, wenn
+     *  die Bytes es sind. */
+    private static final class Read {
+        final int hash;
+        final byte[] bytes;
+
+        Read(byte[] bytes) {
+            this.bytes = bytes;
+            this.hash = Arrays.hashCode(bytes);
+        }
+
+        boolean same(Read o) {
+            return hash == o.hash && Arrays.equals(bytes, o.bytes);
+        }
+    }
+
+    /** Ein behaltener Index mit dem, woraus er gebaut ist. */
+    private record Kept(Read read, AnchorIndex index) {}
+
+    /** Die behaltenen Indizes, der zuletzt genutzte vorn. Gelesen und
+     *  geändert nur unter der Sperre dieser Liste. */
+    private static final ArrayList<Kept> SHARED = new ArrayList<>();
+
+    /** Der behaltene Index für {@code read}, er rückt nach vorn. null:
+     *  keiner. Unter der Sperre von {@link #SHARED}. */
+    private static AnchorIndex find(Read read) {
+        for (int i = 0; i < SHARED.size(); i++) {
+            Kept k = SHARED.get(i);
+            if (k.read().same(read)) {
+                if (i > 0) {
+                    SHARED.remove(i);
+                    SHARED.add(0, k);
+                }
+                return k.index();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Der Index des Regelsatzes für eine Engine ohne Index des Hosts,
+     * geteilt mit den Engines des Prozesses über einen gleichen
+     * Regelsatz, gebaut, wenn der Prozess ihn nicht behält. Die Regeln
+     * passen in die Kodierung ({@link #supports}).
+     */
+    static AnchorIndex shared(List<Rule> rules) {
+        Read read = new Read(read(rules));
+        synchronized (SHARED) {
+            AnchorIndex index = find(read);
+            if (index != null) return index;
+        }
+        // Außerhalb der Sperre gebaut. Zwei Threads, die zugleich nichts
+        // finden, bauen beide, der zweite nimmt den Index, den der erste
+        // eingetragen hat.
+        AnchorIndex built = build(rules, read.bytes);
+        synchronized (SHARED) {
+            AnchorIndex index = find(read);
+            if (index != null) return index;
+            SHARED.add(0, new Kept(read, built));
+            while (SHARED.size() > KEPT) SHARED.remove(SHARED.size() - 1);
+        }
+        return built;
+    }
+
+    /**
+     * Verwirft die Indizes, die der Prozess für die Engines behält, denen
+     * kein Index übergeben wurde.
+     *
+     * <p>Eine Engine ohne Index des Hosts ({@link Engine#Engine(List)})
+     * nimmt den Index ihres Regelsatzes aus einem Vorrat des Prozesses und
+     * baut ihn nur, wenn noch keine Engine über einen Regelsatz gleichen
+     * Inhalts das getan hat. Der Vorrat hält die Indizes der letzten 32
+     * Regelsätze und wird nicht von selbst geleert: der Index eines 33.
+     * Regelsatzes verdrängt den, der am längsten nicht genutzt wurde. Ein
+     * Host, der mit seinen Regelsätzen fertig ist, gibt den Speicher mit
+     * diesem Aufruf zurück. Lebende Engines behalten ihren Index. Die
+     * nächste Engine über einen Regelsatz, der nicht mehr behalten ist,
+     * baut ihren Index neu.
+     */
+    public static void forgetShared() {
+        synchronized (SHARED) {
+            SHARED.clear();
+        }
+    }
+
+    /** Zahl der behaltenen Regelsätze (für Tests). */
+    static int kept() {
+        synchronized (SHARED) {
+            return SHARED.size();
+        }
+    }
+
+    /** Ist der Index dieses Regelsatzes behalten (für Tests)? */
+    static boolean keeps(List<Rule> rules) {
+        Read read = new Read(read(rules));
+        synchronized (SHARED) {
+            for (Kept k : SHARED) {
+                if (k.read().same(read)) return true;
+            }
+            return false;
+        }
     }
 
     // ── Tripel als long: (Regel, Index in die Knotenliste, Position) ──
