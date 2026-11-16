@@ -86,13 +86,23 @@ public final class Graph {
     }
 
     public Id addGhost(Id parent, String typName) {
-        Id id = Ident.identGhost(parent, typName);
+        return addGhostAt(Ident.identGhost(parent, typName), typName);
+    }
+
+    /** {@link #addGhost} mit schon abgeleiteter Identitaet (Rust
+     *  {@code add_ghost_at}). */
+    public Id addGhostAt(Id id, String typName) {
         insertNode(new Node(id, intern(typName), St.GHOST, null, null));
         return id;
     }
 
     public Id addDerivedLeaf(Id parent, String typName, Id source, Chain t) {
-        Id id = Ident.identDerived(parent, typName, source, t);
+        return addDerivedLeafAt(Ident.identDerived(parent, typName, source, t), typName, source, t);
+    }
+
+    /** {@link #addDerivedLeaf} mit schon abgeleiteter Identitaet (Rust
+     *  {@code add_derived_leaf_at}). */
+    public Id addDerivedLeafAt(Id id, String typName, Id source, Chain t) {
         insertNode(new Node(id, intern(typName), St.GHOST, source, t));
         return id;
     }
@@ -110,7 +120,12 @@ public final class Graph {
     }
 
     public Id addCorr(Id anchor, String typName, Id[] refs) {
-        Id id = Ident.identCorr(anchor, typName, refs);
+        return addCorrAt(Ident.identCorr(anchor, typName, refs), typName);
+    }
+
+    /** {@link #addCorr} mit schon abgeleiteter Identitaet (Rust
+     *  {@code add_corr_at}). */
+    public Id addCorrAt(Id id, String typName) {
         insertNode(new Node(id, intern(typName), St.GHOST, null, null));
         return id;
     }
@@ -129,7 +144,12 @@ public final class Graph {
 
     /** Regel-Konstanten-Blatt (§3b.4): Wert wohnt im Regelsatz. */
     public Id addKonstLeaf(Id parent, String typName, String ruleName, int planIx, String value) {
-        Id id = Ident.identKonst(parent, typName, ruleName, planIx);
+        return addKonstLeafAt(Ident.identKonst(parent, typName, ruleName, planIx), typName, value);
+    }
+
+    /** {@link #addKonstLeaf} mit schon abgeleiteter Identitaet (Rust
+     *  {@code add_konst_leaf_at}). */
+    public Id addKonstLeafAt(Id id, String typName, String value) {
         insertNode(new Node(id, intern(typName), St.GHOST, null, null, internKonst(value)));
         return id;
     }

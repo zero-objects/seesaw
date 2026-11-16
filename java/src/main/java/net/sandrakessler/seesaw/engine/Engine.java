@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeSet;
@@ -155,8 +156,20 @@ public final class Engine {
      * zu dem Eintrag, der es gebaut hat: der Match einer Regel enthaelt
      * nicht, was die Regel erzeugt. Die Korrespondenz desselben
      * Eintrags war damit unerreichbar (gemessen 2026-08-11).
+     *
+     * <p>Abgelegt werden die erzeugten KNOTEN. Die Eintraege, die eine
+     * erzeugte Verbindung gebaut haben, findet {@link #producersOf} aus
+     * ihren beiden Enden, wenn eine geloeschte Verbindung danach fragt.
+     * Jede Verbindung abzulegen war mehr als die Haelfte der Eintraege
+     * (Rust aff0c2c).
      */
-    final HashMap<Id, ArrayList<Integer>> byProduct = new HashMap<>();
+    final HashMap<Id, IntList> byProduct = new HashMap<>();
+    /**
+     * Pruefung von {@link #producersOf} unter {@link #CHECKS}: die
+     * erzeugten Verbindungen, abgelegt wie bisher in {@link #byProduct}
+     * (Rust {@code by_product_filed}). null ohne Pruefung.
+     */
+    final HashMap<Id, IntList> byProductFiled = CHECKS ? new HashMap<>() : null;
     /** Null = absichtlich ungerichteter Initial-/Batchlauf. */
     boolean[] waveDirections;
     /**
@@ -485,10 +498,103 @@ public final class Engine {
             // Es wurde von Eintraegen ERZEUGT: die verlieren ihr
             // Ergebnis, und mit ihnen faellt alles Weitere, das sie
             // gebaut haben -- die Korrespondenz vor allem.
-            ArrayList<Integer> eixs = byProduct.get(id);
+            // Ohne Kopie: retractEntry aendert byProduct nicht.
+            IntList eixs = producersOf(g, id);
             if (eixs != null) {
-                for (int eix : new ArrayList<>(eixs)) retractEntry(g, eix, queue);
+                for (int i = 0, n = eixs.size(); i < n; i++) retractEntry(g, eixs.get(i), queue);
             }
+        }
+    }
+
+    /**
+     * Die Kaskaden-Eintraege, die das Element {@code id} erzeugt haben,
+     * aufsteigend (Rust {@code producers_of}). null: keiner.
+     *
+     * <p>Ein Knoten steht in {@link #byProduct}, zurueck kommt dessen
+     * Liste selbst (der Aufrufer aendert sie nicht). Eine Verbindung
+     * nicht: ihr Erzeuger nennt sie unter seinen {@code createdEdges},
+     * und er hat eines ihrer Enden erzeugt oder gematcht (ein Link eines
+     * Plans verbindet gematchte und erzeugte Knoten, die Verbindungen
+     * einer dynamischen Attribut-Korrespondenz gehen von der
+     * Korrespondenz aus, die der Eintrag erzeugt hat). Die Erzeuger der
+     * Enden und die Eintraege der Matches, die ein Ende binden, sind
+     * damit alle Kandidaten.
+     */
+    IntList producersOf(Graph g, Id id) {
+        Conn c = g.conn(id);
+        if (c == null) {
+            IntList nodes = byProduct.get(id);
+            if (byProductFiled != null) checkProducers(id, false, nodes);
+            return nodes;
+        }
+        // Die Kandidaten: je Ende seine Erzeuger und die Eintraege der
+        // Matches, die es binden.
+        IntList[] producedBy = {byProduct.get(c.source), byProduct.get(c.target)};
+        IntList[] boundIn = {byElement.get(c.source), byElement.get(c.target)};
+        int n = 0;
+        for (int end = 0; end < 2; end++) {
+            if (producedBy[end] != null) n += producedBy[end].size();
+            if (boundIn[end] != null) n += boundIn[end].size();
+        }
+        int[] eixs = new int[n];
+        int k = 0;
+        for (int end = 0; end < 2; end++) {
+            IntList p = producedBy[end];
+            if (p != null) {
+                for (int i = 0, m = p.size(); i < m; i++) eixs[k++] = p.get(i);
+            }
+            IntList b = boundIn[end];
+            if (b != null) {
+                for (int i = 0, m = b.size(); i < m; i++) {
+                    Integer entry = matches.get(b.get(i)).entry;
+                    if (entry != null) eixs[k++] = entry;
+                }
+            }
+        }
+        Arrays.sort(eixs, 0, k);
+        IntList producers = null;
+        for (int i = 0; i < k; i++) {
+            int eix = eixs[i];
+            if (i > 0 && eix == eixs[i - 1]) continue;
+            if (cascade.get(eix).createdEdges.contains(id)) {
+                if (producers == null) producers = new IntList();
+                producers.add(eix);
+            }
+        }
+        if (byProductFiled != null) checkProducers(id, true, producers);
+        return producers;
+    }
+
+    /**
+     * Pruefung unter {@link #CHECKS}: {@code found} sind die Erzeuger,
+     * die 2.0.2 in {@link #byProduct} abgelegt haette, wo es Knoten und
+     * Verbindungen ablegte. Fuer eine Id, die keine Verbindung des
+     * Graphen ist, darf unter ihr keine Verbindung abgelegt sein. Fuer
+     * eine Verbindung ihre Ablage ohne aufeinanderfolgende
+     * Wiederholungen: ein Eintrag, der sie zweimal nennt, stand zweimal
+     * in der Liste, der zweite {@link #retractEntry} fand den Schluessel
+     * nicht mehr in {@link #byKey} und tat nichts.
+     */
+    private void checkProducers(Id id, boolean connection, IntList found) {
+        IntList filed = byProductFiled.get(id);
+        if (!connection) {
+            if (filed != null) {
+                throw new IllegalStateException("producersOf: unter " + HexFormat.of().formatHex(id.b)
+                        + " sind Verbindungen abgelegt " + filed + ", der Graph haelt keine");
+            }
+            return;
+        }
+        int[] want = filed == null ? new int[0] : filed.toArray();
+        int m = 0;
+        for (int i = 0; i < want.length; i++) {
+            if (m == 0 || want[m - 1] != want[i]) want[m++] = want[i];
+        }
+        want = Arrays.copyOf(want, m);
+        int[] got = found == null ? new int[0] : found.toArray();
+        if (!Arrays.equals(want, got)) {
+            throw new IllegalStateException("producersOf: die Erzeuger aus den Enden "
+                    + Arrays.toString(got) + " weichen von den abgelegten " + Arrays.toString(want)
+                    + " ab, Verbindung " + HexFormat.of().formatHex(id.b));
         }
     }
 
@@ -947,6 +1053,17 @@ public final class Engine {
     }
 
     public Created applyCreation(Graph g, Rule r, Id[] refs) {
+        return applyCreationAt(g, r, refs, null);
+    }
+
+    /**
+     * {@link #applyCreation}, wahlweise mit den schon abgeleiteten
+     * Identitaeten der Plan-Knoten ({@code ids}, plan-indiziert, wie
+     * {@link #stepWithLimit} sie fuer seine Pruefungen ableitet). Rust
+     * {@code apply_creation_at}. Der Eintrag eines dynamischen Blatts
+     * ohne Quelle wird nicht gelesen.
+     */
+    Created applyCreationAt(Graph g, Rule r, Id[] refs, List<Id> ids) {
         // Plan-indiziert; null-Slot = dyn-Blatt ohne Quelle.
         List<Id> slots = new ArrayList<>();
         List<Id> created = new ArrayList<>();
@@ -962,11 +1079,12 @@ public final class Engine {
             }
             Id id;
             if (cn.corrFullMatch) {
-                id = g.addCorr(parent, cn.typ, refs);
+                id = ids != null ? g.addCorrAt(ids.get(planIx), cn.typ) : g.addCorr(parent, cn.typ, refs);
             } else if (cn.dynAttr != null) {
                 Id src = g.childLeafOfType(refs[cn.dynAnchor], cn.dynAttr);
                 if (src == null) { slots.add(null); continue; }
-                id = g.addDerivedLeaf(parent, cn.typ, src, cn.dynTransform);
+                id = ids != null ? g.addDerivedLeafAt(ids.get(planIx), cn.typ, src, cn.dynTransform)
+                        : g.addDerivedLeaf(parent, cn.typ, src, cn.dynTransform);
                 // Die Attribut-Korrespondenz des dynamischen Falls.
                 // Fehlt die Quelle, entsteht kein Blatt und folglich
                 // auch keine Korrespondenz -- apply-if-present gilt
@@ -977,12 +1095,18 @@ public final class Engine {
                     dynCorrs.add(new Id[] {ac, src, id});
                 }
             } else if (cn.konst != null) {
-                id = g.addKonstLeaf(parent, cn.typ, r.name, planIx, cn.konst);
+                id = ids != null ? g.addKonstLeafAt(ids.get(planIx), cn.typ, cn.konst)
+                        : g.addKonstLeaf(parent, cn.typ, r.name, planIx, cn.konst);
             } else if (cn.derivedLeaf < 0) {
-                id = g.addGhost(parent, cn.typ);
+                id = ids != null ? g.addGhostAt(ids.get(planIx), cn.typ) : g.addGhost(parent, cn.typ);
             } else {
-                id = g.addDerivedLeaf(parent, cn.typ, refs[cn.derivedLeaf], cn.derivedTransform);
+                id = ids != null
+                        ? g.addDerivedLeafAt(ids.get(planIx), cn.typ, refs[cn.derivedLeaf], cn.derivedTransform)
+                        : g.addDerivedLeaf(parent, cn.typ, refs[cn.derivedLeaf], cn.derivedTransform);
             }
+            // Die uebergebene Identitaet ist die, die hier abgeleitet
+            // wuerde (slots haelt die Plan-Knoten vor diesem).
+            assert ids == null || id.equals(previewCreate(g, r, refs, slots, cn)) : r.name + " " + planIx;
             if (cn.isCorr) g.markCorr(id);
             slots.add(id);
             created.add(id);
@@ -1081,9 +1205,11 @@ public final class Engine {
                 applied.add(mk);
                 return false;
             }
-            // V7-Guard
+            // V7-Guard. Die Identitaeten der Plan-Knoten, einmal
+            // abgeleitet: fuer diese Pruefung und fuer die Anwendung
+            // unten.
             boolean contradicts = false;
-            List<Id> ids = new ArrayList<>();
+            List<Id> ids = new ArrayList<>(rule.createNodes.size());
             for (CreateNode cn : rule.createNodes) {
                 Id id = previewCreate(g, rule, k.refs, ids, cn);
                 if (id == null) {
@@ -1095,14 +1221,17 @@ public final class Engine {
                 ids.add(id);
             }
             if (contradicts) { sawContradiction = true; continue; }
-            Created cr = applyCreation(g, rule, k.refs);
+            Created cr = applyCreationAt(g, rule, k.refs, ids);
             int eix = cascade.size();
             cascade.add(new Entry(k.ruleIx, rule.rank, k.refs, cr.nodes, cr.edges));
             cascadeLen++;
-            // Provenienz, Produktseite: jeder Knoten und jede Kante,
-            // die dieser Eintrag gebaut hat, zeigt auf ihn zurueck.
-            for (Id pid : cr.nodes) byProduct.computeIfAbsent(pid, x -> new ArrayList<>()).add(eix);
-            for (Id pid : cr.edges) byProduct.computeIfAbsent(pid, x -> new ArrayList<>()).add(eix);
+            // Provenienz, Produktseite: jeder Knoten, den dieser Eintrag
+            // gebaut hat, zeigt auf ihn zurueck. Seine Kanten findet
+            // producersOf aus ihren Enden.
+            for (Id pid : cr.nodes) byProduct.computeIfAbsent(pid, x -> new IntList()).add(eix);
+            if (byProductFiled != null) {
+                for (Id pid : cr.edges) byProductFiled.computeIfAbsent(pid, x -> new IntList()).add(eix);
+            }
             applied.add(mk);
             // Provenienz-Kante materialisieren (für retractFor ohne Scan).
             Integer mix = byKey.get(mk);

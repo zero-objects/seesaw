@@ -3,9 +3,10 @@ package net.sandrakessler.seesaw.engine;
 import java.util.Arrays;
 
 /**
- * Liste von Indizes in den Match-Speicher, je Element von
- * {@code Engine.byElement} (Rust {@code Ixs}). Die meisten Elemente
- * stehen in wenigen Matches: bis {@link #INLINE} Indizes liegen in
+ * Liste von Indizes in den Match-Speicher oder die Kaskade, je Element
+ * von {@code Engine.byElement} und {@code Engine.byProduct} (Rust
+ * {@code Ixs}). Die meisten Elemente stehen in wenigen Matches und
+ * haben wenige Erzeuger: bis {@link #INLINE} Indizes liegen in
  * Feldern des Objekts, erst eine laengere Liste bekommt ein Array.
  * Reihenfolge des Einfuegens, ohne Boxing. Es wird nur angehaengt.
  */
