@@ -249,7 +249,11 @@ final class MatcherTest {
             sb.append("m ").append(Engine.key(m.ruleIx, m.refs)).append(' ').append(m.dead)
                     .append(' ').append(m.entry).append('\n');
         }
-        for (Map.Entry<String, Integer> k : new TreeMap<>(e.byKey).entrySet()) {
+        TreeMap<String, Integer> keys = new TreeMap<>();
+        for (Map.Entry<MatchKey, Integer> k : e.byKey.entrySet()) {
+            keys.put(Engine.key(k.getKey().ruleIx, k.getKey().refs), k.getValue());
+        }
+        for (Map.Entry<String, Integer> k : keys.entrySet()) {
             sb.append("k ").append(k.getKey()).append(' ').append(k.getValue()).append('\n');
         }
         for (Map.Entry<Id, ArrayList<Integer>> x : e.byElement.entrySet()) {

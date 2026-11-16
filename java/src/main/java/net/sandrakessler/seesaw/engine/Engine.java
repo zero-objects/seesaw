@@ -96,7 +96,8 @@ public final class Engine {
 
     final TreeSet<TodoKey> todo = new TreeSet<>();
     final TreeSet<AppliedKey> applied = new TreeSet<>();
-    final HashMap<String, Integer> byKey = new HashMap<>();
+    /** (Regelindex, Ref-Folge) → Index im Match-Speicher. */
+    final HashMap<MatchKey, Integer> byKey = new HashMap<>();
     final ArrayList<MatchRec> matches = new ArrayList<>();
     final HashMap<Id, ArrayList<Integer>> byElement = new HashMap<>();
     public final ArrayList<Entry> cascade = new ArrayList<>();
@@ -289,12 +290,15 @@ public final class Engine {
     }
 
     /**
-     * Schluessel eines Matches: Regelindex plus Referenzfolge.
+     * Schluessel eines Matches als Zeichenkette: Regelindex plus
+     * Referenzfolge. Fuer Hosts; die Engine selbst fuehrt
+     * {@link MatchKey}, mit derselben Gleichheit.
      *
      * <p>Feste Breite je Byte. {@code Integer.toHexString} laesst
      * fuehrende Nullen weg, damit war die Kodierung nicht injektiv:
      * die Folgen {@code 01 23} und {@code 12 03} ergaben beide
-     * {@code "123"}, und {@link #record} konnte einen berechtigten
+     * {@code "123"}, und {@link #record}, das damals diese
+     * Zeichenkette als Schluessel fuehrte, konnte einen berechtigten
      * Match als Duplikat verwerfen. Rust nutzt die Referenzfolge
      * direkt als Schluessel, ohne Kodierung -- Java kann also nur
      * dann dieselben Entscheidungen treffen, wenn die Kodierung
@@ -325,7 +329,7 @@ public final class Engine {
      * Graph) wird sie wie bisher abgeleitet. Beides ist dieselbe Id.
      */
     void record(Graph g, int ruleIx, Id[] refs) {
-        String k = key(ruleIx, refs);
+        MatchKey k = new MatchKey(ruleIx, refs);
         if (byKey.containsKey(k)) return;
         int ix = matches.size();
         for (Id id : refs) byElement.computeIfAbsent(id, x -> new ArrayList<>()).add(ix);
@@ -380,7 +384,7 @@ public final class Engine {
         // Reclaim-Fähigkeit: Vermerk VERGESSEN, damit eine identische
         // Re-Ableitung erneut anwenden (resurrektieren) kann.
         applied.remove(new AppliedKey(ruleIx, refs));
-        byKey.remove(key(ruleIx, refs));
+        byKey.remove(new MatchKey(ruleIx, refs));
         if (entry != null) {
             Entry e = cascade.get(entry);
             for (Id c : e.created) {
@@ -449,7 +453,7 @@ public final class Engine {
      */
     void retractEntry(Graph g, int eix, ArrayList<Id> queue) {
         Entry e = cascade.get(eix);
-        Integer mix = byKey.get(key(e.ruleIx, e.refs));
+        Integer mix = byKey.get(new MatchKey(e.ruleIx, e.refs));
         if (mix != null) retractMatch(g, mix, queue);
     }
 
@@ -997,7 +1001,7 @@ public final class Engine {
                 Node an = g.node(k.refs[pos]);
                 if (an != null && an.status == St.TENTATIVE_TOMBSTONE) { anchorTt = true; break; }
             }
-            if (anchorTt) { byKey.remove(key(k.ruleIx, k.refs)); continue; }
+            if (anchorTt) { byKey.remove(new MatchKey(k.ruleIx, k.refs)); continue; }
             boolean translated = !rule.corrRecognition.isEmpty();
             for (Object[] rec : rule.corrRecognition) {
                 String typ = (String) rec[0];
@@ -1051,7 +1055,7 @@ public final class Engine {
             for (Id pid : cr.edges) byProduct.computeIfAbsent(pid, x -> new ArrayList<>()).add(eix);
             applied.add(ak);
             // Provenienz-Kante materialisieren (für retractFor ohne Scan).
-            Integer mix = byKey.get(key(k.ruleIx, k.refs));
+            Integer mix = byKey.get(new MatchKey(k.ruleIx, k.refs));
             if (mix != null) matches.get(mix).entry = eix;
             expandAt(g, vals, cr.nodes);
             return true;
