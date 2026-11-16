@@ -31,9 +31,16 @@
 #         der Zeile von JavaSuite; ein Lauf ohne Aufwärmen, kein Messwert), dann je Protokoll "pde <name> VERDIKT=bestanden zellen=…" oder
 #         "pde <name> VERDIKT=durchgefallen <gründe> zellen=…". Bestanden nur, wenn jede
 #         Rust-Zelle des Protokolls ohne Abweichung durchlief und Schritte, angewandte Schritte,
-#         Knoten und Fingerprint gleich der Rust-Zelle sind. Am Ende "pde PDE_RC=…
-#         protokolle=… bestanden=… durchgefallen=…"; PDE_RC=0 nur, wenn jedes verlangte Protokoll
-#         besteht und protokolle>0.
+#         Knoten und Fingerprint gleich der Rust-Zelle sind.
+#         Bekannte Abweichungen von Java 2.0.2 stehen in PDE_EXPECTED (Vorgabe
+#         bench/pde-abweichungen.txt, Format und Grund dort). Für ein Protokoll mit Eintrag besteht
+#         eine Zelle nur, wenn ihre erste Abweichung genau an der Zeile des Eintrags mit genau
+#         dessen Meldung liegt ("bekannte Abweichung an Zeile …"). Eine andere Abweichung
+#         (ANDERE_ABWEICHUNG), ein Lauf ohne Abweichung (OHNE_ABWEICHUNG, eine
+#         Verhaltensänderung gegenüber 2.0.2) oder ein anderer Fehler fallen durch. Fehlt die
+#         Datei oder ist eine Zeile ungültig, fällt der ganze Teil durch.
+#         Am Ende "pde PDE_RC=… protokolle=… bestanden=… durchgefallen=…"; PDE_RC=0 nur, wenn
+#         jedes verlangte Protokoll besteht und protokolle>0.
 #           pde:<name>  nur das Protokoll <name>, für Jobs unter 5 Minuten
 #
 # Exit-Code 1, wenn ein Teil nicht besteht. Gefahren wird der Baum, in dem dieses Skript liegt
@@ -51,6 +58,7 @@ NOT_JAVA='^langpack/engines/|^langpack/index/|/delta-change-same/'
 PDE='^pde/'
 PDE_DIR=${SEESAW_PDE_DUMP:-/root/seesaw-java/pde-dump}
 PDE_TIMEOUT=${PDE_TIMEOUT:-270}
+PDE_EXPECTED=${PDE_EXPECTED:-$J/bench/pde-abweichungen.txt}
 status=0
 
 # Klassenpfad der Laufzeit-Abhängigkeiten nach $1. Offline; fehlt dem lokalen Repository das
@@ -174,12 +182,42 @@ pde() {
         : >/tmp/jgate-pde.list
     fi
     echo "pde verzeichnis=$PDE_DIR"
+    # Bekannte Abweichungen: Name, Zeile, Meldung (Tab-getrennt nach /tmp/jgate-pde.exp).
+    if [ ! -f "$PDE_EXPECTED" ]; then
+        echo "pde ERWARTUNG_FEHLT $PDE_EXPECTED"
+        echo "pde PDE_RC=1"
+        status=1
+        return
+    fi
+    if ! awk -v f="$PDE_EXPECTED" '
+        /^[ \t]*(#|$)/ { next }
+        {
+            line = $0
+            if (NF < 3 || $2 !~ /^[1-9][0-9]*$/ || ($1 in seen)) {
+                print "pde ERWARTUNG_UNGUELTIG " f ":" FNR ": " line > "/dev/stderr"
+                bad = 1
+                next
+            }
+            seen[$1] = 1
+            msg = line
+            sub(/^[^ ]+ +[^ ]+ +/, "", msg)
+            print $1 "\t" $2 "\t" msg
+        }
+        END { exit bad }' "$PDE_EXPECTED" >/tmp/jgate-pde.exp 2>/tmp/jgate-pde.experr; then
+        cat /tmp/jgate-pde.experr
+        echo "pde PDE_RC=1"
+        status=1
+        return
+    fi
+    echo "pde erwartung=$PDE_EXPECTED eintraege=$(wc -l </tmp/jgate-pde.exp | tr -d ' ')"
     tsv=/tmp/jgate-pde.tsv
     records=0; passed=0; failed_records=0
     for name in $names; do
         records=$((records + 1))
         cells=$(awk -F'\t' -v n="$name" '$2 == n { print $1 }' /tmp/jgate-pde.ref)
-        n=0; same=0; diff=0; missing=0; failed=0
+        exp_line=$(awk -F'\t' -v n="$name" '$1 == n { print $2 }' /tmp/jgate-pde.exp)
+        exp_msg=$(awk -F'\t' -v n="$name" '$1 == n { print $3 }' /tmp/jgate-pde.exp)
+        n=0; same=0; diff=0; missing=0; failed=0; known=0; other=0; through=0
         if [ -z "$cells" ]; then
             echo "pde $name OHNE_REFERENZ: keine Rust-Zelle pde/<teil>/$name mit Label sel"
         fi
@@ -198,6 +236,21 @@ pde() {
             rc=$?
             secs=$(awk -v a="$t0" -v b="$(date +%s%N)" 'BEGIN { printf "%.1f", (b - a) / 1e9 }')
             if [ $rc -ne 0 ] || [ ! -s $tsv ]; then
+                # Erste Abweichung der Nachfahrt: Zeile und Meldung.
+                mm=$(grep -m1 'PdeReplay\$Mismatch: ' /tmp/jgate-pde.err)
+                if [ -n "$exp_line" ] && [ -n "$mm" ]; then
+                    at=$(printf '%s\n' "$mm" | sed -n 's/.*\.trace:\([0-9][0-9]*\): \(.*\); Aufruf: .*/\1/p')
+                    msg=$(printf '%s\n' "$mm" | sed -n 's/.*\.trace:\([0-9][0-9]*\): \(.*\); Aufruf: .*/\2/p')
+                    if [ "$at" = "$exp_line" ] && [ "$msg" = "$exp_msg" ]; then
+                        known=$((known + 1))
+                        echo "pde $c bekannte Abweichung an Zeile $at: $msg sekunden=$secs"
+                    else
+                        other=$((other + 1))
+                        echo "pde $c ANDERE_ABWEICHUNG an Zeile $at: $msg (Eintrag: Zeile $exp_line: $exp_msg) sekunden=$secs"
+                        printf '%s\n' "$mm" | cut -c1-400 | sed 's/^/pde   /'
+                    fi
+                    continue
+                fi
                 failed=$((failed + 1))
                 echo "pde $c RUN_FAILED rc=$rc sekunden=$secs rust=$rust"
                 if grep -q -E 'Exception|Error' /tmp/jgate-pde.err; then
@@ -209,7 +262,10 @@ pde() {
             fi
             got=$(awk -F'\t' '{ print $8 " " $9 " " $10 " " $11 }' $tsv)
             cpu=$(awk -F'\t' '{ print $4 }' $tsv)
-            if [ "$got" = "$rust" ]; then
+            if [ -n "$exp_line" ]; then
+                through=$((through + 1))
+                echo "pde $c OHNE_ABWEICHUNG java=$got rust=$rust (Eintrag: Zeile $exp_line: $exp_msg) sekunden=$secs"
+            elif [ "$got" = "$rust" ]; then
                 same=$((same + 1))
                 echo "pde $c gleich $got sekunden=$secs cpu_ms=$cpu"
             else
@@ -222,7 +278,12 @@ pde() {
         [ $diff -ne 0 ] && why="$why abweichend=$diff"
         [ $missing -ne 0 ] && why="$why fehlend=$missing"
         [ $failed -ne 0 ] && why="$why fehlgeschlagen=$failed"
-        if [ -z "$why" ]; then
+        [ $other -ne 0 ] && why="$why andere_abweichung=$other"
+        [ $through -ne 0 ] && why="$why ohne_abweichung=$through"
+        if [ -z "$why" ] && [ -n "$exp_line" ]; then
+            passed=$((passed + 1))
+            echo "pde $name VERDIKT=bestanden bekannte Abweichung an Zeile $exp_line zellen=$n"
+        elif [ -z "$why" ]; then
             passed=$((passed + 1))
             echo "pde $name VERDIKT=bestanden zellen=$n"
         else
