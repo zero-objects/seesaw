@@ -203,7 +203,9 @@ public final class Engine {
     private AnchorIndex index;
     /** Groesse der Regelliste, fuer die {@link #index} gilt. */
     private int indexRules = -1;
-    private final AnchorIndex.Walk walk = new AnchorIndex.Walk();
+    /** Arbeitsgedaechtnis der Gaenge durch den Index, mit dem Zaehler
+     *  der Gaenge ({@link AnchorIndex.Walk#visits}). */
+    final AnchorIndex.Walk walk = new AnchorIndex.Walk();
     /** Arbeitsspeicher der verankerten Suchen, über die Suchen behalten. */
     private final Matcher.Scratch scratch = new Matcher.Scratch();
     /** Arbeitsspeicher eines Schritts: die Identitaeten der Knoten
@@ -213,6 +215,14 @@ public final class Engine {
      *  die ueber den Index gingen. Diagnose fuer Tests und Messung. */
     long searches;
     long seedsByIndex;
+    /**
+     * Zaehler an den Stellen der Rust-Zaehler aus {@code perf_trace}:
+     * die verankerten Suchen ueber den Index in der Expansion und im
+     * Seed ({@code anchored_searches}) und die Suchen je Regel im Seed
+     * ohne Index ({@code seed_searches}). Diagnose fuer Tests.
+     */
+    long anchoredSearches;
+    long seedSearches;
 
     /**
      * Systemeigenschaft {@code seesaw.anchorIndex}: {@code false}
@@ -296,6 +306,44 @@ public final class Engine {
         void match(int ruleIx, Id[] refs);
     }
 
+    /** Bis zu so vielen neuen Knoten wird "steht frueher unter den
+     *  neuen Knoten" durch Absuchen der Liste beantwortet, darueber
+     *  ueber eine Abbildung (Rust {@code LINEAR_NEW}). */
+    static final int LINEAR_NEW = 8;
+
+    /**
+     * Steht ein Knoten unter den neuen Knoten einer Expansion vor dem
+     * Index {@code ni}? Die Suche und der Gang an {@code newNodes[ni]}
+     * lassen solche Knoten aus ({@link #expandByIndex}).
+     */
+    private static final class Earlier implements AnchorIndex.Skip {
+        private final List<Id> nodes;
+        /** Je Knoten sein erster Index, ab {@link #LINEAR_NEW} Knoten,
+         *  sonst null. */
+        private final HashMap<Id, Integer> first;
+
+        Earlier(List<Id> nodes) {
+            this.nodes = nodes;
+            if (nodes.size() > LINEAR_NEW) {
+                first = new HashMap<>();
+                for (int i = 0; i < nodes.size(); i++) first.putIfAbsent(nodes.get(i), i);
+            } else {
+                first = null;
+            }
+        }
+
+        @Override public boolean test(int ni, Id id) {
+            if (first != null) {
+                Integer i = first.get(id);
+                return i != null && i < ni;
+            }
+            for (int i = 0; i < ni; i++) {
+                if (java.util.Objects.equals(nodes.get(i), id)) return true;
+            }
+            return false;
+        }
+    }
+
     /** Die Folge der Matches eines Suchwegs, fuer den Vergleich. */
     private static final class Found implements Sink {
         final ArrayList<Integer> rule = new ArrayList<>();
@@ -308,6 +356,19 @@ public final class Engine {
 
         void into(Sink sink) {
             for (int i = 0; i < rule.size(); i++) sink.match(rule.get(i), refs.get(i));
+        }
+
+        /** Die Folge ohne jeden Match, der in ihr schon frueher steht:
+         *  die Folge, die {@link Engine#record} davon eintraegt. */
+        Found firsts() {
+            Found out = new Found();
+            HashSet<MatchKey> seen = new HashSet<>();
+            for (int i = 0; i < rule.size(); i++) {
+                if (seen.add(new MatchKey(rule.get(i), refs.get(i)))) {
+                    out.match(rule.get(i), refs.get(i));
+                }
+            }
+            return out;
         }
 
         /** Stelle der ersten Abweichung, -1 = gleich. */
@@ -855,6 +916,7 @@ public final class Engine {
             Rule r = rules.get(ri);
             Id[] fixed = new Id[r.patNodes.size()];
             searches++;
+            seedSearches++;
             for (Id[] m : Matcher.findMatchesWithFixed(g, vals, r, fixed)) sink.match(ri, m);
         }
     }
@@ -914,7 +976,7 @@ public final class Engine {
                 starts.addAll(g.nodesOfType(r.patNodes.get(0).typ));
             }
         }
-        long[] candidates = ix.candidates(g, vals, starts, walk, this::ruleActive, true);
+        long[] candidates = ix.candidates(g, vals, starts, walk, this::ruleActive, true, null);
         int next = 0;
         ArrayList<Id[]> found = new ArrayList<>();
         for (int ri = 0; ri < rules.size(); ri++) {
@@ -932,6 +994,7 @@ public final class Engine {
                 next++;
                 if (plan == null) plan = ix.plan(ri, 0, r);
                 searches++;
+                anchoredSearches++;
                 Matcher.findMatchesPlanned(g, vals, r, plan, 0, start, scratch);
                 found.addAll(scratch.found);
             }
@@ -982,9 +1045,10 @@ public final class Engine {
      * Nachbarschaft die Pfade verwirklicht, die das Muster von dort
      * verlangt ({@link AnchorIndex}). Die Tripel kommen in der
      * Reihenfolge der Schleife ueber Regeln, Knoten und Positionen, und
-     * an jedem laeuft dieselbe Suche wie ungefiltert: eingetragen wird
-     * also dieselbe Folge von Matches, nur die Suchen ohne Ergebnis
-     * entfallen.
+     * an jedem laeuft die Suche ohne die frueheren neuen Knoten
+     * ({@link #expandByIndex}): eingetragen wird also dieselbe Folge von
+     * Matches, nur die Suchen ohne Ergebnis und die Funde, die
+     * {@link #record} als schon eingetragen verwerfen wuerde, entfallen.
      *
      * <p>Jeder gefundene Match wird eingetragen, auch einer, dessen
      * Anker schon uebersetzt ist: das entscheidet {@link #step}, wenn
@@ -995,11 +1059,15 @@ public final class Engine {
         Sink sink = (ri, m) -> record(g, ri, m);
         if (useIndex && index() != null) {
             if (CHECKS) {
+                // Der Index sucht einen Match, der mehrere neue Knoten
+                // bindet, nur vom ersten aus, die ungefilterte Schleife
+                // von jedem. Verglichen wird die Folge der ersten Funde
+                // je Match, die Folge, die record eintraegt.
                 Found indexed = new Found();
                 Found plain = new Found();
                 expandByIndex(g, vals, newNodes, indexed);
                 expandUnfiltered(g, vals, newNodes, plain);
-                checkSame("die Expansion", indexed, plain);
+                checkSame("die Expansion", indexed.firsts(), plain.firsts());
                 indexed.into(sink);
                 return;
             }
@@ -1029,21 +1097,41 @@ public final class Engine {
         }
     }
 
+    /**
+     * Die Expansion ueber den {@link AnchorIndex}.
+     *
+     * <p>Ein Match, der mehrere der neuen Knoten bindet, wuerde von
+     * jedem von ihnen aus gefunden. Er wird nur vom ersten aus gesucht:
+     * die Suche an {@code newNodes[ni]} laesst jeden Knoten aus, der in
+     * {@code newNodes} frueher steht (Rust 878b85f). Ein Match mit einem
+     * solchen Knoten hat ihn an einer Position, an der der Index ihn
+     * ebenfalls anbietet (die Bedingung ist notwendig), und dieses Tripel
+     * sortiert vor diesem. Der Match wird also dort eingetragen, an der
+     * Stelle der Folge, an der er bisher zuerst eingetragen wurde, und
+     * {@link #record} haette die spaeteren Funde verworfen. Der Index
+     * laesst dieselben Knoten aus seinen Gaengen aus (Rust 17b7e52), er
+     * bietet also keinen Platz an, dessen Suche nur solche Matches
+     * faende, und keinen fuer einen Knoten, der in {@code newNodes} ein
+     * zweites Mal steht.
+     */
     private void expandByIndex(Graph g, Map<Id, String> vals, List<Id> newNodes, Sink sink) {
         if (newNodes.isEmpty()) return;
         AnchorIndex ix = index();
+        Earlier earlier = new Earlier(newNodes);
         // Die Suchen lesen nur den Graphen, das Eintragen aendert ihn
         // nicht: die Kandidaten gelten fuer die ganze Expansion.
-        long[] candidates = ix.candidates(g, vals, newNodes, walk, this::ruleActive, false);
+        long[] candidates = ix.candidates(g, vals, newNodes, walk, this::ruleActive, false, earlier);
         for (long t : candidates) {
             int ri = AnchorIndex.rule(t);
             int pos = AnchorIndex.pos(t);
+            int ni = AnchorIndex.node(t);
             Rule r = rules.get(ri);
             searches++;
+            anchoredSearches++;
             // Die Suche schreibt in den Arbeitsspeicher der Engine, der
             // Abnehmer liest die Matches daraus (er sucht nicht selbst).
-            Matcher.findMatchesPlanned(g, vals, r, ix.plan(ri, pos, r), pos,
-                    newNodes.get(AnchorIndex.node(t)), scratch);
+            Matcher.findMatchesPlanned(g, vals, r, ix.plan(ri, pos, r), pos, newNodes.get(ni),
+                    ni == 0 ? null : id -> earlier.test(ni, id), scratch);
             ArrayList<Id[]> found = scratch.found;
             for (int i = 0, k = found.size(); i < k; i++) sink.match(ri, found.get(i));
         }

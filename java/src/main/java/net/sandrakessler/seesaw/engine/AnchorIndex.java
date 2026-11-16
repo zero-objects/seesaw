@@ -67,6 +67,18 @@ public final class AnchorIndex {
     /** Bis zu dieser Größe wird die Menge besuchter Paare von einem
      *  Gang zum nächsten behalten. */
     private static final int VISITED_KEEP = 1024;
+    /** Ein Präfixbaum-Knoten mit weniger Gruppen fragt die
+     *  Participation-Liste je Gruppe nach einem Bereich ({@link #walk}). */
+    private static final int PASS_FROM_GROUPS = 4;
+    /** Der Durchlauf über die Liste wird genommen, solange sie höchstens
+     *  so viele Einträge je Gruppe hat. Eine längere Liste (ein Knoten
+     *  mit vielen Nachbarn unter einem Knoten mit wenigen Gruppen) wird
+     *  billiger nach ihren Bereichen gefragt: ein Bereich kostet den
+     *  Logarithmus der Liste, der Durchlauf ihre Länge. */
+    private static final int PASS_ENTRIES_PER_GROUP = 8;
+    /** Bis zu so vielen Tripeln werden sie als Ganzes sortiert, darüber
+     *  je Knoten sortiert und nach Regel verteilt ({@link #inOrder}). */
+    static final int WHOLE = 256;
 
     /** Richtung einer Baumkante, gesehen vom aktuellen Knoten. */
     private static final byte ANY = 0;
@@ -78,6 +90,19 @@ public final class AnchorIndex {
     private static final Id ZERO = new Id(new byte[32]);
     private static final Group[] NO_GROUPS = new Group[0];
     private static final int[] NO_INTS = new int[0];
+    /** Ein Graphknoten, den ein Gang nachgeschlagen und nicht gefunden
+     *  hat (kein Platz oder ein Platz ohne Knoten). Nicht nachgeschlagen:
+     *  {@code null}. Rust {@code Looked}. */
+    private static final Graph.Slot MISSING = new Graph.Slot();
+
+    /**
+     * Die Suche, die an {@code nodes[ni]} verankert ist, lässt den Knoten
+     * {@code id} aus (Rust {@code skip}). Der Gang von {@code nodes[ni]}
+     * betritt einen solchen Knoten nicht.
+     */
+    interface Skip {
+        boolean test(int ni, Id id);
+    }
 
     /** Wachsende Liste von {@code int}. */
     private static final class Ints {
@@ -215,6 +240,15 @@ public final class AnchorIndex {
         /** Die Tripel der laufenden Expansion. */
         long[] out = new long[64];
         int outLen;
+        /** Wo die Tripel jedes Knotens der laufenden Expansion beginnen.
+         *  Im Arbeitsgedächtnis, damit eine Expansion weniger Knoten
+         *  dafür nichts anlegt. */
+        int[] groups = new int[16];
+        int groupsLen;
+        /** Zahl der Aufrufe von {@link AnchorIndex#walk}, Rust
+         *  {@code anchor_walk_visits} aus {@code perf_trace}. Diagnose
+         *  fuer Tests. */
+        long visits;
 
         void mark(int id) {
             marked[id] = true;
@@ -225,6 +259,11 @@ public final class AnchorIndex {
         void push(long triple) {
             if (outLen == out.length) out = Arrays.copyOf(out, outLen * 2);
             out[outLen++] = triple;
+        }
+
+        void startGroup() {
+            if (groupsLen == groups.length) groups = Arrays.copyOf(groups, groupsLen * 2);
+            groups[groupsLen++] = outLen;
         }
     }
 
@@ -295,6 +334,11 @@ public final class AnchorIndex {
 
     /** Je Präfixbaum-Knoten seine Gruppen. */
     private Group[][] groups = new Group[16][];
+    /** Je Präfixbaum-Knoten seine Gruppen aufsteigend nach Typ, bei
+     *  gleichem Typ in der Folge von {@link #groups} (Rust
+     *  {@code by_typ}). Gefüllt, wenn der Baum fertig ist
+     *  ({@link #indexGroups}). */
+    private Group[][] byTyp;
     private int nodeCount;
     /**
      * Je Präfixbaum-Knoten die unter ihm abgelegten Plätze (Indizes in
@@ -403,7 +447,20 @@ public final class AnchorIndex {
                 ti.places.add(new Place(ri, pos, own, from, to));
             }
         }
+        index.indexGroups();
         return index;
+    }
+
+    /** Legt die Gruppen jedes Präfixbaum-Knotens nach Typ ab. Einmal
+     *  aufgerufen, wenn der Baum fertig ist. */
+    private void indexGroups() {
+        byTyp = new Group[nodeCount][];
+        for (int i = 0; i < nodeCount; i++) {
+            Group[] by = groups[i].clone();
+            // Stabil: bei gleichem Typ die Folge von groups.
+            Arrays.sort(by, (a, b) -> Integer.compare(a.typ, b.typ));
+            byTyp[i] = by;
+        }
     }
 
     private int newNode() {
@@ -562,7 +619,7 @@ public final class AnchorIndex {
 
     // ── Tripel als long: (Regel, Index in die Knotenliste, Position) ──
 
-    private static long pack(int rule, int ni, int pos) {
+    static long pack(int rule, int ni, int pos) {
         return ((long) rule << 43) | ((long) ni << 12) | pos;
     }
 
@@ -574,53 +631,146 @@ public final class AnchorIndex {
 
     /**
      * Markiert jeden Präfixbaum-Knoten unter {@code at}, den ein Gang
-     * von einem Graphknoten aus verwirklicht. {@code slot} ist der Platz
-     * des Knotens, an dem der Gang steht.
+     * von einem Graphknoten aus verwirklicht, ohne einen Knoten zu
+     * betreten, den {@code skip} für {@code nodes[ni]} nennt.
+     * {@code parts} ist die Participation-Liste des Knotens, an dem der
+     * Gang steht.
+     *
+     * <p>Die Gruppen eines Präfixbaum-Knotens findet der Gang auf einem
+     * von zwei Wegen (Rust {@code anchor/walk.rs}): je Gruppe ein
+     * Bereich der Liste, oder ein Durchlauf über die Liste, der die
+     * Gruppen des Typs jedes Eintrags im Präfixbaum-Knoten nachschlägt
+     * ({@link #byTyp}). Die Liste ist zuerst nach dem Typ des anderen
+     * Endes geordnet, ein Durchlauf trifft jeden Typ einmal als Folge von
+     * Einträgen. Der Durchlauf ist billiger, wo der Präfixbaum-Knoten
+     * viele Gruppen hat und die Liste kurz ist. Beide Wege besuchen
+     * dieselben Paare aus Gruppe und Participation vom Typ der Gruppe, in
+     * anderer Folge. Die Marken eines Gangs hängen nicht an der Folge.
      */
-    private void walk(Graph g, Map<Id, String> vals, Graph.Slot slot, int at, Walk st) {
-        Parts parts = slot.parts;
+    private void walk(Graph g, Map<Id, String> vals, Parts parts, int at, Walk st, int ni,
+            Skip skip) {
+        st.visits++;
         if (parts == null) return;
-        for (Group group : groups[at]) {
-            boolean valued = group.equals != null || group.other != null;
-            for (Part p : parts.ofType(group.typ)) {
-                if (group.dir != ANY && (group.dir == OUT) != p.outgoing) continue;
-                // Der Status der Kante und des Nachbarn wird hier nicht
-                // gelesen. Ein Pfad über ein zurückgezogenes Element
-                // wird markiert, obwohl kein Match ihn nutzen kann: die
-                // Bedingung bleibt notwendig, und die Suche an dem Platz
-                // scheitert an dem Element.
-                if (group.any >= 0) enter(g, vals, p.other, group.any, st);
-                if (valued) {
-                    if (g.node(p.other) == null) continue;
-                    String val = g.resolveValue(p.other, vals);
-                    if (val != null && group.equals != null) {
-                        Integer id = group.equals.get(val);
-                        if (id != null) enter(g, vals, p.other, id, st);
-                    }
-                    if (group.other != null) {
-                        for (Other o : group.other) {
-                            if (o.pred.matches(val)) enter(g, vals, p.other, o.child, st);
-                        }
-                    }
-                }
+        Group[] gs = groups[at];
+        if (gs.length < PASS_FROM_GROUPS || parts.size() > gs.length * PASS_ENTRIES_PER_GROUP) {
+            for (Group group : gs) {
+                boolean valued = group.equals != null || group.other != null;
+                for (Part p : parts.ofType(group.typ)) pair(g, vals, group, valued, p, st, ni, skip);
+            }
+            return;
+        }
+        Group[] by = byTyp[at];
+        // Prüfung: der Durchlauf besucht so viele Paare, wie die Bereiche
+        // halten. Ein Paar ist eine Gruppe und eine Participation vom Typ
+        // der Gruppe, keiner der beiden Wege besucht eines zweimal, also
+        // sind gleiche Zahlen gleiche Mengen.
+        long pairs = 0;
+        boolean first = true;
+        int typ = 0, from = 0, to = 0;
+        for (Part p : parts) {
+            if (first || p.otherTyp != typ) {
+                first = false;
+                typ = p.otherTyp;
+                from = typeBound(by, 0, typ, false);
+                to = typeBound(by, from, typ, true);
+            }
+            for (int i = from; i < to; i++) {
+                Group group = by[i];
+                if (Engine.CHECKS) pairs++;
+                boolean valued = group.equals != null || group.other != null;
+                pair(g, vals, group, valued, p, st, ni, skip);
+            }
+        }
+        if (Engine.CHECKS) {
+            long ranges = 0;
+            for (Group group : gs) {
+                for (Part p : parts.ofType(group.typ)) ranges++;
+            }
+            if (pairs != ranges) {
+                throw new IllegalStateException("anchor index: der Durchlauf über die "
+                        + "Participation-Liste besucht " + pairs + " Paare, die Bereiche "
+                        + ranges);
             }
         }
     }
 
-    /** Der Gang hat am Graphknoten {@code x} den Präfixbaum-Knoten
-     *  {@code id} erreicht: markieren und von dort weitergehen. */
-    private void enter(Graph g, Map<Id, String> vals, Id x, int id, Walk st) {
+    /** Erster Index ab {@code from} in {@code by}, dessen Typ nicht
+     *  kleiner als {@code typ} ist, mit {@code after} der erste, dessen
+     *  Typ größer ist. */
+    private static int typeBound(Group[] by, int from, int typ, boolean after) {
+        int lo = from, hi = by.length;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            int t = by[mid].typ;
+            if (t < typ || (after && t == typ)) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+
+    /**
+     * Ein Schritt eines Gangs: die Participation {@code p} des Knotens,
+     * an dem der Gang steht, unter den Kindern {@code group} des
+     * Präfixbaum-Knotens ({@code p.otherTyp == group.typ}).
+     * {@code valued}: die Gruppe hat Kinder, die nach einem Wert fragen.
+     */
+    private void pair(Graph g, Map<Id, String> vals, Group group, boolean valued, Part p, Walk st,
+            int ni, Skip skip) {
+        if (group.dir != ANY && (group.dir == OUT) != p.outgoing) return;
+        // Ein Knoten, den die Suche auslässt, steht auf keinem Pfad eines
+        // Matches, den sie findet.
+        if (skip != null && skip.test(ni, p.other)) return;
+        // Der Status der Kante und des Nachbarn wird hier nicht gelesen.
+        // Ein Pfad über ein zurückgezogenes Element wird markiert, obwohl
+        // kein Match ihn nutzen kann: die Bedingung bleibt notwendig, und
+        // die Suche an dem Platz scheitert an dem Element.
+        //
+        // Der Nachbar wird höchstens einmal nachgeschlagen, wenn sein Wert
+        // oder seine Participations gebraucht werden.
+        Graph.Slot other = null;
+        if (group.any >= 0) other = enter(g, vals, p.other, group.any, st, ni, skip, other);
+        if (!valued) return;
+        if (other == null) other = look(g, p.other);
+        if (other == MISSING) return;
+        String val = g.resolveNodeValue(other.node, vals);
+        if (val != null && group.equals != null) {
+            Integer id = group.equals.get(val);
+            if (id != null) other = enter(g, vals, p.other, id, st, ni, skip, other);
+        }
+        if (group.other != null) {
+            for (Other o : group.other) {
+                if (o.pred.matches(val)) other = enter(g, vals, p.other, o.child, st, ni, skip, other);
+            }
+        }
+    }
+
+    /** Der Platz des Knotens {@code x}, {@link #MISSING}, wo der Graph
+     *  keinen Knoten {@code x} hat. */
+    private static Graph.Slot look(Graph g, Id x) {
+        Graph.Slot s = g.map.get(x);
+        return s == null || s.node == null ? MISSING : s;
+    }
+
+    /**
+     * Der Gang hat am Graphknoten {@code x} den Präfixbaum-Knoten
+     * {@code id} erreicht: markieren und von dort weitergehen.
+     * {@code looked}: der Platz von {@code x}, wenn er schon
+     * nachgeschlagen ist, sonst {@code null}. Liefert den Platz, wie er
+     * danach bekannt ist.
+     */
+    private Graph.Slot enter(Graph g, Map<Id, String> vals, Id x, int id, Walk st, int ni,
+            Skip skip, Graph.Slot looked) {
         if (!st.marked[id]) st.mark(id);
         // Das Ende eines Pfads: von hier geht nichts weiter.
-        if (groups[id].length == 0) return;
+        if (groups[id].length == 0) return looked;
         // Derselbe Knoten auf demselben Pfad noch einmal (zwei Wege zu
         // ihm): sein Gang ist gelaufen. Der Gang ab der Wurzel wird
         // nicht vermerkt, er läuft einmal je Knoten und kein Pfad führt
         // zur Wurzel zurück.
-        if (!st.visited.add(new Visit(x, id))) return;
-        Graph.Slot s = g.map.get(x);
-        if (s == null || s.node == null) return;
-        walk(g, vals, s, id, st);
+        if (!st.visited.add(new Visit(x, id))) return looked;
+        if (looked == null) looked = look(g, x);
+        if (looked != MISSING) walk(g, vals, looked.parts, id, st, ni, skip);
+        return looked;
     }
 
     /**
@@ -632,16 +782,27 @@ public final class AnchorIndex {
      *
      * <p>{@code firstOnly}: nur die Plätze an Position 0 (für den Seed,
      * der jeden Match von seinem ersten Knoten aus sucht).
+     *
+     * <p>{@code skip} (null: keiner): die Suche an {@code nodes[ni]}
+     * lässt den Knoten {@code id} aus, wenn {@code skip.test(ni, id)}.
+     * Der Gang von {@code nodes[ni]} betritt einen solchen Knoten nicht,
+     * ein Platz, dessen Pfade nur über ihn verwirklicht sind, ist also
+     * kein Kandidat: die Suche dort fände nichts. Ein Knoten, den die
+     * Suche als eigenen Anker auslässt ({@code skip.test(ni, nodes[ni])}),
+     * hat keine Tripel.
      */
     long[] candidates(Graph g, Map<Id, String> vals, List<Id> nodes, Walk st,
-            IntPredicate active, boolean firstOnly) {
+            IntPredicate active, boolean firstOnly, Skip skip) {
         if (st.marked.length != nodeCount) {
             st.marked = new boolean[nodeCount];
             st.listLen = 0;
         }
         st.outLen = 0;
+        st.groupsLen = 0;
         for (int ni = 0; ni < nodes.size(); ni++) {
+            st.startGroup();
             Id x = nodes.get(ni);
+            if (skip != null && skip.test(ni, x)) continue;
             Graph.Slot slot = g.map.get(x);
             Node node = slot == null ? null : slot.node;
             if (node == null) continue;
@@ -656,22 +817,23 @@ public final class AnchorIndex {
             } else if (!st.visited.isEmpty()) {
                 st.visited.clear();
             }
-            walk(g, vals, slot, ti.root, st);
+            walk(g, vals, slot.parts, ti.root, st, ni, skip);
             // Die Plätze unter einem markierten Knoten und die Plätze
             // ohne Pfad. Jeder Platz liegt einmal, also kommt keiner
-            // doppelt; sortiert wird unten. Von den Plätzen, die nach
+            // doppelt. Sortiert wird unten. Von den Plätzen, die nach
             // einem Wert des Knotens selbst fragen, nur die, die nach
             // dem fragen, den er hat.
             //
             // Der Wert des Knotens, wo ein erreichter Platz nach ihm
             // fragt: über den Wert (equals) oder mit einem anderen
             // Prädikat (valued). Ein anderes Prädikat gegen einen nicht
-            // aufgelösten Wert zu prüfen verwirft Matches.
+            // aufgelösten Wert zu prüfen verwirft Matches. Gelesen am
+            // Knoten in der Hand, ohne ihn noch einmal nachzuschlagen.
             boolean asks = ti.free.asksValue();
             for (int i = 0; i < st.listLen && !asks; i++) {
                 asks = filed.get(st.list[i]).asksValue();
             }
-            String value = asks ? g.resolveValue(x, vals) : null;
+            String value = asks ? g.resolveNodeValue(node, vals) : null;
             for (int i = 0; i <= st.listLen; i++) {
                 Filed f = i < st.listLen ? filed.get(st.list[i]) : ti.free;
                 for (int k = 0; k < f.any.n; k++) {
@@ -690,9 +852,38 @@ public final class AnchorIndex {
             for (int i = 0; i < st.listLen; i++) st.marked[st.list[i]] = false;
             st.listLen = 0;
         }
-        long[] out = Arrays.copyOf(st.out, st.outLen);
-        Arrays.sort(out);
-        return out;
+        return inOrder(st.out, st.outLen, st.groups, st.groupsLen);
+    }
+
+    /**
+     * Bringt die Tripel {@code out[0, len)} in die Ordnung (Regel,
+     * Knotenindex, Position). {@code groups[0, groupsLen)} sind die
+     * Anfänge der Tripel jedes Knotens, die Knoten kommen mit
+     * aufsteigendem Index. Eine kurze Liste wird als Ganzes sortiert.
+     * Eine lange (ein Delta vieler Knoten) wird je Knoten sortiert und
+     * dann nach Regel verteilt, was die Folge der Knoten erhält: linear
+     * statt einer Vergleichssortierung über alle Tripel. Sortiert
+     * {@code out} je Knoten an Ort und Stelle und liefert ein neues
+     * Array.
+     */
+    static long[] inOrder(long[] out, int len, int[] groups, int groupsLen) {
+        if (len <= WHOLE) {
+            long[] sorted = Arrays.copyOf(out, len);
+            Arrays.sort(sorted);
+            return sorted;
+        }
+        for (int i = 0; i < groupsLen; i++) {
+            int to = i + 1 < groupsLen ? groups[i + 1] : len;
+            Arrays.sort(out, groups[i], to);
+        }
+        int rules = 0;
+        for (int k = 0; k < len; k++) rules = Math.max(rules, rule(out[k]) + 1);
+        int[] start = new int[rules + 1];
+        for (int k = 0; k < len; k++) start[rule(out[k]) + 1]++;
+        for (int r = 0; r < rules; r++) start[r + 1] += start[r];
+        long[] sorted = new long[len];
+        for (int k = 0; k < len; k++) sorted[start[rule(out[k])]++] = out[k];
+        return sorted;
     }
 
     /** Ein erreichter Platz: Kandidat, wenn alle seine Pfade markiert

@@ -460,6 +460,20 @@ public final class Graph {
     public String resolveValue(Id id, Map<Id, String> values) {
         Node n = node(id);
         if (n == null) return null;
+        return resolveValue(n, id, values);
+    }
+
+    /**
+     * Wie {@link #resolveValue} für einen Knoten, den der Aufrufer schon
+     * in der Hand hat, ohne ihn noch einmal nachzuschlagen (Rust
+     * {@code with_node_value}). {@code n} ist ein Knoten dieses Graphen.
+     */
+    public String resolveNodeValue(Node n, Map<Id, String> values) {
+        return resolveValue(n, n.id, values);
+    }
+
+    /** Wert des Knotens {@code n}, der unter {@code id} steht. */
+    private String resolveValue(Node n, Id id, Map<Id, String> values) {
         if (n.konstIx >= 0) return konstValues.get(n.konstIx);
         if (n.derivedSource == null) return values.get(id);
         ArrayList<Chain> chain = new ArrayList<>();

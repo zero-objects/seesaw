@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.function.Predicate;
 
 import net.sandrakessler.seesaw.graph.Conn;
 import net.sandrakessler.seesaw.graph.Graph;
@@ -189,12 +190,15 @@ public final class Matcher {
             Id[] cur, List<Id[]> out, boolean[] foundAny, boolean stopFirst) {
         int[] all = new int[r.patLinks.size()];
         for (int i = 0; i < all.length; i++) all[i] = i;
-        enumerate(g, vals, r, new Plan(plan, all), depth, cur, out, foundAny, stopFirst);
+        enumerate(g, vals, r, new Plan(plan, all), depth, cur, out, foundAny, stopFirst, null);
     }
 
-    /** {@code foundAny} darf null sein, wenn {@code stopFirst} nicht gilt. */
+    /** {@code foundAny} darf null sein, wenn {@code stopFirst} nicht gilt.
+     *  {@code skip} (null: keiner): Kandidaten, die die Suche auslässt
+     *  (Rust {@code skip}), an einer Position, die nicht vorab gebunden
+     *  ist. */
     private static void enumerate(Graph g, Map<Id, String> vals, Rule r, Plan plan, int depth,
-            Id[] cur, List<Id[]> out, boolean[] foundAny, boolean stopFirst) {
+            Id[] cur, List<Id[]> out, boolean[] foundAny, boolean stopFirst, Predicate<Id> skip) {
         List<Step> steps = plan.steps;
         if (depth == steps.size()) {
             if (closingLinksOk(g, vals, r, plan, cur)) {
@@ -207,7 +211,7 @@ public final class Matcher {
         PatNode pn = r.patNodes.get(step.nodeIx);
         if (step.preBound) {
             if (nodeOk(g, vals, pn, cur[step.nodeIx]))
-                enumerate(g, vals, r, plan, depth + 1, cur, out, foundAny, stopFirst);
+                enumerate(g, vals, r, plan, depth + 1, cur, out, foundAny, stopFirst, skip);
             return;
         }
         // Die Kandidaten werden beim Lesen geprüft, ohne sie vorher zu
@@ -219,8 +223,8 @@ public final class Matcher {
             // Typs (nodeOk verwirft die nicht matchbaren).
             List<Id> ids = g.idsOfType(pn.typ);
             for (int i = 0, k = ids.size(); i < k; i++) {
-                if (tryCandidate(g, vals, r, plan, depth, cur, out, foundAny, stopFirst, step, pn,
-                        ids.get(i), null, 0)) {
+                if (tryCandidate(g, vals, r, plan, depth, cur, out, foundAny, stopFirst, skip, step,
+                        pn, ids.get(i), null, 0)) {
                     return;
                 }
             }
@@ -241,8 +245,8 @@ public final class Matcher {
         for (Part p : g.partsOfType(anchor, pn.typ)) {
             if (code == 1 && p.outgoing) continue;      // cand ist source ⇒ part incoming
             if (code == 0 && !p.outgoing) continue;     // cand ist target ⇒ part outgoing
-            if (tryCandidate(g, vals, r, plan, depth, cur, out, foundAny, stopFirst, step, pn,
-                    p.other, code == 2 ? null : p.connection, rest)) {
+            if (tryCandidate(g, vals, r, plan, depth, cur, out, foundAny, stopFirst, skip, step,
+                    pn, p.other, code == 2 ? null : p.connection, rest)) {
                 return;
             }
         }
@@ -256,14 +260,15 @@ public final class Matcher {
      * gefunden).
      */
     private static boolean tryCandidate(Graph g, Map<Id, String> vals, Rule r, Plan plan,
-            int depth, Id[] cur, List<Id[]> out, boolean[] foundAny, boolean stopFirst, Step step,
-            PatNode pn, Id cand, Id via, int from) {
+            int depth, Id[] cur, List<Id[]> out, boolean[] foundAny, boolean stopFirst,
+            Predicate<Id> skip, Step step, PatNode pn, Id cand, Id via, int from) {
         for (Id c : cur) if (cand.equals(c)) return false; // injektiv
+        if (skip != null && skip.test(cand)) return false;
         if (via != null && !matchable(g.conn(via))) return false;
         if (!nodeOk(g, vals, pn, cand)) return false;
         if (!linksOk(g, vals, cur, step.links, from, cand)) return false;
         cur[step.nodeIx] = cand;
-        enumerate(g, vals, r, plan, depth + 1, cur, out, foundAny, stopFirst);
+        enumerate(g, vals, r, plan, depth + 1, cur, out, foundAny, stopFirst, skip);
         cur[step.nodeIx] = null;
         return stopFirst && foundAny[0];
     }
@@ -281,7 +286,7 @@ public final class Matcher {
         Plan plan = plan(r, fixed);
         Id[] cur = fixed.clone();
         List<Id[]> out = new ArrayList<>();
-        enumerate(g, vals, r, plan, 0, cur, out, null, false);
+        enumerate(g, vals, r, plan, 0, cur, out, null, false, null);
         out.sort(Matcher::compareBindings);
         return out;
     }
@@ -318,11 +323,24 @@ public final class Matcher {
      */
     static void findMatchesPlanned(Graph g, Map<Id, String> vals, Rule r, Plan plan, int pos, Id id,
             Scratch scratch) {
+        findMatchesPlanned(g, vals, r, plan, pos, id, null, scratch);
+    }
+
+    /**
+     * Wie {@link #findMatchesPlanned(Graph, Map, Rule, Plan, int, Id, Scratch)}
+     * ohne die Matches, die einen Knoten, den {@code skip} nennt, an einer
+     * Position binden, die nicht vorab gebunden ist (Rust
+     * {@code find_matches_planned} mit {@code skip}). Die Suche lässt
+     * einen solchen Knoten als Kandidaten aus und steigt nicht unter ihn
+     * ab. {@code skip} null: keiner.
+     */
+    static void findMatchesPlanned(Graph g, Map<Id, String> vals, Rule r, Plan plan, int pos, Id id,
+            Predicate<Id> skip, Scratch scratch) {
         Id[] cur = scratch.cur(r.patNodes.size());
         cur[pos] = id;
         ArrayList<Id[]> found = scratch.found;
         found.clear();
-        enumerate(g, vals, r, plan, 0, cur, found, null, false);
+        enumerate(g, vals, r, plan, 0, cur, found, null, false, skip);
         if (found.size() > 1) found.sort(Matcher::compareBindings);
     }
 
