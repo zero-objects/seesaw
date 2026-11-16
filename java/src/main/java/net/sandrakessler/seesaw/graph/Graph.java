@@ -10,6 +10,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicLong;
 
 import net.sandrakessler.seesaw.engine.Matcher;
 import net.sandrakessler.seesaw.ident.Id;
@@ -17,6 +18,20 @@ import net.sandrakessler.seesaw.ident.St;
 import net.sandrakessler.seesaw.rules.Transform;
 
 public final class Graph {
+    /** Zaehler fuer {@link #uid}, einer fuer den ganzen Prozess. */
+    private static final AtomicLong UIDS = new AtomicLong();
+
+    /**
+     * Die Nummer dieses Graphen (Rust {@code Graph::uid}): eine eigene fuer
+     * jeden Graphen, der angelegt wird, also auch fuer jede Kopie
+     * ({@link #materialize}). Ein Zaehler des Prozesses, sie haengt also
+     * davon ab, was der Prozess vorher angelegt hat. Das Feld ist privat und
+     * geht mit keinem anderen Feld in einen anderen Graphen. Der Index der
+     * nicht gehaltenen Links der Engine bezieht sich auf einen Graphen und
+     * liest sie.
+     */
+    private final long uid = UIDS.incrementAndGet();
+
     public final HashMap<Id, Slot> map = new HashMap<>();
     public final LinkedHashMap<String, Integer> typesByName = new LinkedHashMap<>();
     final ArrayList<String> typeNames = new ArrayList<>();
@@ -24,6 +39,11 @@ public final class Graph {
     /** Regel-Konstanten (Quellmaterial-Tabelle, §3b.4). */
     final LinkedHashMap<String, Integer> konstByValue = new LinkedHashMap<>();
     final ArrayList<String> konstValues = new ArrayList<>();
+
+    /** Die Nummer dieses Graphen, siehe {@link #uid}. */
+    public long uid() {
+        return uid;
+    }
 
     public int internKonst(String value) {
         Integer k = konstByValue.get(value);

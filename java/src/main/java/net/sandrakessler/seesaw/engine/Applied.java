@@ -20,9 +20,9 @@ import java.util.HashSet;
  *     zurueckgezogene den Schluessel frueher, durch ein frueheres retractMatch
  *     (es erreicht auch tote Matches) oder als Kandidat mit tentativ
  *     zurueckgezogenem Anker, und der andere wurde danach eingetragen. In
- *     beiden Faellen stehen beide in denselben Listen von {@code byElement}:
- *     gleiche Refs, und record gibt einer Kante in beiden Zweigen die Id
- *     {@code identConnection(refs[from], refs[to])}. Der andere steht dort
+ *     beiden Faellen stehen beide in denselben Listen von {@code byElement}
+ *     (gleiche Refs) und ruhen auf denselben Verbindungen ({@link
+ *     Links#filedUnder} nennt beide, aufsteigend). Der andere steht dort
  *     hinter dem zurueckgezogenen, und {@link Engine#drainRetraction} und
  *     {@link Engine#linkRemoved} lesen die Laenge vor der Schleife. Dieselbe
  *     Schleife zieht ihn vor dem naechsten Schritt zurueck. Ein Kandidat im

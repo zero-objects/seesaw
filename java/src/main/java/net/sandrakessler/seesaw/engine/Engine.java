@@ -18,7 +18,6 @@ import net.sandrakessler.seesaw.graph.Part;
 import net.sandrakessler.seesaw.ident.Id;
 import net.sandrakessler.seesaw.ident.St;
 import net.sandrakessler.seesaw.plan.CreateNode;
-import net.sandrakessler.seesaw.plan.PatLink;
 import net.sandrakessler.seesaw.plan.Rule;
 
 // ── Engine (Spiegel von engine.rs, Minimal-Pfad) ──
@@ -141,9 +140,13 @@ public final class Engine {
     /** (Regelindex, Ref-Folge) → Index im Match-Speicher. */
     final HashMap<MatchKey, Integer> byKey = new HashMap<>();
     final ArrayList<MatchRec> matches = new ArrayList<>();
-    /** Element → Indizes der Matches, die es enthalten (Knoten und
-     *  Verbindungen), in der Reihenfolge des Eintragens. */
+    /** Knoten → Indizes der Matches, die ihn binden, in der Reihenfolge des
+     *  Eintragens. Die Matches, die auf einer Verbindung ruhen, stehen nicht
+     *  hier, {@link Links#filedUnder} findet sie aus den Listen ihrer Enden. */
     final HashMap<Id, IntList> byElement = new HashMap<>();
+    /** Was die Engine ueber die Links ihrer Matches neben
+     *  {@link #byElement} fuehrt. */
+    final Links links = new Links(this);
     public final ArrayList<Entry> cascade = new ArrayList<>();
     public int cascadeLen = 0;
     public boolean sawContradiction = false;
@@ -401,12 +404,15 @@ public final class Engine {
     }
 
     /**
-     * Wie {@link #record(int, Id[])}. Die Id der Verbindung eines Links
-     * steht in der Participation-Liste der Quelle in {@code g}, wo der
-     * Graph die Verbindung hält ({@link Graph#connectionIdTyped} mit dem
-     * Typ der Musterposition des Ziels), sonst (ein richtungsfreier
-     * Link, den der Graph andersherum hält, oder ohne Graph) wird sie wie
-     * bisher abgeleitet. Beides ist dieselbe Id.
+     * Wie {@link #record(int, Id[])}. {@code g} ist der Graph, auf dem der
+     * Match gefunden wurde (null von {@link #record(int, Id[])}).
+     *
+     * <p>Ein Match ruht auch auf den Verbindungen, die sein Muster verlangt,
+     * ihr Wegfall toetet ihn ebenso wie der eines Knotens. Abgelegt wird er
+     * nur unter seinen Knoten. Die Matches einer Verbindung findet
+     * {@link Links#filedUnder} aus deren Enden (Rust 87b270a), fuer eine Id,
+     * die der Graph nicht kennt, aus dem Index der nicht gehaltenen Links,
+     * den {@link Links#fileLinks} hier weiterfuehrt.
      */
     void record(Graph g, int ruleIx, Id[] refs) {
         MatchKey k = new MatchKey(ruleIx, refs);
@@ -416,37 +422,36 @@ public final class Engine {
         // Match-Speicher, Todo und byKey.
         if (byKey.putIfAbsent(k, ix) != null) return;
         for (Id id : refs) byElement.computeIfAbsent(id, x -> new IntList()).add(ix);
-        // Die KANTEN des Matches gehoeren ebenso in die Registratur, nicht
-        // nur seine Knoten. Ein Match ruht auf den Kanten, die sein Muster
-        // verlangt, also muss ihr Wegfall ihn ebenso toeten wie der eines
-        // Knotens. Bis hierher toetete ein reines Kanten-Delta (Owner- oder
-        // Super-Wechsel) keinen einzigen Match. Spiegel von record in
-        // seesaw-core/src/engine/mod.rs.
-        //
-        // SAME_VALUE ist ein Wert-Join ueber zwei Blaetter, keine Kante --
-        // im Graphen gibt es dazu keine Verbindung zu indizieren.
         Rule rule = rules.get(ruleIx);
-        for (PatLink l : rule.patLinks) {
-            if (l.kind == PatLink.Kind.SAME_VALUE) continue;
-            if (l.from < refs.length && l.to < refs.length) {
-                // Der Knoten an l.to hat den Typ seiner Musterposition,
-                // er wird nicht nachgeschlagen.
-                Id e = g == null ? null
-                        : g.connectionIdTyped(refs[l.from], refs[l.to], rule.patNodes.get(l.to).typ);
-                if (e == null) e = Ident.identConnection(refs[l.from], refs[l.to]);
-                byElement.computeIfAbsent(e, x -> new IntList()).add(ix);
-            }
-        }
+        links.fileLinks(g, rule, refs, ix);
         matches.add(new MatchRec(k));
         todo.add(new TodoKey(rule.rank, k, ix));
     }
 
-    /** delete/modify (Spec §1.6): Matches des Elements EAGER töten. */
+    /**
+     * delete/modify (Spec §1.6): Matches des Elements EAGER töten.
+     *
+     * <p>Ein Knoten hat seine Liste in {@link #byElement}. Findet sich keine,
+     * kann {@code id} eine Verbindung sein, deren Enden nur der Graph kennt,
+     * den diese Tuer nicht bekommt. Die Id wird vorgemerkt, die naechste Tuer
+     * mit Graph toetet die Matches, die auf ihr ruhen, zuerst
+     * ({@link Links#settleRemoved}).
+     */
     public void elementRemoved(Id id) {
         IntList refs = byElement.get(id);
-        if (refs == null) return;
-        for (int i = 0, n = refs.size(); i < n; i++) {
-            int mix = refs.get(i);
+        if (refs == null) {
+            links.removedUnfiled(id);
+            return;
+        }
+        kill(refs, matches.size());
+    }
+
+    /** Toetet die Matches {@code mixes} mit einer Nummer unter
+     *  {@code below} sofort: tot und aus dem Todo (Rust {@code kill}). */
+    void kill(IntList mixes, int below) {
+        for (int i = 0, n = mixes.size(); i < n; i++) {
+            int mix = mixes.get(i);
+            if (mix >= below) continue;
             MatchRec m = matches.get(mix);
             if (!m.dead) {
                 m.dead = true;
@@ -460,6 +465,7 @@ public final class Engine {
      *  und — falls angewandt — den Erzeugnissen über die Provenienz-Kante
      *  folgen (TT + Queue). Spiegel von retract_match. */
     public void retractMatch(Graph g, int mix, ArrayList<Id> queue) {
+        links.settleRemoved(g);
         MatchRec m = matches.get(mix);
         Integer entry = m.entry;
         if (!m.dead) {
@@ -501,6 +507,7 @@ public final class Engine {
 
     /** Provenienz-Walk über die Queue (Spiegel von drain_retraction). */
     public void drainRetraction(Graph g, ArrayList<Id> queue) {
+        links.settleRemoved(g);
         // Nur befuellt und befragt, nie durchlaufen: eine Hash-Menge.
         HashSet<Id> seen = new HashSet<>();
         while (!queue.isEmpty()) {
@@ -509,12 +516,14 @@ public final class Engine {
             // Zwei Wege, auf denen ein Element weitere Retraktion
             // begruendet.
             //
-            // Es NIMMT TEIL an Matches: die verlieren ihren Boden.
-            // Ohne Kopie der Liste: retractMatch aendert byElement nicht,
-            // und eine IntList waechst nur am Ende. Die Laenge wird vor
-            // der Schleife gelesen, die Schleife sieht also genau die
-            // Eintraege, die eine Kopie gesehen haette.
-            IntList mixes = byElement.get(id);
+            // Es NIMMT TEIL an Matches: die verlieren ihren Boden. Ein
+            // Knoten bindet sie, auf einer Verbindung ruhen sie.
+            // Ohne Kopie der Liste: retractMatch traegt keinen Match ein,
+            // aendert also weder byElement noch den Index der nicht
+            // gehaltenen Links, und eine IntList waechst nur am Ende. Die
+            // Laenge wird vor der Schleife gelesen, die Schleife sieht also
+            // genau die Eintraege, die eine Kopie gesehen haette.
+            IntList mixes = links.filedUnder(g, id);
             if (mixes != null) {
                 for (int i = 0, n = mixes.size(); i < n; i++) retractMatch(g, mixes.get(i), queue);
             }
@@ -646,6 +655,7 @@ public final class Engine {
      * {@code element_deleted}.
      */
     public void elementDeleted(Graph g, Id removed) {
+        links.settleRemoved(g);
         hostDeleted.add(removed);
         ArrayList<Id> queue = new ArrayList<>();
         queue.add(removed);
@@ -661,6 +671,7 @@ public final class Engine {
      * kein Delete der Gegenseite.
      */
     public void elementChanged(Graph g, Id changed) {
+        links.settleRemoved(g);
         ArrayList<Id> queue = new ArrayList<>();
         queue.add(changed);
         drainRetraction(g, queue);
@@ -673,6 +684,7 @@ public final class Engine {
      */
     @Deprecated
     public void retractFor(Graph g, Id removed) {
+        links.settleRemoved(g);
         // Beim Eintreffen tot = der Host hat geloescht. Lebendig = die
         // Engine bewertet neu (ein Change), und entlang der
         // Korrespondenzen darf nichts fallen.
@@ -684,8 +696,14 @@ public final class Engine {
     }
 
     /** Kanten-Wegfall (Spiegel von link_removed): Matches, deren Refs
-     *  BEIDE Endpunkte enthalten, verlieren ihre Begründung. */
+     *  BEIDE Endpunkte enthalten, verlieren ihre Begründung. {@code a} und
+     *  {@code b} sind die Enden eines Links, also Knoten, und stehen in
+     *  {@link #byElement} mit allem, was 2.0.2 dort unter ihnen ablegte
+     *  (unter Pruefung nachgesehen). */
     public void linkRemoved(Graph g, Id a, Id b) {
+        links.settleRemoved(g);
+        links.checkNotFiled("linkRemoved", a);
+        links.checkNotFiled("linkRemoved", b);
         IntList inA = byElement.get(a);
         if (inA == null) return;
         IntList inB = byElement.get(b);
@@ -705,6 +723,7 @@ public final class Engine {
      *  Anzahl finalisierter Elemente = Eliminations-Zählung für den
      *  fold-Report. */
     public int consolidate(Graph g) {
+        links.settleRemoved(g);
         int eliminated = 0;
         ArrayList<Id> fallen = new ArrayList<>();
         for (Id id : pendingTtNodes) {
@@ -793,6 +812,7 @@ public final class Engine {
     }
 
     public void seedRule(Graph g, Map<Id, String> vals, int ri) {
+        links.settleRemoved(g);
         Rule r = rules.get(ri);
         Id[] fixed = new Id[r.patNodes.size()];
         for (Id[] m : Matcher.findMatchesWithFixed(g, vals, r, fixed)) record(g, ri, m);
@@ -807,6 +827,7 @@ public final class Engine {
      * Matches und tragen sie in derselben Reihenfolge ein.
      */
     public void seed(Graph g, Map<Id, String> vals) {
+        links.settleRemoved(g);
         Sink sink = (ri, m) -> record(g, ri, m);
         if (useIndex && index() != null) {
             if (CHECKS) {
@@ -970,6 +991,7 @@ public final class Engine {
      * er den Match zieht, auf dem Graphen, wie er dann ist.
      */
     public void expandAt(Graph g, Map<Id, String> vals, List<Id> newNodes) {
+        links.settleRemoved(g);
         Sink sink = (ri, m) -> record(g, ri, m);
         if (useIndex && index() != null) {
             if (CHECKS) {
@@ -1206,6 +1228,7 @@ public final class Engine {
 
     /** Schritt mit Backtracking-Schranke (strikt UNTER der Schranke). */
     public Boolean stepWithLimit(Graph g, Map<Id, String> vals, SelectionBound ceiling) {
+        links.settleRemoved(g);
         while (true) {
             TodoKey k = null;
             if (ceiling == null && waveDirections == null) {
