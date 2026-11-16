@@ -202,6 +202,9 @@ public final class Engine {
     private final AnchorIndex.Walk walk = new AnchorIndex.Walk();
     /** Arbeitsspeicher der verankerten Suchen, über die Suchen behalten. */
     private final Matcher.Scratch scratch = new Matcher.Scratch();
+    /** Arbeitsspeicher eines Schritts: die Identitaeten der Knoten
+     *  seines Plans (Rust {@code ids}), siehe {@link #planOf}. */
+    private final ArrayList<Id> ids = new ArrayList<>();
     /** Zahl der gestarteten Suchen (Expansion und Seed) und der Seeds,
      *  die ueber den Index gingen. Diagnose fuer Tests und Messung. */
     long searches;
@@ -379,14 +382,18 @@ public final class Engine {
     /**
      * Wie {@link #record(int, Id[])}. Die Id der Verbindung eines Links
      * steht in der Participation-Liste der Quelle in {@code g}, wo der
-     * Graph die Verbindung hält ({@link Graph#connectionId}); sonst (ein
-     * richtungsfreier Link, den der Graph andersherum hält, oder ohne
-     * Graph) wird sie wie bisher abgeleitet. Beides ist dieselbe Id.
+     * Graph die Verbindung hält ({@link Graph#connectionIdTyped} mit dem
+     * Typ der Musterposition des Ziels), sonst (ein richtungsfreier
+     * Link, den der Graph andersherum hält, oder ohne Graph) wird sie wie
+     * bisher abgeleitet. Beides ist dieselbe Id.
      */
     void record(Graph g, int ruleIx, Id[] refs) {
         MatchKey k = new MatchKey(ruleIx, refs);
-        if (byKey.containsKey(k)) return;
         int ix = matches.size();
+        // Ein Nachschlagen in byKey: steht der Schluessel schon, bleibt
+        // alles, wie es ist. Ein Schluessel je Match, geteilt von
+        // Match-Speicher, Todo, byKey und spaeter applied.
+        if (byKey.putIfAbsent(k, ix) != null) return;
         for (Id id : refs) byElement.computeIfAbsent(id, x -> new IntList()).add(ix);
         // Die KANTEN des Matches gehoeren ebenso in die Registratur, nicht
         // nur seine Knoten. Ein Match ruht auf den Kanten, die sein Muster
@@ -397,19 +404,20 @@ public final class Engine {
         //
         // SAME_VALUE ist ein Wert-Join ueber zwei Blaetter, keine Kante --
         // im Graphen gibt es dazu keine Verbindung zu indizieren.
-        for (PatLink l : rules.get(ruleIx).patLinks) {
+        Rule rule = rules.get(ruleIx);
+        for (PatLink l : rule.patLinks) {
             if (l.kind == PatLink.Kind.SAME_VALUE) continue;
             if (l.from < refs.length && l.to < refs.length) {
-                Id e = g == null ? null : g.connectionId(refs[l.from], refs[l.to]);
+                // Der Knoten an l.to hat den Typ seiner Musterposition,
+                // er wird nicht nachgeschlagen.
+                Id e = g == null ? null
+                        : g.connectionIdTyped(refs[l.from], refs[l.to], rule.patNodes.get(l.to).typ);
                 if (e == null) e = Ident.identConnection(refs[l.from], refs[l.to]);
                 byElement.computeIfAbsent(e, x -> new IntList()).add(ix);
             }
         }
-        // Ein Schluessel je Match, geteilt von Match-Speicher, Todo,
-        // byKey und spaeter applied.
-        byKey.put(k, ix);
         matches.add(new MatchRec(k));
-        todo.add(new TodoKey(rules.get(ruleIx).rank, k));
+        todo.add(new TodoKey(rule.rank, k));
     }
 
     /** delete/modify (Spec §1.6): Matches des Elements EAGER töten. */
@@ -459,27 +467,20 @@ public final class Engine {
                 // abgeleitet heisst reklamiert, sonst loest es zu
                 // TOMBSTONE auf. Im Ruhezustand bleiben nur GHOST und
                 // SOLID.
-                Node n = g.node(c);
-                if (n != null && n.status.matchable()) {
-                    g.setNodeStatus(c, St.TENTATIVE_TOMBSTONE);
-                    pendingTtNodes.add(c);
-                }
+                if (g.retractNode(c)) pendingTtNodes.add(c);
                 queue.add(c);
             }
             for (Id ed : e.createdEdges) {
                 // Dieselbe Begruendung wie oben fuer die Knoten.
-                Conn c = g.conn(ed);
-                if (c != null && c.status.matchable()) {
-                    g.setConnectionStatus(ed, St.TENTATIVE_TOMBSTONE);
-                    pendingTtEdges.add(ed);
-                }
+                if (g.retractConnection(ed)) pendingTtEdges.add(ed);
             }
         }
     }
 
     /** Provenienz-Walk über die Queue (Spiegel von drain_retraction). */
     public void drainRetraction(Graph g, ArrayList<Id> queue) {
-        TreeSet<Id> seen = new TreeSet<>();
+        // Nur befuellt und befragt, nie durchlaufen: eine Hash-Menge.
+        HashSet<Id> seen = new HashSet<>();
         while (!queue.isEmpty()) {
             Id id = queue.remove(queue.size() - 1);
             if (!seen.add(id)) continue;
@@ -685,19 +686,14 @@ public final class Engine {
         int eliminated = 0;
         ArrayList<Id> fallen = new ArrayList<>();
         for (Id id : pendingTtNodes) {
-            Node n = g.node(id);
-            if (n != null && n.status == St.TENTATIVE_TOMBSTONE) {
-                g.setNodeStatus(id, St.TOMBSTONE);
+            Node n = g.settleNode(id);
+            if (n != null) {
                 if (n.isCorr) fallen.add(id);
                 eliminated++;
             }
         }
         for (Id id : pendingTtEdges) {
-            Conn c = g.conn(id);
-            if (c != null && c.status == St.TENTATIVE_TOMBSTONE) {
-                g.setConnectionStatus(id, St.TOMBSTONE);
-                eliminated++;
-            }
+            if (g.settleConnection(id)) eliminated++;
         }
         pendingTtNodes.clear();
         pendingTtEdges.clear();
@@ -733,7 +729,8 @@ public final class Engine {
      */
     int followFallenCorrs(Graph g, ArrayList<Id> fallen) {
         int eliminated = 0;
-        TreeSet<Id> seen = new TreeSet<>();
+        // Nur befuellt und befragt, nie durchlaufen: eine Hash-Menge.
+        HashSet<Id> seen = new HashSet<>();
         while (!fallen.isEmpty()) {
             Id corr = fallen.remove(fallen.size() - 1);
             Node cn = g.node(corr);
@@ -757,19 +754,14 @@ public final class Engine {
                 queue.add(end);
                 drainRetraction(g, queue);
                 for (Id id : pendingTtNodes) {
-                    Node n = g.node(id);
-                    if (n != null && n.status == St.TENTATIVE_TOMBSTONE) {
-                        g.setNodeStatus(id, St.TOMBSTONE);
+                    Node n = g.settleNode(id);
+                    if (n != null) {
                         if (n.isCorr) fallen.add(id);
                         eliminated++;
                     }
                 }
                 for (Id id : pendingTtEdges) {
-                    Conn c = g.conn(id);
-                    if (c != null && c.status == St.TENTATIVE_TOMBSTONE) {
-                        g.setConnectionStatus(id, St.TOMBSTONE);
-                        eliminated++;
-                    }
+                    if (g.settleConnection(id)) eliminated++;
                 }
                 pendingTtNodes.clear();
                 pendingTtEdges.clear();
@@ -1047,6 +1039,57 @@ public final class Engine {
         return true;
     }
 
+    /** Was der Graph vom Erzeugungsplan einer Regel fuer einen Match
+     *  haelt (Rust {@code Planned}). */
+    private enum Planned {
+        /** Jeder Knoten und jeder Link des Plans ist da, lebendig: die
+         *  Regel wuerde nichts erzeugen. */
+        EXISTS,
+        /** Ein Knoten des Plans ist ein Tombstone. */
+        TOMBSTONE,
+        /** Etwas vom Plan fehlt oder ist tentativ zurueckgezogen. */
+        MISSING
+    }
+
+    /**
+     * Leitet die Identitaeten der Knoten des Erzeugungsplans von
+     * {@code r} fuer den Match {@code refs} nach {@code ids} ab
+     * (plan-indiziert, ein dynamisches Blatt ohne Quelle bekommt einen
+     * Platzhalter, der nie gelesen wird) und meldet, was der Graph vom
+     * Plan haelt (Rust {@code plan_of}). Jede Identitaet wird einmal
+     * abgeleitet: fuer die Duplikat-Pruefung (wie
+     * {@link #creationExists}), fuer die Tombstone-Pruefung und fuer die
+     * Anwendung. Nach {@code TOMBSTONE} ist {@code ids} unvollstaendig.
+     *
+     * <p>Die Entscheidung ist die von 2.0.2: dort pruefte
+     * {@code creationExists} bis zum ersten fehlenden Knoten und danach
+     * die Schleife des V7-Guards bis zum ersten Tombstone, beide ueber
+     * dieselben Identitaeten. Ein Tombstone irgendwo im Plan ist also
+     * ein Widerspruch, sonst ein Duplikat, wenn alles lebendig da ist.
+     */
+    private Planned planOf(Graph g, Rule r, Id[] refs, ArrayList<Id> ids) {
+        ids.clear();
+        boolean allAlive = true;
+        for (CreateNode cn : r.createNodes) {
+            Id id = previewCreate(g, r, refs, ids, cn);
+            if (id == null) { // dyn ohne Quelle: nichts würde erzeugt
+                ids.add(cn.parent >= 0 ? refs[cn.parent] : ids.get(-cn.parent - 1));
+                continue;
+            }
+            Node n = g.node(id);
+            if (n != null && n.status == St.TOMBSTONE) return Planned.TOMBSTONE;
+            if (n == null || !n.status.alive()) allAlive = false;
+            ids.add(id);
+        }
+        if (!allAlive) return Planned.MISSING;
+        for (int[] l : r.createLinks) {
+            Id s = l[0] >= 0 ? refs[l[0]] : ids.get(-l[0] - 1);
+            Id t = l[1] >= 0 ? refs[l[1]] : ids.get(-l[1] - 1);
+            if (!g.connectedAlive(s, t)) return Planned.MISSING;
+        }
+        return Planned.EXISTS;
+    }
+
     static final class Created {
         final List<Id> nodes, edges;
         Created(List<Id> nodes, List<Id> edges) { this.nodes = nodes; this.edges = edges; }
@@ -1111,7 +1154,7 @@ public final class Engine {
             slots.add(id);
             created.add(id);
         }
-        List<Id> edges = new ArrayList<>();
+        List<Id> edges = new ArrayList<>(r.createLinks.size());
         for (int[] l : r.createLinks) {
             Id s = l[0] >= 0 ? refs[l[0]] : slots.get(-l[0] - 1);
             Id t = l[1] >= 0 ? refs[l[1]] : slots.get(-l[1] - 1);
@@ -1143,27 +1186,29 @@ public final class Engine {
     public Boolean stepWithLimit(Graph g, Map<Id, String> vals, SelectionBound ceiling) {
         while (true) {
             TodoKey k = null;
-            if (ceiling == null) {
-                if (waveDirections == null) {
-                    if (!todo.isEmpty()) k = todo.first();
-                } else {
+            if (ceiling == null && waveDirections == null) {
+                // Ohne Filter: der erste Eintrag, entnommen in einem
+                // Zugriff.
+                k = todo.pollFirst();
+            } else {
+                if (ceiling == null) {
                     for (TodoKey c : todo) {
                         if (ruleActive(c.ruleIx)) { k = c; break; }
                     }
+                } else {
+                    TodoKey bound = new TodoKey(ceiling.rank, ceiling.refs, 0);
+                    for (TodoKey c : todo.tailSet(bound, true)) {
+                        if (c.rank == bound.rank && Matcher.compareBindings(c.refs, bound.refs) == 0) continue;
+                        if (waveDirections != null && !ruleActive(c.ruleIx)) continue;
+                        k = c;
+                        break;
+                    }
                 }
-            } else {
-                TodoKey bound = new TodoKey(ceiling.rank, ceiling.refs, 0);
-                for (TodoKey c : todo.tailSet(bound, true)) {
-                    if (c.rank == bound.rank && Matcher.compareBindings(c.refs, bound.refs) == 0) continue;
-                    if (waveDirections != null && !ruleActive(c.ruleIx)) continue;
-                    k = c;
-                    break;
-                }
+                if (k != null) todo.remove(k);
             }
             if (k == null) {
                 return null;
             }
-            todo.remove(k);
             Rule rule = rules.get(k.ruleIx);
             MatchKey mk = k.key;
             if (applied.contains(mk)) continue;
@@ -1201,26 +1246,26 @@ public final class Engine {
                 }
                 if (!found) { translated = false; break; }
             }
-            if (translated || creationExists(g, rule, k.refs)) {
+            if (translated) {
                 applied.add(mk);
                 return false;
             }
-            // V7-Guard. Die Identitaeten der Plan-Knoten, einmal
-            // abgeleitet: fuer diese Pruefung und fuer die Anwendung
-            // unten.
-            boolean contradicts = false;
-            List<Id> ids = new ArrayList<>(rule.createNodes.size());
-            for (CreateNode cn : rule.createNodes) {
-                Id id = previewCreate(g, rule, k.refs, ids, cn);
-                if (id == null) {
-                    ids.add(cn.parent >= 0 ? k.refs[cn.parent] : ids.get(-cn.parent - 1));
-                    continue;
-                }
-                Node n = g.node(id);
-                if (n != null && n.status == St.TOMBSTONE) { contradicts = true; break; }
-                ids.add(id);
+            // Die Identitaeten der Plan-Knoten, einmal abgeleitet: fuer
+            // die Duplikat-Pruefung, den V7-Guard und die Anwendung.
+            Planned planned = planOf(g, rule, k.refs, ids);
+            if (planned == Planned.EXISTS) {
+                // Ebenfalls ein Duplikat: alles, was der Plan erzeugen
+                // wuerde, ist da.
+                applied.add(mk);
+                return false;
             }
-            if (contradicts) { sawContradiction = true; continue; }
+            if (planned == Planned.TOMBSTONE) {
+                // V7-Guard: Tombstone-Substanz wiederzuverwenden
+                // widerspricht der Historie (nicht TT, das ist die
+                // legitime Resurrektionszone).
+                sawContradiction = true;
+                continue;
+            }
             Created cr = applyCreationAt(g, rule, k.refs, ids);
             int eix = cascade.size();
             cascade.add(new Entry(k.ruleIx, rule.rank, k.refs, cr.nodes, cr.edges));

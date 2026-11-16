@@ -159,6 +159,31 @@ public final class Graph {
         if (n != null) n.status = st;
     }
 
+    /**
+     * Zieht einen matchbaren Knoten tentativ zurueck, Status gelesen und
+     * gesetzt in einem Zugriff (Rust {@code retract_node}). {@code true}:
+     * er war matchbar und ist jetzt {@code TENTATIVE_TOMBSTONE}.
+     */
+    public boolean retractNode(Id id) {
+        Node n = node(id);
+        if (n == null || !n.status.matchable()) return false;
+        n.status = St.TENTATIVE_TOMBSTONE;
+        return true;
+    }
+
+    /**
+     * Macht einen tentativ zurueckgezogenen Knoten zum Tombstone, in
+     * einem Zugriff (Rust {@code settle_node}). Rueckgabe der Knoten,
+     * null: er ist nicht tentativ zurueckgezogen (reklamiert oder nicht
+     * da).
+     */
+    public Node settleNode(Id id) {
+        Node n = node(id);
+        if (n == null || n.status != St.TENTATIVE_TOMBSTONE) return null;
+        n.status = St.TOMBSTONE;
+        return n;
+    }
+
     /** Ergebnis von connectReporting: Kanten-Id + ob NEU angelegt. */
     public static final class ConnResult {
         public final Id id;
@@ -216,6 +241,30 @@ public final class Graph {
     }
 
     /**
+     * Zieht eine matchbare Verbindung tentativ zurueck, in einem Zugriff
+     * (Rust {@code retract_connection}). {@code true}: sie war matchbar
+     * und ist jetzt {@code TENTATIVE_TOMBSTONE}.
+     */
+    public boolean retractConnection(Id id) {
+        Conn c = conn(id);
+        if (c == null || !c.status.matchable()) return false;
+        c.status = St.TENTATIVE_TOMBSTONE;
+        return true;
+    }
+
+    /**
+     * Macht eine tentativ zurueckgezogene Verbindung zum Tombstone, in
+     * einem Zugriff (Rust {@code settle_connection}). {@code false}: sie
+     * ist nicht tentativ zurueckgezogen.
+     */
+    public boolean settleConnection(Id id) {
+        Conn c = conn(id);
+        if (c == null || c.status != St.TENTATIVE_TOMBSTONE) return false;
+        c.status = St.TOMBSTONE;
+        return true;
+    }
+
+    /**
      * Die Id der Verbindung source→target, wenn der Graph eine hält, gleich
      * welcher Status (Rust {@code Graph::connection_id}). Gelesen aus der
      * Participation-Liste von {@code source}: es ist die Id, die
@@ -225,9 +274,19 @@ public final class Graph {
     public Id connectionId(Id source, Id target) {
         Node t = node(target);
         if (t == null) return null;
+        return connectionIdTyped(source, target, t.typ);
+    }
+
+    /**
+     * {@link #connectionId} fuer ein {@code target}, dessen Typ der
+     * Aufrufer kennt ({@code typ}), ohne {@code target} nachzuschlagen
+     * (Rust {@code connection_id_typed}). Ein anderer Typ als der von
+     * {@code target} findet keinen Eintrag: null.
+     */
+    public Id connectionIdTyped(Id source, Id target, int typ) {
         Slot s = map.get(source);
         if (s == null || s.parts == null) return null;
-        Part p = s.parts.first(t.typ, target, true);
+        Part p = s.parts.first(typ, target, true);
         if (p == null) return null;
         assert p.connection.equals(Ident.identConnection(source, target));
         return p.connection;
