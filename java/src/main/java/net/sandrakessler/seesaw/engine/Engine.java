@@ -40,7 +40,7 @@ public final class Engine {
     static final class TodoKey implements Comparable<TodoKey> {
         final long rank;
         /** Die ersten 16 Byte der ersten Id der Folge als zwei long,
-         *  Big-Endian; 0 fuer eine leere Folge. */
+         *  Big-Endian, 0 fuer eine leere Folge. */
         final long head0, head1;
         final Id[] refs;
         final int ruleIx;
@@ -245,7 +245,7 @@ public final class Engine {
      * auf der Rust-Seite; damit laufen alle Tests unter der Pruefung.
      * Ebenso die Pruefungen von {@link #producersOf} und des Schritts
      * ({@link #checks}) und der Vergleich des Seeds auf mehreren Threads
-     * mit dem Seed auf einem ({@link #seedWithThreads}).
+     * mit dem Seed auf einem ({@link #seedWithThreads(Graph, Map, int)}).
      */
     static final boolean CHECKS = Boolean.getBoolean("seesaw.checks");
 
@@ -447,7 +447,7 @@ public final class Engine {
 
     /**
      * Schluessel eines Matches als Zeichenkette: Regelindex plus
-     * Referenzfolge. Fuer Hosts; die Engine selbst fuehrt
+     * Referenzfolge. Fuer Hosts. Die Engine selbst fuehrt
      * {@link MatchKey}, mit derselben Gleichheit.
      *
      * <p>Feste Breite je Byte. {@code Integer.toHexString} laesst
@@ -1034,10 +1034,12 @@ public final class Engine {
      * mu-Ordnung. Was die Engine danach tut, ist dasselbe. Verteilt werden
      * beide Wege des Seeds, der Scan je Regel und der Seed ueber den
      * {@link AnchorIndex}, der Weg ist der von {@code seed}. Die Threads
-     * lesen den Graphen, die Regeln, {@code vals} und den Index und
-     * schreiben nichts davon. Eingetragen wird auf dem Thread des Aufrufers,
-     * nachdem alle Suchen fertig sind. Mit 0 oder 1 Thread ist dies
-     * {@code seed}.
+     * lesen den Graphen, die Regeln und {@code vals} und schreiben nichts
+     * davon. Sie lesen auch den Index, der dabei die Plaene der
+     * verankerten Suchen beim ersten Gebrauch eintraegt, auch auf diesen
+     * Threads ({@link AnchorIndex#plan}, siehe {@link Par}). Die Matches
+     * traegt der Thread des Aufrufers ein, nachdem alle Suchen fertig
+     * sind. Mit 0 oder 1 Thread ist dies {@code seed}.
      *
      * <p>{@code vals} wird von mehreren Threads zugleich gelesen: eine
      * {@code HashMap}, die waehrend des Aufrufs niemand aendert, vertraegt
@@ -1058,25 +1060,26 @@ public final class Engine {
             seed(g, vals);
             return;
         }
-        seedSpread(g, vals, threads, Par.PIECE);
+        seedWithThreads(g, vals, threads, Par.PIECE);
     }
 
     /**
-     * {@link #seedWithThreads} auf {@code threads} Threads mit Stuecken zu
-     * {@code piece} Knoten und Tripeln ({@link Par#indexSeed}), auch fuer
-     * einen Thread. Fuer Tests, die jeden Zuschnitt der Arbeit pruefen.
+     * {@link #seedWithThreads(Graph, Map, int)} auf {@code threads} Threads
+     * mit Stuecken zu {@code piece} Knoten und Tripeln
+     * ({@link Par#indexSeedSpread}), auch fuer einen Thread. Fuer Tests,
+     * die jeden Zuschnitt der Arbeit pruefen.
      */
-    void seedSpread(Graph g, Map<Id, String> vals, int threads, int piece) {
+    void seedWithThreads(Graph g, Map<Id, String> vals, int threads, int piece) {
         links.settleRemoved(g);
         Sink sink = (ri, m) -> record(g, ri, m);
         // Der Weg wie in seed: unter CHECKS mit Index immer der Index.
         boolean byIndex = useIndex && index() != null && (CHECKS || seedThroughIndex(g));
         if (!CHECKS) {
-            spreadSeed(g, vals, byIndex, threads, piece, sink);
+            seedSpread(g, vals, byIndex, threads, piece, sink);
             return;
         }
         Found spread = new Found();
-        spreadSeed(g, vals, byIndex, threads, piece, spread);
+        seedSpread(g, vals, byIndex, threads, piece, spread);
         Found one = new Found();
         long[] kept = counters();
         if (byIndex) {
@@ -1101,17 +1104,17 @@ public final class Engine {
     }
 
     /** Der Seed auf dem Weg {@code byIndex}, die Suchen verteilt
-     *  ({@link Par}), mit den Zaehlern wie {@link #seedByIndex} und
-     *  {@link #seedByScan}. */
-    private void spreadSeed(Graph g, Map<Id, String> vals, boolean byIndex, int threads, int piece,
+     *  ({@link Par#indexSeedSpread}, {@link Par#scanSpread}), mit den
+     *  Zaehlern wie {@link #seedByIndex} und {@link #seedByScan}. */
+    private void seedSpread(Graph g, Map<Id, String> vals, boolean byIndex, int threads, int piece,
             Sink sink) {
         boolean[] admitted = new boolean[rules.size()];
         for (int ri = 0; ri < rules.size(); ri++) admitted[ri] = ruleActive(ri);
         if (byIndex) {
             AnchorIndex ix = index();
             seedsByIndex++;
-            Par.Counted c = Par.indexSeed(ix, rules, g, vals, seedStarts(g), admitted, threads,
-                    piece, sink);
+            Par.Counted c = Par.indexSeedSpread(ix, rules, g, vals, seedStarts(g), admitted,
+                    threads, piece, sink);
             walk.visits += c.visits();
             searches += c.searches();
             anchoredSearches += c.searches();
@@ -1121,7 +1124,7 @@ public final class Engine {
         for (boolean a : admitted) if (a) n++;
         int[] active = new int[n];
         for (int ri = 0, k = 0; ri < rules.size(); ri++) if (admitted[ri]) active[k++] = ri;
-        List<List<Id[]>> found = Par.scan(rules, active, g, vals, threads);
+        List<List<Id[]>> found = Par.scanSpread(rules, active, g, vals, threads);
         searches += n;
         seedSearches += n;
         for (int i = 0; i < n; i++) {
@@ -1644,7 +1647,7 @@ public final class Engine {
     }
 
     /** Traegt jeder Anker der Regel schon seine Korrespondenz mit einem
-     *  lebendigen Gegenende (Rust {@code is_translated})? Nicht ohne
+     *  lebendigen anderen Ende (Rust {@code is_translated})? Nicht ohne
      *  Anker. */
     private static boolean isTranslated(Graph g, Rule rule, Id[] refs) {
         if (rule.corrRecognition.isEmpty()) return false;
@@ -1655,7 +1658,7 @@ public final class Engine {
     }
 
     /** Traegt {@code anchor} schon eine lebendige Korrespondenz vom Typ
-     *  {@code typ} mit einem lebendigen Gegenende vom Typ {@code endTyp}
+     *  {@code typ} mit einem lebendigen anderen Ende vom Typ {@code endTyp}
      *  (Rust {@code anchor_translated})? */
     private static boolean anchorTranslated(Graph g, String typ, String endTyp, Id anchor) {
         Integer t = g.lookup(typ);
@@ -1666,7 +1669,7 @@ public final class Engine {
     /** {@link #anchorTranslated} fuer einen Anker, dessen Participations
      *  zur Hand sind (Rust {@code anchor_translated_in}): {@code ofType}
      *  sind die mit Korrespondenzen vom gesuchten Typ, {@code ept} ist der
-     *  Typ des Gegenendes. */
+     *  Typ ihres anderen Endes. */
     private static boolean anchorTranslatedIn(Graph g, Iterable<Part> ofType, int ept, Id anchor) {
         for (Part p : ofType) {
             Conn c = g.conn(p.connection);

@@ -104,7 +104,7 @@ final class Links {
      * (Rust {@code file_links}). Gibt es den Index der nicht gehaltenen
      * Links, kommen die Links dorthin, deren Verbindung der Graph nicht
      * haelt. Unter Pruefung kommen alle in {@link #filed}, mit der Id, die
-     * 2.0.2 vergab: aus der Participation-Liste der Quelle, wo der Graph die
+     * 2.0.2 vergab: aus der Beteiligungsliste der Quelle, wo der Graph die
      * Verbindung haelt, sonst abgeleitet, beides dieselbe Id.
      */
     void fileLinks(Graph g, Rule rule, Id[] refs, int ix) {

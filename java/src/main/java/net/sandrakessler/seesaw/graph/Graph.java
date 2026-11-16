@@ -287,7 +287,7 @@ public final class Graph {
     /**
      * Die Id der Verbindung source→target, wenn der Graph eine hält, gleich
      * welcher Status (Rust {@code Graph::connection_id}). Gelesen aus der
-     * Participation-Liste von {@code source}: es ist die Id, die
+     * Beteiligungsliste von {@code source}: es ist die Id, die
      * {@link Ident#identConnection} liefert, ohne sie neu abzuleiten. null,
      * wenn es {@code target} oder die Verbindung nicht gibt.
      */
@@ -312,8 +312,16 @@ public final class Graph {
         return p.connection;
     }
 
-    /** matchbar (Solid|Ghost|TT) — für den Matcher. Die Verbindung wird
-     *  über {@link #connectionId} gefunden. */
+    /**
+     * matchbar (Solid|Ghost|TT), für den Matcher. Die Verbindung wird
+     * über {@link #connectionId} gefunden, also aus der Beteiligungsliste
+     * von {@code s}. 2.0.2 leitete ihre Id ab und schlug sie in der Map
+     * nach. Beides ergibt dasselbe, solange die Liste von {@code s} die
+     * Participation jeder Verbindung von {@code s} hält. Hat ein Host
+     * die Participation einer Verbindung aus dieser Liste entfernt (mit
+     * {@code Iterator.remove} über {@link #parts} oder von Hand), liefert
+     * die Methode für diese Verbindung false, 2.0.2 lieferte ihren Status.
+     */
     public boolean connected(Id s, Id t) {
         Id id = connectionId(s, t);
         if (id == null) return false;
@@ -321,8 +329,13 @@ public final class Graph {
         return c != null && c.status.matchable();
     }
 
-    /** nicht-tentativ (Solid|Ghost) — für die Duplikat-Unterdrückung. Die
-     *  Verbindung wird über {@link #connectionId} gefunden. */
+    /**
+     * nicht-tentativ (Solid|Ghost), für die Duplikat-Unterdrückung. Die
+     * Verbindung wird über {@link #connectionId} gefunden, aus der
+     * Beteiligungsliste von {@code s}, mit derselben Abweichung von 2.0.2
+     * wie {@link #connected}: eine Verbindung, deren Participation ein
+     * Host aus der Liste von {@code s} entfernt hat, ergibt false.
+     */
     public boolean connectedAlive(Id s, Id t) {
         Id id = connectionId(s, t);
         if (id == null) return false;
@@ -508,7 +521,7 @@ public final class Graph {
 
     /**
      * Platz eines Teilnehmers in der Map: ein Knoten mit seiner
-     * Participation-Liste oder eine Verbindung (Rust {@code Slot}). Der
+     * Beteiligungsliste oder eine Verbindung (Rust {@code Slot}). Der
      * Platz einer Verbindung trägt keine Liste.
      */
     public static final class Slot {

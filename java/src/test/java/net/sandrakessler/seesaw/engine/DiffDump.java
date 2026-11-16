@@ -8,8 +8,8 @@ import java.util.Random;
 /**
  * Hauptprogramm des Differenztests gegen Java 2.0.2 ({@code jgate.sh diff}).
  * Dieselbe Quelle läuft gegen den Baum dieses Zweigs und gegen den von
- * {@code v2.0.2} (dort mit der {@code Worlds.java} ohne Index-Argument);
- * deshalb nutzt sie nur, was beide Engines haben.
+ * {@code v2.0.2} (dort mit der {@code Worlds.java} ohne Index-Argument).
+ * Deshalb nutzt sie nur, was beide Engines haben.
  *
  * <p>Aufruf: {@code DiffDump <welt> <richtung> <n | von-bis> [voll <seed>]}. Welten:
  * {@code followup}, {@code family}, {@code predicates},
@@ -26,7 +26,7 @@ import java.util.Random;
  *
  * <p>Gegenprobe: mit {@code -Dseesaw.diff.mutate=<seed>} wird im ersten
  * Szenario ab diesem Seed, das Wellen hat, eine Zeile des ersten Abzugs
- * verändert; der Seed steht auf stderr ({@code mutiert seed=…}).
+ * verändert. Der Seed steht auf stderr ({@code mutiert seed=…}).
  */
 public final class DiffDump {
     private DiffDump() {}
@@ -64,7 +64,7 @@ public final class DiffDump {
         long only = full ? Long.parseLong(args[4]) : -1;
         long mutate = Long.getLong("seesaw.diff.mutate", -1);
         boolean mutated = false;
-        // Der Weg, den die Engine dieses Zweigs von sich aus nimmt; die Engine von 2.0.2
+        // Der Weg, den die Engine dieses Zweigs von sich aus nimmt. Die Engine von 2.0.2
         // kennt nur einen Weg, dort ignoriert Worlds.run das Argument.
         boolean useIndex = !"false".equalsIgnoreCase(System.getProperty("seesaw.anchorIndex"));
         long waves = 0, applied = 0;

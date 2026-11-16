@@ -38,7 +38,7 @@ import net.sandrakessler.seesaw.rules.Rules;
  * <p>Öffentlich für die Messstrecke {@code bench.JavaSuite}. Jede Zelle
  * gibt es auch mit einer {@link Section}, die der Aufrufer anlegt und
  * nach dem Lauf ausliest. Die Messstrecke läuft gegen die Hauptklassen
- * älterer Stände; deshalb nutzt diese Klasse nur öffentliche API der
+ * älterer Stände. Deshalb nutzt diese Klasse nur öffentliche API der
  * Engine und liest die paket-privaten Zähler über {@link Counters}.
  */
 public final class Langpack {
@@ -54,7 +54,7 @@ public final class Langpack {
      *  Messstrecke, davon die Zeit des ersten Aufrufs ({@code seed} oder
      *  {@code elementsAdded}; 0, wo die Zelle sie nicht trennt), dazu
      *  die Zahl der gestarteten Suchen und der Seeds über den Index
-     *  (ganzer Lauf, auch außerhalb der Messstrecke; -1, wo der Stand
+     *  (ganzer Lauf, auch außerhalb der Messstrecke, -1, wo der Stand
      *  den Zähler nicht hat). */
     public record Outcome(long steps, long applied, long nodes, String fingerprint, long nanos,
             long firstNanos, long searches, long seedsByIndex) {}

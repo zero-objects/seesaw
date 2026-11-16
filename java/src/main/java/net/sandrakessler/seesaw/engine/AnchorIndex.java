@@ -71,7 +71,7 @@ public final class AnchorIndex {
      *  Gang zum nächsten behalten. */
     private static final int VISITED_KEEP = 1024;
     /** Ein Präfixbaum-Knoten mit weniger Gruppen fragt die
-     *  Participation-Liste je Gruppe nach einem Bereich ({@link #walk}). */
+     *  Beteiligungsliste je Gruppe nach einem Bereich ({@link #walk}). */
     private static final int PASS_FROM_GROUPS = 4;
     /** Der Durchlauf über die Liste wird genommen, solange sie höchstens
      *  so viele Einträge je Gruppe hat. Eine längere Liste (ein Knoten
@@ -368,7 +368,7 @@ public final class AnchorIndex {
     final int ruleCount;
 
     /** {@code read}: was der Index aus {@code rules} liest
-     *  ({@link #read}). */
+     *  ({@link #feed}). */
     private AnchorIndex(List<Rule> rules, byte[] read) {
         ruleCount = rules.size();
         planAt = new int[ruleCount];
@@ -398,11 +398,11 @@ public final class AnchorIndex {
         if (!supports(rules)) {
             throw new IllegalArgumentException("zu viele Regeln oder Musterpositionen für den Index");
         }
-        return build(rules, read(rules));
+        return build(rules, feed(rules));
     }
 
     /** {@link #build} mit dem, was der Index aus {@code rules} liest
-     *  ({@link #read}). */
+     *  ({@link #feed}). */
     private static AnchorIndex build(List<Rule> rules, byte[] read) {
         AnchorIndex index = new AnchorIndex(rules, read);
         Tree tree = new Tree();
@@ -556,13 +556,13 @@ public final class AnchorIndex {
      * Gleichen die Muster von {@code rules} denen, aus denen der Index
      * gebaut wurde? Verglichen wird ein Digest der Musterknoten (Typ,
      * Wertprädikat) und der Links aller Regeln, also alles, was der
-     * Index liest ({@link #read}). Die Typen gehen mit ihren Nummern aus
+     * Index liest ({@link #feed}). Die Typen gehen mit ihren Nummern aus
      * der Typtabelle des Graphen ein, gegen den die Regeln gesenkt wurden.
      * Der Index passt damit auch zu Regeln eines anderen Graphen, wenn
      * dessen Typtabelle die Typen gleich nummeriert, und nur dann.
      */
     public boolean fits(List<Rule> rules) {
-        return rules.size() == ruleCount && Arrays.equals(shape, Blake3.hash(read(rules)));
+        return rules.size() == ruleCount && Arrays.equals(shape, Blake3.hash(feed(rules)));
     }
 
     /** Wachsende Folge von Bytes, Zahlen little-endian. */
@@ -604,7 +604,7 @@ public final class AnchorIndex {
      * vergleicht die Bytes selbst. Ein regulärer Ausdruck geht mit seinem
      * Text ein.
      */
-    static byte[] read(List<Rule> rules) {
+    static byte[] feed(List<Rule> rules) {
         Bytes out = new Bytes();
         out.putInt(rules.size());
         for (Rule rule : rules) {
@@ -647,7 +647,7 @@ public final class AnchorIndex {
     //
     // Die Indizes, die Engines ohne Index des Hosts bauen, bleiben im
     // Prozess, wiedergefunden über das, was ein Index aus den Regeln liest
-    // (read). Eine Engine über einen Regelsatz, den der Prozess
+    // (feed). Eine Engine über einen Regelsatz, den der Prozess
     // gesehen hat, nimmt den Index, der da ist, auch wenn die Regeln neu
     // geladen wurden. Ein Index ist eine Funktion dessen, was er aus den
     // Regeln liest, der Index eines gleichen Regelsatzes antwortet also
@@ -704,7 +704,7 @@ public final class AnchorIndex {
      * passen in die Kodierung ({@link #supports}).
      */
     static AnchorIndex shared(List<Rule> rules) {
-        Read read = new Read(read(rules));
+        Read read = new Read(feed(rules));
         synchronized (SHARED) {
             AnchorIndex index = find(read);
             if (index != null) return index;
@@ -752,7 +752,7 @@ public final class AnchorIndex {
 
     /** Ist der Index dieses Regelsatzes behalten (für Tests)? */
     static boolean keeps(List<Rule> rules) {
-        Read read = new Read(read(rules));
+        Read read = new Read(feed(rules));
         synchronized (SHARED) {
             for (Kept k : SHARED) {
                 if (k.read().same(read)) return true;
@@ -777,7 +777,7 @@ public final class AnchorIndex {
      * Markiert jeden Präfixbaum-Knoten unter {@code at}, den ein Gang
      * von einem Graphknoten aus verwirklicht, ohne einen Knoten zu
      * betreten, den {@code skip} für {@code nodes[ni]} nennt.
-     * {@code parts} ist die Participation-Liste des Knotens, an dem der
+     * {@code parts} ist die Beteiligungsliste des Knotens, an dem der
      * Gang steht.
      *
      * <p>Die Gruppen eines Präfixbaum-Knotens findet der Gang auf einem
@@ -832,7 +832,7 @@ public final class AnchorIndex {
             }
             if (pairs != ranges) {
                 throw new IllegalStateException("anchor index: der Durchlauf über die "
-                        + "Participation-Liste besucht " + pairs + " Paare, die Bereiche "
+                        + "Beteiligungsliste besucht " + pairs + " Paare, die Bereiche "
                         + ranges);
             }
         }

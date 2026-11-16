@@ -27,7 +27,7 @@ import net.sandrakessler.seesaw.engine.Langpack;
  * Aufruf von {@code run} fährt eine Zelle: {@code W} Läufe zum Aufwärmen
  * der JVM, dann {@code R} gemessene Läufe, alle im selben Prozess. Vor
  * jedem Lauf ein voller GC, außerhalb der Messstrecke. Jeder Lauf baut
- * Modell, Regeln und Engine neu; gemessen wird nur die Strecke der Zelle
+ * Modell, Regeln und Engine neu. Gemessen wird nur die Strecke der Zelle
  * ({@link Section}). Alle Läufe, auch die zum Aufwärmen, müssen
  * dieselben Schritte, angewandten Schritte, Knoten, denselben Fingerprint
  * und dieselbe Zahl der Suchen liefern, sonst Abbruch.
@@ -40,7 +40,7 @@ import net.sandrakessler.seesaw.engine.Langpack;
  * die der Thread in der Strecke alloziert), {@code gc_ms=} und
  * {@code gc_n=} (GC-Zeit und -Läufe in der Strecke), je das Minimum
  * über die gemessenen Läufe, {@code searches=} (gestartete Suchen der
- * Engine im ganzen Lauf, auch außerhalb der Strecke; -1, wo der Stand
+ * Engine im ganzen Lauf, auch außerhalb der Strecke, -1, wo der Stand
  * den Zähler nicht hat) und {@code warmup=}.
  *
  * <p>Die Thread-CPU zählt nur den Thread, der die Strecke fährt. In den
@@ -83,8 +83,8 @@ public final class JavaSuite {
      * Protokoll eines Hosts im Verzeichnis
      * {@code SEESAW_PDE_DUMP} die Zellen {@code pde/load/<name>},
      * {@code pde/graph/<name>}, {@code pde/open/<name>} und für
-     * {@code <name>-edit} {@code pde/edit/<name>} ({@link PdeReplay});
-     * ohne die Variable keine.
+     * {@code <name>-edit} {@code pde/edit/<name>} ({@link PdeReplay}).
+     * Ohne die Variable keine.
      */
     static List<Cell> cells() {
         List<Cell> out = new ArrayList<>();

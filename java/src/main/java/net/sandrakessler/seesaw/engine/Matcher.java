@@ -30,10 +30,17 @@ public final class Matcher {
          * Die Links, die kein Schritt prüft, als Indizes in
          * {@code Rule.patLinks}: Selbstlinks und Links zwischen zwei vorab
          * gebundenen Positionen. Jeden anderen Link prüft der Schritt, der
-         * das spätere seiner beiden Enden setzt, mit derselben Bedingung
-         * wie {@link #allLinksOk}. Anders als Rust gehört dazu auch die
-         * Wertgleichheit: Java 2.0.2 nimmt sie in den Plan (Code 2), der
-         * Schritt prüft sie mit {@code sameValue} wie die Abschlussprüfung.
+         * das spätere seiner beiden Enden setzt. Die Bedingung ist die von
+         * {@link #allLinksOk}, außer beim ersten Link eines Schritts mit
+         * Code -1 (richtungsfrei): dort liest der Schritt nur den Status
+         * der Verbindung, über die der Kandidat aus der Beteiligungsliste
+         * kam, nicht beide Richtungen. Ein Kandidat, den zwei Verbindungen
+         * mit dem gesetzten Nachbarn verbinden, von denen nur eine
+         * matchbar ist, besteht deshalb einmal, in 2.0.2 zweimal (Rust
+         * 891a63b). Die Menge der Matches ist dieselbe. Anders als Rust
+         * gehört zu den Links der Schritte auch die Wertgleichheit: Java
+         * 2.0.2 nimmt sie in den Plan (Code 2), der Schritt prüft sie mit
+         * {@code sameValue} wie die Abschlussprüfung.
          */
         final int[] closing;
 
@@ -230,7 +237,7 @@ public final class Matcher {
             }
             return;
         }
-        // Kandidaten: die Participation-Liste des ersten gesetzten
+        // Kandidaten: die Beteiligungsliste des ersten gesetzten
         // Nachbarn, über den Bereich seines Typs. Bei einem gerichteten
         // oder richtungsfreien Link bringt der Kandidat die Verbindung
         // mit, die den ersten Link verwirklicht: deren Status wird dort

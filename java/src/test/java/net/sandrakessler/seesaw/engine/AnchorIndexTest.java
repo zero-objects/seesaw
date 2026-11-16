@@ -255,7 +255,7 @@ final class AnchorIndexTest {
      * {@code the_index_keeps_the_matches_under_many_groups}): der
      * Präfixbaum-Knoten von {@code Item} hat zwei Gruppen je Regel, eine
      * für das Blatt, nach dem die Regel fragt, eine für den Knoten, unter
-     * dem das Item hängt. Items mit kurzer Participation-Liste, eines mit
+     * dem das Item hängt. Items mit kurzer Beteiligungsliste, eines mit
      * einer Liste, die eine {@code TreeSet} ist und noch durchlaufen wird
      * (höchstens acht Einträge je Gruppe), und eines mit einer längeren
      * geben dieselben Matches über das Delta, den Seed über den Index und

@@ -8,7 +8,7 @@ import java.util.List;
 /**
  * Die Messstrecke eines Laufs, Gegenstück zu {@code measure::section}
  * der Rust-Suite ({@code benches/suite/measure.rs}). Die Zelle ruft
- * {@link #start} und {@link #stop} um das, was gemessen wird;
+ * {@link #start} und {@link #stop} um das, was gemessen wird.
  * Modellaufbau, Laden der Regeln und Fingerprint liegen außerhalb.
  *
  * <p>Gemessen werden:
@@ -77,7 +77,7 @@ public final class Section {
         wallStart = wall0;
     }
 
-    /** Beendet das laufende Stück; was bis {@link #resume} läuft, zählt
+    /** Beendet das laufende Stück. Was bis {@link #resume} läuft, zählt
      *  nicht. */
     public void pause() {
         long[] now = now();

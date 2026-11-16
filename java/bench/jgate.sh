@@ -1,7 +1,7 @@
 #!/bin/sh
 # jgate.sh [teil ...]: Prüfungen des Java-Zweigs, auf codepit über das Board. Jede Ergebniszeile
 # beginnt mit dem Namen des Teils. Ohne Argument laufen alle Teile nacheinander (mvn fp pde
-# diff); das dauert länger als 5 Minuten, über das Board deshalb jeden Teil als eigenen Job
+# diff). Das dauert länger als 5 Minuten, über das Board deshalb jeden Teil als eigenen Job
 # fahren (mvn1, mvn2, mvn3, fp, pde:java40, pde:open5, pde:open2 pde:open2-edit, und die Stücke
 # von diff, siehe dort).
 #
@@ -13,11 +13,11 @@
 #           mvn2  -DargLine=-Dseesaw.anchorIndex=false
 #           mvn3  -DargLine=-Dseesaw.checks=true
 #   fp    jede Zelle von JavaSuite einmal (--warmup 0 --reps 1) außer den Zellen pde/… (die
-#         prüft der Teil pde); Schritte, angewandte Schritte, Knoten und Fingerprint gegen die
+#         prüft der Teil pde). Schritte, angewandte Schritte, Knoten und Fingerprint gegen die
 #         Rust-Zellen mit Label sel aus benches/suite/results/2026-11-15-auswahl/uid-cgu1.tsv und
 #         uid-small-cgu1.tsv und mit Label par aus par.tsv (Seed auf mehreren Threads, …/reseed/…).
 #         Erwartet wird jede dieser Rust-Zellen außer denen, die die
-#         Java-Seite nicht hat (NOT_JAVA), und außer pde/…; eine erwartete Zelle ohne
+#         Java-Seite nicht hat (NOT_JAVA), und außer pde/…. Eine erwartete Zelle ohne
 #         Java-Ergebnis meldet "fp <zelle> FEHLT", eine Zelle, die der Stand nicht kann (Zeile
 #         nicht_verfuegbar von JavaSuite), "fp <zelle> NICHT_VERFUEGBAR". Eine Zeile je Zelle, dann
 #         "fp FP_RC=… zellen=… erwartet=… gleich=… abweichend=… fehlend=… ohne_referenz=…
@@ -27,11 +27,11 @@
 #         (Vorgabe /root/seesaw-java/pde-dump). Erwartet wird jedes Protokoll, zu dem uid-cgu1.tsv
 #         Rust-Zellen pde/<teil>/<name> mit Label sel hat (java40, open5, open2, open2-edit). Je
 #         Rust-Zelle läuft die gleichnamige Java-Zelle einmal (--warmup 0 --reps 1, Zeitgrenze
-#         PDE_TIMEOUT, Vorgabe 270 s); die Nachfahrt prüft jeden Aufruf gegen das Protokoll und
+#         PDE_TIMEOUT, Vorgabe 270 s). Die Nachfahrt prüft jeden Aufruf gegen das Protokoll und
 #         bricht bei der ersten Abweichung mit Zeilennummer ab. Eine Zeile je Zelle mit
 #         "gleich", "ABWEICHUNG", "FEHLT" oder "RUN_FAILED" (mit der Meldung der Nachfahrt), der
 #         Dauer des Prozesses (sekunden=) und der Thread-CPU der Messstrecke (cpu_ms=, Spalte 4
-#         der Zeile von JavaSuite; ein Lauf ohne Aufwärmen, kein Messwert), dann je Protokoll "pde <name> VERDIKT=bestanden zellen=…" oder
+#         der Zeile von JavaSuite, ein Lauf ohne Aufwärmen, kein Messwert), dann je Protokoll "pde <name> VERDIKT=bestanden zellen=…" oder
 #         "pde <name> VERDIKT=durchgefallen <gründe> zellen=…". Bestanden nur, wenn jede
 #         Rust-Zelle des Protokolls ohne Abweichung durchlief und Schritte, angewandte Schritte,
 #         Knoten und Fingerprint gleich der Rust-Zelle sind.
@@ -42,12 +42,12 @@
 #         (ANDERE_ABWEICHUNG), ein Lauf ohne Abweichung (OHNE_ABWEICHUNG, eine
 #         Verhaltensänderung gegenüber 2.0.2) oder ein anderer Fehler fallen durch. Fehlt die
 #         Datei oder ist eine Zeile ungültig, fällt der ganze Teil durch.
-#         Am Ende "pde PDE_RC=… protokolle=… bestanden=… durchgefallen=…"; PDE_RC=0 nur, wenn
+#         Am Ende "pde PDE_RC=… protokolle=… bestanden=… durchgefallen=…". PDE_RC=0 nur, wenn
 #         jedes verlangte Protokoll besteht und protokolle>0.
 #           pde:<name>  nur das Protokoll <name>, für Jobs unter 5 Minuten
 #   diff  [n]  Differenztest gegen Java 2.0.2 (Vorgabe n=1500). Dieselben Szenarien
 #         (Worlds.scenario, Seeds 1 bis n) laufen durch die Engine dieses Baums und durch die von
-#         v2.0.2; verglichen werden je Szenario die SHA-256 über alle Abzüge (Worlds.dump) der
+#         v2.0.2. Verglichen werden je Szenario die SHA-256 über alle Abzüge (Worlds.dump) der
 #         Wellen, Graph, Kaskade, Rückgaben von step und Zustand der Engine. Die Referenz liegt in
 #         SEESAW_DIFF_REF (Vorgabe /root/seesaw-java/ref) und muss vorher dort sein, auf dem Mac:
 #           git archive v2.0.2 java | ssh codepit 'rm -rf /root/seesaw-java/ref && mkdir -p
@@ -65,15 +65,15 @@
 #         angewandt>0 (mindestens ein angewandter Schritt) und beide Seiten ohne Fehler liefen. Bei
 #         einer Abweichung stehen die erste abweichende Zeile beider Seiten dabei.
 #         Gegenprobe (diff:gegenprobe): die Seite dieses Baums verändert mit -Dseesaw.diff.mutate
-#         eine Zeile eines Abzugs; bestanden nur, wenn der Vergleich genau dieses Szenario meldet.
+#         eine Zeile eines Abzugs. Bestanden nur, wenn der Vergleich genau dieses Szenario meldet.
 #         Am Ende "diff DIFF_RC=… stuecke=… bestanden=… durchgefallen=…".
 #           diff               alle Stücke und die Gegenprobe (länger als 5 Minuten, auf codepit
-#                              etwa 20 Minuten); family/ungerichtet läuft darin in Stücken zu
+#                              etwa 20 Minuten), family/ungerichtet läuft darin in Stücken zu
 #                              250 Seeds (diff:family/ungerichtet@1-250 … @1251-1500)
 #           diff:<welt>        beide Richtungen einer Welt
 #           diff:<welt>/<richtung>  ein Stück
 #           diff:<welt>/<richtung>@<von>-<bis>  nur die Seeds von bis bis (für Jobs unter
-#                      5 Minuten; n=bis-von+1, erste_abweichung nennt den Seed wie sonst)
+#                      5 Minuten, n=bis-von+1, erste_abweichung nennt den Seed wie sonst)
 #           diff:gegenprobe    nur die Gegenprobe
 #         Welten: followup family predicates predicates_no_equals. Das n steht hinter dem Teil
 #         ("diff 1500", "diff:family/gerichtet 1500").
@@ -89,14 +89,14 @@ JVM="-Xms8g -Xmx8g -XX:+UseParallelGC"
 MAIN=net.sandrakessler.seesaw.bench.JavaSuite
 # Rust-Zellen der Referenz, die JavaSuite nicht hat (Regex über den Zellnamen).
 NOT_JAVA='/delta-change-same/'
-# Zellen der Nachfahrt; sie prüft nur der Teil pde, jede Rust-Zelle genau ein Teil.
+# Zellen der Nachfahrt. Sie prüft nur der Teil pde, jede Rust-Zelle genau ein Teil.
 PDE='^pde/'
 PDE_DIR=${SEESAW_PDE_DUMP:-/root/seesaw-java/pde-dump}
 PDE_TIMEOUT=${PDE_TIMEOUT:-270}
 PDE_EXPECTED=${PDE_EXPECTED:-$J/bench/pde-abweichungen.txt}
 status=0
 
-# Klassenpfad der Laufzeit-Abhängigkeiten nach $1. Offline; fehlt dem lokalen Repository das
+# Klassenpfad der Laufzeit-Abhängigkeiten nach $1. Offline. Fehlt dem lokalen Repository das
 # Plugin, einmal ohne -o.
 deps_cp() {
     timeout 100 mvn -q -o -B dependency:build-classpath -DincludeScope=runtime -Dmdep.outputFile="$1" \
@@ -376,7 +376,7 @@ diff_build() {
         return 1
     fi
     cp "$J/$DIFF_PKG/DiffDump.java" "$rj/$DIFF_PKG/DiffDump.java"
-    # jackson-databind wie in diesem Baum (2.17.2 liegt nicht im lokalen Repository); die Engine
+    # jackson-databind wie in diesem Baum (2.17.2 liegt nicht im lokalen Repository). Die Engine
     # selbst bleibt der Stand v2.0.2.
     jv=$(sed -n '/<artifactId>jackson-databind<\/artifactId>/{n;s/.*<version>\(.*\)<\/version>.*/\1/p;}' "$J/pom.xml")
     sed -i "/<artifactId>jackson-databind<\/artifactId>/{n;s|<version>.*</version>|<version>$jv</version>|;}" "$rj/pom.xml"

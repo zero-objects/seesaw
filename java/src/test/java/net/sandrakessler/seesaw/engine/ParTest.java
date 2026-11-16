@@ -22,7 +22,7 @@ import net.sandrakessler.seesaw.rules.Rules;
 
 /**
  * Der Seed mit seinen Suchen auf mehreren Threads
- * ({@link Engine#seedWithThreads}, Rust {@code engine::par}): die Engine
+ * ({@link Engine#seedWithThreads(Graph, Map, int)}, Rust {@code engine::par}): die Engine
  * traegt ein, was {@link Engine#seed} eintraegt, in derselben Folge, und
  * faehrt danach dieselbe Kaskade. Verglichen werden der Zustand der
  * Engine nach dem Seed (Match-Speicher in seiner Folge, Todo, angewandte
@@ -185,7 +185,7 @@ final class ParTest {
                 for (int[] cut : runs) {
                     Engine e = engine(m.rules(), byIndex);
                     if (forwardOnly) e.admitDelta(List.of(Engine.DeltaDomain.SOURCE));
-                    e.seedSpread(m.g(), m.vals(), cut[0], cut[1]);
+                    e.seedWithThreads(m.g(), m.vals(), cut[0], cut[1]);
                     same(what + ", " + cut[0] + " Threads, Stuecke zu " + cut[1], expected,
                             List.of(Worlds.dump(m.g(), m.vals(), e), counters(e)));
                 }

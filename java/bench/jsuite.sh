@@ -4,7 +4,7 @@
 # Die Messstrecke (Paket bench, dazu Langpack und LangWorld aus den Testklassen) wird einmal
 # aus dem neuesten Stand gebaut, dem Baum, in dem dieses Skript liegt (auf codepit
 # /root/seesaw-java/src, per rsync übertragen). Gefahren wird sie gegen das Haupt-JAR jedes
-# Stands (java/src/main). Sie nutzt nur öffentliche API der Hauptklassen; die paket-privaten
+# Stands (java/src/main). Sie nutzt nur öffentliche API der Hauptklassen. Die paket-privaten
 # Zähler der Engine liest sie per Reflexion (bench.Counters), -1 wo ein Stand sie nicht hat.
 #
 # Teilung zwischen Mac und codepit. Der Mac hat git und baut nichts, codepit baut und misst
@@ -25,17 +25,17 @@
 #         Haupt-JAR des gesendeten Stands bauen (Commit muss zu COMMIT passen), nach
 #         /root/seesaw-java/jars/<label>.jar, Klassenpfad der Abhängigkeiten nach <label>.cp
 #     sh jsuite.sh run [--warmup W] [--reps R] <tsv> <label,...> <zelle>...
-#         je Zelle jedes Label einmal, im Wechsel, jeder Lauf ein frischer Prozess; jeder Lauf
+#         je Zelle jedes Label einmal, im Wechsel, jeder Lauf ein frischer Prozess. Jeder Lauf
 #         hängt eine Zeile an die TSV an. Das Aufteilen auf Jobs unter 5 Minuten liegt beim
-#         Aufrufer (z. B. eine Zelle je Aufruf); ein Lauf wird nach LIMIT Sekunden beendet.
+#         Aufrufer (z. B. eine Zelle je Aufruf). Ein Lauf wird nach LIMIT Sekunden beendet.
 #     sh jsuite.sh ladder [--tsv <tsv>] [<zelle>...]
 #         alle Stände aus ladder.txt in drei Runden (ROUNDS), Vorgabe die großen Zellen (CELLS),
 #         TSV ladder.tsv. Baut fehlende JARs und die fehlende Messstrecke. Setzt fort, wo die
 #         TSV aufhört: in Runde r läuft ein Paar (Label, Zelle), wenn die TSV weniger als r
 #         Zeilen davon hat. Ein Aufruf bleibt unter LIMIT Sekunden: einen weiteren Lauf startet
 #         er nur, wenn die längste bisherige Dauer der Zelle (<tsv>.dauer) mal 1,25 noch in
-#         die Zeit passt; eine Zelle ohne bekannte Dauer nur als ersten Lauf des Aufrufs. Dann
-#         meldet er "ladder offen=<n>"; erneut aufrufen bis "ladder fertig".
+#         die Zeit passt, eine Zelle ohne bekannte Dauer nur als ersten Lauf des Aufrufs. Dann
+#         meldet er "ladder offen=<n>". Erneut aufrufen bis "ladder fertig".
 #
 # Eine Zelle, die ein Stand nicht kann (…/reseed/…/t4 und t8 ohne Engine.seedWithThreads), schreibt
 # die Zeile "<label> <zelle> nicht_verfuegbar <grund>" mit Exit-Code 0. Sie zählt als Lauf, die
@@ -115,8 +115,8 @@ bench() {
     )
 }
 
-# Klassenpfad der Laufzeit-Abhängigkeiten nach $1 (im Verzeichnis eines pom.xml). Offline;
-# fehlt dem lokalen Repository das Plugin, einmal ohne -o.
+# Klassenpfad der Laufzeit-Abhängigkeiten nach $1 (im Verzeichnis eines pom.xml). Offline.
+# Fehlt dem lokalen Repository das Plugin, einmal ohne -o.
 deps_cp() {
     timeout 60 mvn -q -o -B dependency:build-classpath -DincludeScope=runtime -Dmdep.outputFile="$1" \
         || timeout 60 mvn -q -B dependency:build-classpath -DincludeScope=runtime -Dmdep.outputFile="$1"
@@ -231,7 +231,7 @@ cmd_ladder() {
         echo "ladder offen=$(open_runs "$tsv" "$cells" "$labels") Zeilen in $(basename "$tsv"): $(wc -l < "$tsv" 2>/dev/null || echo 0)"
         exit 0
     }
-    # Arbeit in diesem Aufruf; danach startet nur, was nach Schätzung noch passt.
+    # Arbeit in diesem Aufruf. Danach startet nur, was nach Schätzung noch passt.
     worked=0
 
     if [ ! -d $ROOT/bench/classes ]; then

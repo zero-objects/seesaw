@@ -27,7 +27,7 @@ import net.sandrakessler.seesaw.rules.Rules;
  * Workload {@code pde} der Rust-Suite ({@code benches/suite/pde.rs}): die
  * Aufrufe, die ein echter Host (zerodds-pde) an der öffentlichen
  * Schnittstelle von seesaw-tgg gemacht hat, gegen die Java-Engine
- * nachgefahren. Jedes Ergebnis wird gegen das Protokoll geprüft; bei der
+ * nachgefahren. Jedes Ergebnis wird gegen das Protokoll geprüft, bei der
  * ersten Abweichung bricht die Nachfahrt ab ({@link Mismatch}: Datei,
  * Zeilennummer, Aufruf, erwartet, bekommen). Damit ist eine Zelle
  * zugleich die Gleichheitsprüfung Java gegen Rust auf diesem Workload:
@@ -44,12 +44,12 @@ import net.sandrakessler.seesaw.rules.Rules;
  * <li>{@code pde/graph/<name>}: von dort bis zur ersten Marke (oder zum
  *     Ende) die Aufrufe des Hosts an Graph und Wertespeicher.</li>
  * <li>{@code pde/open/<name>}: dieselbe Strecke, die Aufrufe an den
- *     Engines (die Wellen). Host und Engines wechseln sich dort ab; jede
+ *     Engines (die Wellen). Host und Engines wechseln sich dort ab, jede
  *     der beiden Zellen zählt die Stücke ihrer Art.</li>
  * <li>{@code pde/edit/<name>} für Protokolle {@code <name>-edit}: alles
  *     ab der ersten Marke.</li>
  * </ul>
- * Jede Zelle fährt das ganze Protokoll; sie unterscheiden sich nur in
+ * Jede Zelle fährt das ganze Protokoll. Sie unterscheiden sich nur in
  * dem, was gemessen wird ({@link Section} mit {@code pause}/{@code resume}
  * wie {@code measure::Meter}). Schritte, Knoten und Fingerprint sind
  * also in allen Zellen eines Protokolls gleich.
@@ -58,11 +58,11 @@ import net.sandrakessler.seesaw.rules.Rules;
  *
  * <p>Ein Aufruf je Zeile, Felder durch ein Leerzeichen getrennt.
  * Zeichenketten tragen {@code \s} für ein Leerzeichen, {@code \n},
- * {@code \r}, {@code \t}, {@code \\}; {@code \e} allein ist die leere
+ * {@code \r}, {@code \t}, {@code \\}. {@code \e} allein ist die leere
  * Zeichenkette. Eine Id ist {@code @<hex>}, wo sie zuerst vorkommt (sie
  * bekommt die nächste Nummer ab 0), danach {@code #<nummer>}. Die Regeln
- * sind in der Reihenfolge nummeriert, in der der Rust-Lader sie lieferte;
- * eine Folge von Regeln ist eine Liste von Läufen {@code <erste>+<zahl>},
+ * sind in der Reihenfolge nummeriert, in der der Rust-Lader sie lieferte.
+ * Eine Folge von Regeln ist eine Liste von Läufen {@code <erste>+<zahl>},
  * durch Kommas getrennt, {@code -} wenn leer. {@code G}, {@code V},
  * {@code I}, {@code E} sind die Nummern eines Graphen, eines
  * Wertespeichers, eines Index und einer Engine. {@code C N} am Ende eines
@@ -83,7 +83,7 @@ import net.sandrakessler.seesaw.rules.Rules;
  * <tr><td>{@code gclone G G'}</td><td>{@code G.clone()}</td>
  *     <td>neuer Graph, Typen in der Reihenfolge von
  *     {@code G.typesByName} mit {@code intern}. Java hat kein
- *     {@code clone}; Knoten und Verbindungen lassen sich über die
+ *     {@code clone}, und Knoten und Verbindungen lassen sich über die
  *     öffentliche API nicht in derselben inneren Reihenfolge
  *     ({@code byType}) kopieren. Hat {@code G} Knoten oder
  *     Verbindungen, bricht die Nachfahrt ab ({@link Unsupported}).</td>
@@ -100,7 +100,7 @@ import net.sandrakessler.seesaw.rules.Rules;
  * <tr><td>{@code nstat G id Status 0|1}</td>
  *     <td>{@code G.set_node_status(id, Status)}, {@code true} wenn der
  *     Knoten existiert</td>
- *     <td>{@code G.setNodeStatus(id, St)} gibt nichts zurück; die
+ *     <td>{@code G.setNodeStatus(id, St)} gibt nichts zurück, die
  *     Rückgabe ist {@code G.node(id) != null} vor dem Aufruf</td>
  *     <td>Rückgabe</td></tr>
  * <tr><td>{@code cstat G id Status 0|1}</td>
@@ -125,16 +125,16 @@ import net.sandrakessler.seesaw.rules.Rules;
  *     <td>{@code new Engine(rules)} (Suchweg nach
  *     {@code seesaw.anchorIndex})</td><td>-</td></tr>
  * <tr><td>{@code enewidx E rules I}</td>
- *     <td>{@code Engine::with_anchor_index(rules, I)};
+ *     <td>{@code Engine::with_anchor_index(rules, I)},
  *     {@code I = 0}: {@code AnchorIndex::default()}</td>
- *     <td>{@code new Engine(rules, I)}; {@code I = 0}:
+ *     <td>{@code new Engine(rules, I)}, {@code I = 0}:
  *     {@code new Engine(rules, (AnchorIndex) null)}. Beide Seiten bauen
  *     dann den eigenen Index (der leere Index passt in Rust zu keinen
  *     Regeln).</td><td>-</td></tr>
  * <tr><td>{@code contra E 0|1}</td><td>{@code E.saw_contradiction = ..}</td>
  *     <td>{@code E.sawContradiction = ..}</td><td>-</td></tr>
  * <tr><td>{@code active E none|bits}</td><td>{@code E.active = ..}</td>
- *     <td>{@code none}: nichts; die Java-Engine hat kein Feld
+ *     <td>{@code none}: nichts. Die Java-Engine hat kein Feld
  *     {@code active}, jede Regel ist aktiv wie bei
  *     {@code active = None}. Eine Maske bricht beim Lesen ab
  *     ({@link Unsupported}).</td><td>-</td></tr>
@@ -182,7 +182,7 @@ import net.sandrakessler.seesaw.rules.Rules;
  * aller Regeln, keine {@code subList}-Sichten: eine Sicht auf die Liste,
  * die das nächste {@code load} verlängert, würfe danach bei jedem Zugriff
  * {@code ConcurrentModificationException}. Rust reicht Ausschnitte
- * desselben Speichers weiter; die Regeln sind in beiden Fällen dieselben
+ * desselben Speichers weiter. Die Regeln sind in beiden Fällen dieselben
  * Objekte, {@code AnchorIndex.fits} vergleicht den Inhalt.
  *
  * <p>Fingerprint wie {@code fingerprint::of_all}: Graph und Wertespeicher
@@ -939,7 +939,7 @@ public final class PdeReplay {
         Pieces pieces = new Pieces(w, measured);
         pieces.run(0, load, part == Part.LOAD);
         // Öffnen: Aufrufe des Hosts an Graph und Speicher und Aufrufe an
-        // den Engines wechseln sich ab; jede Zelle zählt ihre Art.
+        // den Engines wechseln sich ab, jede Zelle zählt ihre Art.
         int at = load;
         while (at < mark) {
             boolean host = isHost(r.ops.get(at));

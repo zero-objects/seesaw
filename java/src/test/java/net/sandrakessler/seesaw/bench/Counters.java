@@ -9,7 +9,7 @@ import java.lang.reflect.Modifier;
  * dem neuesten Stand gebaut und läuft gegen die Hauptklassen älterer
  * Stände ({@code java/bench/jsuite.sh}). Ein direkter Feldzugriff
  * scheitert dort mit {@code NoSuchFieldError}, wenn ein Stand das Feld
- * nicht hat oder anders führt; die Reflexion liefert dann -1.
+ * nicht hat oder anders führt. Die Reflexion liefert dann -1.
  */
 public final class Counters {
     private Counters() {}

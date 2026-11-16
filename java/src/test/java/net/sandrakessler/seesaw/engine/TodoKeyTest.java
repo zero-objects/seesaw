@@ -37,7 +37,7 @@ final class TodoKeyTest {
     private static final int[] SHARE = {0, 1, 7, 8, 9, 15, 16, 17, 24, 31, 32};
 
     /**
-     * n Ids; etwa zwei Drittel haben mit einer frueheren Id einen
+     * n Ids. Etwa zwei Drittel haben mit einer frueheren Id einen
      * gemeinsamen Anfang (0 bis 32 Byte), 32 Byte sind eine gleiche Id
      * in einem anderen Objekt.
      */

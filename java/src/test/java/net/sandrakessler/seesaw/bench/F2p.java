@@ -94,8 +94,8 @@ public final class F2p {
             for (int i = 0; i < families; i++) grow();
         }
 
-        /** Fügt eine Familie mit ihren vier Mitgliedern hinzu; liefert die
-         *  neuen Knoten. */
+        /** Fügt eine Familie mit ihren vier Mitgliedern hinzu und liefert
+         *  die neuen Knoten. */
         public List<Id> grow() {
             int i = families++;
             Id f = g.addBaseline("f" + i, "Family");

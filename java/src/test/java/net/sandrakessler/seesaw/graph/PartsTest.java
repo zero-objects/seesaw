@@ -25,7 +25,7 @@ import net.sandrakessler.seesaw.ident.Ident;
 import net.sandrakessler.seesaw.ident.St;
 
 /**
- * Participation-Liste eines Knotens: Bereich je {@code otherTyp} und
+ * Beteiligungsliste eines Knotens: Bereich je {@code otherTyp} und
  * Reihenfolge wie die bisherige Fassung über einer {@code TreeSet} (Java 2.0.2).
  */
 class PartsTest {

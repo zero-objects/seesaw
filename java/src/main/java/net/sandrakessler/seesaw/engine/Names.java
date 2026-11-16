@@ -70,7 +70,7 @@ final class Names {
     String[] attrCorrName = NO_NAMES;
     int[] attrCorrTyp = NO_INTS;
     /** Je Eintrag jeder {@code corrRecognition}, Regel nach Regel:
-     *  Korrespondenztyp und Typ des Gegenendes. */
+     *  Korrespondenztyp und Typ des anderen Endes. */
     int[] corrTyp = NO_INTS;
     int[] endpointTyp = NO_INTS;
     /** Anfang der Plätze der Regel des laufenden Schritts. */
@@ -254,7 +254,7 @@ final class Names {
         return knownTyp(corrTyp, recognition0 + ix, g, typName);
     }
 
-    /** Der Typ des Gegenendes des Eintrags {@code ix} der
+    /** Der Typ des anderen Endes des Eintrags {@code ix} der
      *  {@code corrRecognition} der Regel, {@link #NONE}: der Graph kennt
      *  ihn nicht. */
     int endpointTyp(Graph g, int ix, String typName) {

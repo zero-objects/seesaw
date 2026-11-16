@@ -16,7 +16,7 @@ import net.sandrakessler.seesaw.plan.Rule;
 /**
  * Der Seed mit seinen Suchen auf mehreren Threads (Rust
  * {@code engine::par}, Feature {@code parallel_seed}), Grundlage von
- * {@link Engine#seedWithThreads}.
+ * {@link Engine#seedWithThreads(Graph, Map, int)}.
  *
  * <p>{@link Engine#seed} sucht und traegt abwechselnd ein, aber keine
  * Suche liest, was das Eintragen schreibt: die Suchen lesen den Graphen,
@@ -134,9 +134,9 @@ final class Par {
      *  ({@link AnchorIndex.Walk#visits}) und die verankerten Suchen. */
     record Counted(long visits, long searches) {}
 
-    /** Die Matches eines Stuecks der Suchen: je Match seine Regel, und
-     *  die Matches nacheinander. */
-    private record Found(IntList rules, ArrayList<Id[]> matches) {}
+    /** Die Matches eines Stuecks der Suchen (Rust {@code piece}): je Match
+     *  seine Regel, und die Matches nacheinander. */
+    private record Piece(IntList rules, ArrayList<Id[]> matches) {}
 
     /**
      * Der Seed ueber den {@link AnchorIndex} ({@code Engine.seedByIndex})
@@ -158,8 +158,9 @@ final class Par {
      * die, die ihre Suchen nacheinander finden, {@code sink} bekommt sie
      * sortiert wie dort.
      */
-    static Counted indexSeed(AnchorIndex ix, List<Rule> rules, Graph g, Map<Id, String> vals,
-            List<Id> starts, boolean[] admitted, int threads, int piece, Engine.Sink sink) {
+    static Counted indexSeedSpread(AnchorIndex ix, List<Rule> rules, Graph g,
+            Map<Id, String> vals, List<Id> starts, boolean[] admitted, int threads, int piece,
+            Engine.Sink sink) {
         int size = Math.max(1, piece);
         IntPredicate active = ri -> admitted[ri];
         int walkPieces = (starts.size() + size - 1) / size;
@@ -191,7 +192,7 @@ final class Par {
         int len = candidates.length;
 
         int searchPieces = (len + size - 1) / size;
-        List<Found> found = spread(searchPieces,
+        List<Piece> found = spread(searchPieces,
                 memories(searchPieces, threads, Matcher.Scratch::new), (scratch, p) -> {
                     int from = p * size;
                     int to = Math.min(from + size, len);
@@ -207,7 +208,7 @@ final class Par {
                             matches.add(m);
                         }
                     }
-                    return new Found(ofRule, matches);
+                    return new Piece(ofRule, matches);
                 });
 
         // Regel fuer Regel: die Tripel und die Matches der Regel stehen
@@ -226,7 +227,7 @@ final class Par {
             while (next < len && AnchorIndex.rule(candidates[next]) == ri) next++;
             ofThisRule.clear();
             while (piece0 < found.size()) {
-                Found f = found.get(piece0);
+                Piece f = found.get(piece0);
                 if (inPiece == f.rules().size()) {
                     piece0++;
                     inPiece = 0;
@@ -252,8 +253,8 @@ final class Par {
      * {@code scan_spread}). Je Regel in mu-Ordnung, wie der Scan sie
      * liefert.
      */
-    static List<List<Id[]>> scan(List<Rule> rules, int[] active, Graph g, Map<Id, String> vals,
-            int threads) {
+    static List<List<Id[]>> scanSpread(List<Rule> rules, int[] active, Graph g,
+            Map<Id, String> vals, int threads) {
         return spread(active.length, memories(active.length, threads, () -> null), (none, i) -> {
             Rule r = rules.get(active[i]);
             return Matcher.findMatchesWithFixed(g, vals, r, new Id[r.patNodes.size()]);

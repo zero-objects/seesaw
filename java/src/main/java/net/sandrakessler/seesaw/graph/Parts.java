@@ -9,7 +9,7 @@ import java.util.TreeSet;
 import net.sandrakessler.seesaw.ident.Id;
 
 /**
- * Die Participation-Liste eines Knotens: eine Menge in der Ordnung von
+ * Die Beteiligungsliste eines Knotens: eine Menge in der Ordnung von
  * {@link Part} (Rust {@code Parts}). Ein sortiertes Array bis
  * {@link #TREE_AT} Einträge, mit dem nächsten Eintrag wird sie eine
  * {@code TreeSet}. Die meisten Knoten haben wenige Participations, für
@@ -135,7 +135,7 @@ public final class Parts implements Iterable<Part> {
     /**
      * Der erste Eintrag in der Ordnung von Part mit diesem
      * {@code otherTyp}, {@code other} und {@code outgoing}, gleich welche
-     * Verbindung; null, wenn es keinen gibt. Die Verbindung
+     * Verbindung, null, wenn es keinen gibt. Die Verbindung
      * source→target steht in der Liste von source als (Typ von target,
      * target, ausgehend). Im Array eine binäre Suche ohne neues Objekt.
      */

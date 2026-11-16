@@ -382,10 +382,10 @@ final class MatcherTest {
     }
 
     /**
-     * {@link Graph#connectionId} liest die Id aus der Participation-Liste
+     * {@link Graph#connectionId} liest die Id aus der Beteiligungsliste
      * der Quelle, als Array und als TreeSet (mehr als 48 Einträge): für
      * jedes geordnete Paar gleich der Ableitung, wo die Verbindung
-     * besteht, sonst null; connected und connectedAlive wie in 2.0.2.
+     * besteht, sonst null. connected und connectedAlive wie in 2.0.2.
      */
     @Test
     void verbindungAusDerParticipationListe() {
