@@ -171,6 +171,26 @@ public final class F2p {
         return e;
     }
 
+    /**
+     * Eine Engine, die auf einem schon übersetzten Modell beginnt (Rust
+     * {@code f2p::reseed}): eine zweite Engine über denselben Regeln
+     * seedet das synchronisierte Modell, die Suchen auf {@code threads}
+     * Threads ({@link Seeds#seed}, ein Thread ist {@code seed}). Gemessen
+     * ist dieser Seed allein. Die Schritte bis zur Sättigung folgen nach
+     * der Messstrecke.
+     */
+    public static Langpack.Outcome reseed(int families, int threads, Section measured) {
+        Seeds.require(threads);
+        Model m = new Model(families);
+        Engine first = synchronised(m);
+        Engine e = new Engine(first.rules);
+        measured.start();
+        Seeds.seed(e, m.g, m.vs, threads);
+        measured.stop();
+        long steps = saturate(e, m.g, m.vs);
+        return Langpack.outcome(m.g, e, m.vs, steps, measured);
+    }
+
     /** {@code delta} neue Familien auf einem synchronisierten Modell,
      *  eine Welle je Familie. */
     public static Langpack.Outcome deltaAdd(int families, int delta, Section measured) {

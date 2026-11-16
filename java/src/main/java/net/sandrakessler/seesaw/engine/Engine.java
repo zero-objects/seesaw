@@ -244,7 +244,8 @@ public final class Engine {
      * ab, wirft die Engine. Gegenstueck zu {@code --cfg seesaw_checks}
      * auf der Rust-Seite; damit laufen alle Tests unter der Pruefung.
      * Ebenso die Pruefungen von {@link #producersOf} und des Schritts
-     * ({@link #checks}).
+     * ({@link #checks}) und der Vergleich des Seeds auf mehreren Threads
+     * mit dem Seed auf einem ({@link #seedWithThreads}).
      */
     static final boolean CHECKS = Boolean.getBoolean("seesaw.checks");
 
@@ -314,7 +315,7 @@ public final class Engine {
     }
 
     /** Abnehmer der gefundenen Matches eines Suchwegs. */
-    private interface Sink {
+    interface Sink {
         void match(int ruleIx, Id[] refs);
     }
 
@@ -977,17 +978,7 @@ public final class Engine {
     private void seedByIndex(Graph g, Map<Id, String> vals, Sink sink) {
         AnchorIndex ix = index();
         seedsByIndex++;
-        // Die Knoten, an denen ein Scan beginnen wuerde: die matchbaren
-        // vom Typ der ersten Position einer zugelassenen Regel.
-        ArrayList<Id> starts = new ArrayList<>();
-        HashSet<Integer> types = new HashSet<>();
-        for (int ri = 0; ri < rules.size(); ri++) {
-            if (!ruleActive(ri)) continue;
-            Rule r = rules.get(ri);
-            if (!r.patNodes.isEmpty() && types.add(r.patNodes.get(0).typ)) {
-                starts.addAll(g.nodesOfType(r.patNodes.get(0).typ));
-            }
-        }
+        ArrayList<Id> starts = seedStarts(g);
         long[] candidates = ix.candidates(g, vals, starts, walk, this::ruleActive, true, null);
         int next = 0;
         ArrayList<Id[]> found = new ArrayList<>();
@@ -1016,6 +1007,139 @@ public final class Engine {
         if (next != candidates.length) {
             throw new IllegalStateException("anchor index: Kandidat einer nicht zugelassenen Regel");
         }
+    }
+
+    /** Die Knoten, an denen ein Scan beginnen wuerde: die matchbaren vom
+     *  Typ der ersten Position einer zugelassenen Regel, je Typ einmal, in
+     *  der Folge der Regeln. */
+    private ArrayList<Id> seedStarts(Graph g) {
+        ArrayList<Id> starts = new ArrayList<>();
+        HashSet<Integer> types = new HashSet<>();
+        for (int ri = 0; ri < rules.size(); ri++) {
+            if (!ruleActive(ri)) continue;
+            Rule r = rules.get(ri);
+            if (!r.patNodes.isEmpty() && types.add(r.patNodes.get(0).typ)) {
+                starts.addAll(g.nodesOfType(r.patNodes.get(0).typ));
+            }
+        }
+        return starts;
+    }
+
+    /**
+     * {@link #seed} mit den Suchen auf bis zu {@code threads} Threads (Rust
+     * {@code Engine::seed_with_threads}).
+     *
+     * <p>Findet die Matches, die {@code seed} findet, und traegt sie in der
+     * Reihenfolge von {@code seed} ein: Regel fuer Regel, die einer Regel in
+     * mu-Ordnung. Was die Engine danach tut, ist dasselbe. Verteilt werden
+     * beide Wege des Seeds, der Scan je Regel und der Seed ueber den
+     * {@link AnchorIndex}, der Weg ist der von {@code seed}. Die Threads
+     * lesen den Graphen, die Regeln, {@code vals} und den Index und
+     * schreiben nichts davon. Eingetragen wird auf dem Thread des Aufrufers,
+     * nachdem alle Suchen fertig sind. Mit 0 oder 1 Thread ist dies
+     * {@code seed}.
+     *
+     * <p>{@code vals} wird von mehreren Threads zugleich gelesen: eine
+     * {@code HashMap}, die waehrend des Aufrufs niemand aendert, vertraegt
+     * das, eine {@code LinkedHashMap} in Zugriffsfolge nicht. Ebenso darf
+     * niemand den Graphen waehrend des Aufrufs aendern.
+     *
+     * <p>Die Threads werden fuer diesen Aufruf gestartet und vor der
+     * Rueckkehr beendet. Ob sie sich lohnen, haengt an der Groesse des
+     * Graphen. Die Zaehler der Suchen haben danach die Werte wie nach
+     * {@code seed}.
+     *
+     * <p>Unter {@link #CHECKS} laeuft die Suche zusaetzlich auf einem Thread,
+     * eine abweichende Folge wirft. Der Lauf auf einem Thread zaehlt nicht.
+     * Mit Index wird dazu wie in {@code seed} mit dem Scan verglichen.
+     */
+    public void seedWithThreads(Graph g, Map<Id, String> vals, int threads) {
+        if (threads <= 1) {
+            seed(g, vals);
+            return;
+        }
+        seedSpread(g, vals, threads, Par.PIECE);
+    }
+
+    /**
+     * {@link #seedWithThreads} auf {@code threads} Threads mit Stuecken zu
+     * {@code piece} Knoten und Tripeln ({@link Par#indexSeed}), auch fuer
+     * einen Thread. Fuer Tests, die jeden Zuschnitt der Arbeit pruefen.
+     */
+    void seedSpread(Graph g, Map<Id, String> vals, int threads, int piece) {
+        links.settleRemoved(g);
+        Sink sink = (ri, m) -> record(g, ri, m);
+        // Der Weg wie in seed: unter CHECKS mit Index immer der Index.
+        boolean byIndex = useIndex && index() != null && (CHECKS || seedThroughIndex(g));
+        if (!CHECKS) {
+            spreadSeed(g, vals, byIndex, threads, piece, sink);
+            return;
+        }
+        Found spread = new Found();
+        spreadSeed(g, vals, byIndex, threads, piece, spread);
+        Found one = new Found();
+        long[] kept = counters();
+        if (byIndex) {
+            seedByIndex(g, vals, one);
+        } else {
+            seedByScan(g, vals, one);
+        }
+        restore(kept);
+        int at = spread.differsAt(one);
+        if (at >= 0) {
+            throw new IllegalStateException("der Seed auf " + threads + " Threads weicht vom Seed "
+                    + "auf einem Thread ab, Stelle " + at + " (verteilt " + spread.rule.size()
+                    + " Matches, ein Thread " + one.rule.size() + "), Weg "
+                    + (byIndex ? "Index" : "Scan"));
+        }
+        if (byIndex) {
+            Found plain = new Found();
+            seedByScan(g, vals, plain);
+            checkSame("der Seed", spread, plain);
+        }
+        spread.into(sink);
+    }
+
+    /** Der Seed auf dem Weg {@code byIndex}, die Suchen verteilt
+     *  ({@link Par}), mit den Zaehlern wie {@link #seedByIndex} und
+     *  {@link #seedByScan}. */
+    private void spreadSeed(Graph g, Map<Id, String> vals, boolean byIndex, int threads, int piece,
+            Sink sink) {
+        boolean[] admitted = new boolean[rules.size()];
+        for (int ri = 0; ri < rules.size(); ri++) admitted[ri] = ruleActive(ri);
+        if (byIndex) {
+            AnchorIndex ix = index();
+            seedsByIndex++;
+            Par.Counted c = Par.indexSeed(ix, rules, g, vals, seedStarts(g), admitted, threads,
+                    piece, sink);
+            walk.visits += c.visits();
+            searches += c.searches();
+            anchoredSearches += c.searches();
+            return;
+        }
+        int n = 0;
+        for (boolean a : admitted) if (a) n++;
+        int[] active = new int[n];
+        for (int ri = 0, k = 0; ri < rules.size(); ri++) if (admitted[ri]) active[k++] = ri;
+        List<List<Id[]>> found = Par.scan(rules, active, g, vals, threads);
+        searches += n;
+        seedSearches += n;
+        for (int i = 0; i < n; i++) {
+            for (Id[] m : found.get(i)) sink.match(active[i], m);
+        }
+    }
+
+    /** Die Zaehler der Suchen, fuer {@link #restore}. */
+    private long[] counters() {
+        return new long[] {searches, seedsByIndex, anchoredSearches, seedSearches, walk.visits};
+    }
+
+    private void restore(long[] c) {
+        searches = c[0];
+        seedsByIndex = c[1];
+        anchoredSearches = c[2];
+        seedSearches = c[3];
+        walk.visits = c[4];
     }
 
     /** Kompatibilitätsroute für Hosts mit berührten Typnamen. Die

@@ -15,12 +15,14 @@
 #   fp    jede Zelle von JavaSuite einmal (--warmup 0 --reps 1) außer den Zellen pde/… (die
 #         prüft der Teil pde); Schritte, angewandte Schritte, Knoten und Fingerprint gegen die
 #         Rust-Zellen mit Label sel aus benches/suite/results/2026-11-15-auswahl/uid-cgu1.tsv und
-#         uid-small-cgu1.tsv. Erwartet wird jede dieser Rust-Zellen außer denen, die die
+#         uid-small-cgu1.tsv und mit Label par aus par.tsv (Seed auf mehreren Threads, …/reseed/…).
+#         Erwartet wird jede dieser Rust-Zellen außer denen, die die
 #         Java-Seite nicht hat (NOT_JAVA), und außer pde/…; eine erwartete Zelle ohne
-#         Java-Ergebnis meldet "fp <zelle> FEHLT". Eine Zeile je Zelle, dann "fp FP_RC=…
-#         zellen=… erwartet=… gleich=… abweichend=… fehlend=… ohne_referenz=… fehlgeschlagen=…".
-#         FP_RC=0 nur, wenn jede erwartete Zelle gleich ist, keine Java-Zelle abweicht oder ohne
-#         Referenz ist und zellen>0.
+#         Java-Ergebnis meldet "fp <zelle> FEHLT", eine Zelle, die der Stand nicht kann (Zeile
+#         nicht_verfuegbar von JavaSuite), "fp <zelle> NICHT_VERFUEGBAR". Eine Zeile je Zelle, dann
+#         "fp FP_RC=… zellen=… erwartet=… gleich=… abweichend=… fehlend=… ohne_referenz=…
+#         fehlgeschlagen=… nicht_verfuegbar=…". FP_RC=0 nur, wenn jede erwartete Zelle gleich ist,
+#         keine Java-Zelle abweicht, ohne Referenz oder nicht verfügbar ist und zellen>0.
 #   pde   die Protokolle des Hosts zerodds-pde (PdeReplay) im Verzeichnis SEESAW_PDE_DUMP
 #         (Vorgabe /root/seesaw-java/pde-dump). Erwartet wird jedes Protokoll, zu dem uid-cgu1.tsv
 #         Rust-Zellen pde/<teil>/<name> mit Label sel hat (java40, open5, open2, open2-edit). Je
@@ -167,9 +169,9 @@ fp() {
         fi
     done
     touch $tsv
-    cat "$REF/uid-cgu1.tsv" "$REF/uid-small-cgu1.tsv" | awk -F'\t' -v failed=$failed -v skip="$NOT_JAVA" -v pde="$PDE" '
+    cat "$REF/uid-cgu1.tsv" "$REF/uid-small-cgu1.tsv" "$REF/par.tsv" | awk -F'\t' -v failed=$failed -v skip="$NOT_JAVA" -v pde="$PDE" '
         FNR == NR {
-            if ($1 == "sel" && !($2 in ref)) {
+            if (($1 == "sel" || $1 == "par") && !($2 in ref)) {
                 ref[$2] = $8 " " $9 " " $10 " " $11
                 if ($2 !~ skip && $2 !~ pde) expected[++m] = $2
             }
@@ -179,6 +181,7 @@ fp() {
             n++
             seen[$2] = 1
             got = $8 " " $9 " " $10 " " $11
+            if ($3 == "nicht_verfuegbar") { unav++; print "fp " $2 " NICHT_VERFUEGBAR " $4; next }
             if (!($2 in ref)) { none++; print "fp " $2 " OHNE_REFERENZ java=" got; next }
             if (got == ref[$2]) { same++; print "fp " $2 " gleich " got }
             else { diff++; print "fp " $2 " ABWEICHUNG java=" got " rust=" ref[$2] }
@@ -187,10 +190,10 @@ fp() {
             for (i = 1; i <= m; i++) {
                 if (!(expected[i] in seen)) { missing++; print "fp " expected[i] " FEHLT rust=" ref[expected[i]] }
             }
-            rc = (diff + none + failed + missing > 0 || n == 0 || m == 0) ? 1 : 0
+            rc = (diff + none + failed + missing + unav > 0 || n == 0 || m == 0) ? 1 : 0
             print "fp FP_RC=" rc " zellen=" n + 0 " erwartet=" m + 0 " gleich=" same + 0 \
                 " abweichend=" diff + 0 " fehlend=" missing + 0 " ohne_referenz=" none + 0 \
-                " fehlgeschlagen=" failed
+                " fehlgeschlagen=" failed " nicht_verfuegbar=" unav + 0
             exit rc
         }' - $tsv || status=1
 }

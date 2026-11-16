@@ -37,6 +37,10 @@
 #         die Zeit passt; eine Zelle ohne bekannte Dauer nur als ersten Lauf des Aufrufs. Dann
 #         meldet er "ladder offen=<n>"; erneut aufrufen bis "ladder fertig".
 #
+# Eine Zelle, die ein Stand nicht kann (…/reseed/…/t4 und t8 ohne Engine.seedWithThreads), schreibt
+# die Zeile "<label> <zelle> nicht_verfuegbar <grund>" mit Exit-Code 0. Sie zählt als Lauf, die
+# Leiter läuft weiter, jreport.py führt sie getrennt auf.
+#
 # TSV ohne Pfad liegt in /root/seesaw-java/results/. Jeder erfolgreiche Lauf hängt
 # "<label> <zelle> <sekunden>" an <tsv>.dauer an. JVM fest: -Xms8g -Xmx8g -XX:+UseParallelGC,
 # Vorgabe --warmup 3 --reps 5. Spalten der TSV: siehe JavaSuite.java.
@@ -56,7 +60,9 @@ langpack/add/k700/n20000 langpack/delta-add/k700/n20000/d200
 langpack/delta-change/k700/n20000/d200 langpack/delta-delete/k700/n20000/d200
 langpack/delta-delete/k700/n20000/d2000 f2p/batch/f20000 f2p/add/f20000
 f2p/delta-add/f20000/d1000 f2p/delta-delete/f20000/d1000
-langpack/engines/k700/n200/e34 langpack/index/k700/e100"
+langpack/engines/k700/n200/e34 langpack/index/k700/e100
+langpack/reseed/k700/n20000/t1 langpack/reseed/k700/n20000/t4 langpack/reseed/k700/n20000/t8
+f2p/reseed/f20000/t1 f2p/reseed/f20000/t4 f2p/reseed/f20000/t8"
 
 die() { echo "$*" >&2; exit 1; }
 

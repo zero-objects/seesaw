@@ -43,6 +43,18 @@ import net.sandrakessler.seesaw.engine.Langpack;
  * Engine im ganzen Lauf, auch außerhalb der Strecke; -1, wo der Stand
  * den Zähler nicht hat) und {@code warmup=}.
  *
+ * <p>Die Thread-CPU zählt nur den Thread, der die Strecke fährt. In den
+ * Zellen {@code .../reseed/.../t4} und {@code t8} laufen die Suchen auf
+ * Threads, die die Engine startet, ihre CPU ist darin nicht enthalten
+ * (die Rust-Suite misst die User-CPU des Prozesses). Dort ist die
+ * Wall-Zeit der Vergleichswert.
+ *
+ * <p>Kann der Stand eine Zelle nicht (eine Zelle {@code t4} oder
+ * {@code t8} gegen Hauptklassen ohne {@code Engine.seedWithThreads},
+ * {@link Seeds}), lautet die Zeile: Label, Zelle,
+ * {@code nicht_verfuegbar}, Grund. Der Exit-Code ist dann 0, die
+ * Messleiter läuft weiter.
+ *
  * <p>Die Zellen haben die Namen der Rust-Suite, Schritte, angewandte
  * Schritte, Knoten und Fingerprint müssen gleich den Rust-Zellen sein
  * ({@code java/bench/jgate.sh fp}). Ob die Engine über den
@@ -61,7 +73,11 @@ public final class JavaSuite {
      * Messung, die kleinen ({@code k50/n2000}, {@code f2000}) für den
      * Vergleich der Fingerprints. Dazu die Zellen mit mehreren Engines in
      * einem Prozess ({@code langpack/engines/k700/n200/e34},
-     * {@code langpack/index/k700/e100}). {@code delta-change-same} und
+     * {@code langpack/index/k700/e100}), und die Zellen des Seeds auf
+     * mehreren Threads ({@code langpack/reseed/k700/n20000/t1}, {@code t4},
+     * {@code t8}, {@code f2p/reseed/f20000/t1}, {@code t4}, {@code t8}, Rust
+     * {@code parallel_seed}, Referenz mit Label {@code par}).
+     * {@code delta-change-same} und
      * {@code langpack/engines/k700/n2000/e10} (nicht in der Messreihe
      * {@code 2026-11-15-auswahl}) hat die Java-Seite nicht. Dazu je
      * Protokoll eines Hosts im Verzeichnis
@@ -111,6 +127,16 @@ public final class JavaSuite {
         out.add(new Cell("langpack/index/k700/e100",
                 "100 Engines über neu geladene Regeln, je eine leere Expansion",
                 s -> Langpack.indexOnly(rulesOnly, 100, index, s)));
+        // Der Seed mit seinen Suchen auf mehreren Threads (Rust
+        // parallel_seed), t1 ist Engine.seed.
+        for (int threads : new int[] {1, 4, 8}) {
+            out.add(new Cell("langpack/reseed/k700/n20000/t" + threads,
+                    "eine zweite Engine seedet das übersetzte Modell, Suchen auf t Threads",
+                    s -> Langpack.reseed(large, threads, index, s)));
+            out.add(new Cell("f2p/reseed/f20000/t" + threads,
+                    "eine zweite Engine seedet das übersetzte Modell, Suchen auf t Threads",
+                    s -> F2p.reseed(20000, threads, s)));
+        }
         for (int families : new int[] {2000, 20000}) {
             String size = "f" + families;
             out.add(new Cell("f2p/batch/" + size, "Batch durch run (Seed und Schritte)",
@@ -181,7 +207,12 @@ public final class JavaSuite {
                     System.err.println("unbekannte Zelle " + name);
                     System.exit(2);
                 }
-                String line = run(cell, warmup, reps, label);
+                String line;
+                try {
+                    line = run(cell, warmup, reps, label);
+                } catch (Seeds.Unavailable ex) {
+                    line = String.join("\t", label, cell.name(), UNAVAILABLE, ex.getMessage());
+                }
                 System.out.println(line);
                 if (tsv != null) {
                     Files.writeString(Path.of(tsv), line + "\n", StandardCharsets.UTF_8,
@@ -191,6 +222,9 @@ public final class JavaSuite {
             default -> usage();
         }
     }
+
+    /** Dritte Spalte der Zeile einer Zelle, die der Stand nicht kann. */
+    static final String UNAVAILABLE = "nicht_verfuegbar";
 
     private static String result(Langpack.Outcome o) {
         return o.steps() + " " + o.applied() + " " + o.nodes() + " " + o.fingerprint() + " "

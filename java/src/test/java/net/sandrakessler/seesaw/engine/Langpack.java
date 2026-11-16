@@ -9,6 +9,7 @@ import java.util.TreeMap;
 
 import net.sandrakessler.seesaw.bench.Counters;
 import net.sandrakessler.seesaw.bench.Section;
+import net.sandrakessler.seesaw.bench.Seeds;
 import net.sandrakessler.seesaw.graph.Conn;
 import net.sandrakessler.seesaw.graph.Graph;
 import net.sandrakessler.seesaw.graph.Node;
@@ -333,6 +334,26 @@ public final class Langpack {
         e.elementsAdded(m.g, m.vs, m.all);
         saturate(e, m.g, m.vs);
         return e;
+    }
+
+    /**
+     * Eine Engine, die auf einem schon übersetzten Modell beginnt (Rust
+     * {@code langpack::reseed}): eine zweite Engine über denselben Regeln
+     * seedet das synchronisierte Modell, die Suchen auf {@code threads}
+     * Threads ({@link Seeds#seed}, ein Thread ist {@code seed}). Gemessen
+     * ist dieser Seed allein, er findet die Matches jeder Regel. Die
+     * Schritte bis zur Sättigung folgen nach der Messstrecke.
+     */
+    public static Outcome reseed(Spec spec, int threads, boolean useIndex, Section measured) {
+        Seeds.require(threads);
+        Model m = new Model(spec);
+        Engine first = synchronised(m, useIndex);
+        Engine e = new Engine(first.rules, useIndex);
+        measured.start();
+        Seeds.seed(e, m.g, m.vs, threads);
+        measured.stop();
+        long steps = saturate(e, m.g, m.vs);
+        return outcome(m.g, e, m.vs, steps, measured);
     }
 
     /** {@code delta} neue Knoten auf einem synchronisierten Modell, eine

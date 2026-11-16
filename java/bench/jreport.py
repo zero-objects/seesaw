@@ -5,20 +5,31 @@ Je Zelle und Label über alle Zeilen (Runden): Thread-CPU min (Spalte 4), Wall m
 (Spalte 6), alloc (Minimum, MB) und gc_ms (Minimum). Dann die Prüfung, dass Schritte,
 angewandte Schritte, Knoten und Fingerprint (Spalten 8 bis 11) je Zelle über alle Labels
 und Zeilen gleich sind. Exit-Code 1 bei einer Abweichung.
+
+Zeilen "<label> <zelle> nicht_verfuegbar <grund>" (eine Zelle, die der Stand nicht kann)
+gehen in keine der beiden Auswertungen ein und stehen am Ende je Zelle und Label.
 """
 
 import sys
 from collections import OrderedDict
 
 
+UNAVAILABLE = "nicht_verfuegbar"
+
+
 def parse(path):
     rows = []
+    unavailable = OrderedDict()
     with open(path, encoding="utf-8") as f:
         for n, line in enumerate(f, 1):
             line = line.rstrip("\n")
             if not line:
                 continue
             cols = line.split("\t")
+            if len(cols) >= 3 and cols[2] == UNAVAILABLE:
+                why = cols[3] if len(cols) > 3 else ""
+                unavailable.setdefault((cols[1], cols[0]), why)
+                continue
             if len(cols) < 11:
                 sys.exit(f"{path}:{n}: {len(cols)} Spalten, erwartet mindestens 11")
             extra = dict(c.split("=", 1) for c in cols[11:] if "=" in c)
@@ -31,7 +42,7 @@ def parse(path):
                 "alloc": int(extra["alloc"]) if "alloc" in extra else None,
                 "gc_ms": int(extra["gc_ms"]) if "gc_ms" in extra else None,
             })
-    return rows
+    return rows, unavailable
 
 
 def minimum(values):
@@ -42,7 +53,7 @@ def minimum(values):
 def main():
     if len(sys.argv) != 2:
         sys.exit("usage: jreport.py <tsv>")
-    rows = parse(sys.argv[1])
+    rows, unavailable = parse(sys.argv[1])
     groups = OrderedDict()
     for r in rows:
         groups.setdefault(r["cell"], OrderedDict()).setdefault(r["label"], []).append(r)
@@ -83,6 +94,11 @@ def main():
                               for res, ls in results.items())
             print(f"{cell} ABWEICHUNG {parts}")
     print(f"zellen={len(groups)} abweichend={bad}")
+    if unavailable:
+        print()
+        print("Nicht verfügbar (Zelle, Label, Grund):")
+        for (cell, label), why in unavailable.items():
+            print(f"{cell} {label} {why}")
     sys.exit(1 if bad else 0)
 
 
