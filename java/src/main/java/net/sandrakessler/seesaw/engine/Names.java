@@ -6,11 +6,8 @@ import java.util.List;
 import java.util.Objects;
 
 import net.sandrakessler.seesaw.graph.Graph;
-import net.sandrakessler.seesaw.graph.Node;
-import net.sandrakessler.seesaw.graph.Part;
 import net.sandrakessler.seesaw.ident.Id;
 import net.sandrakessler.seesaw.ident.Ident;
-import net.sandrakessler.seesaw.ident.St;
 import net.sandrakessler.seesaw.plan.Rule;
 import net.sandrakessler.seesaw.rules.Chain;
 
@@ -161,32 +158,27 @@ final class Names {
     }
 
     /** Der Korrespondenz-Knoten {@code id} der Planposition
-     *  {@code planIx} ({@link Graph#addCorrAt}). */
+     *  {@code planIx} ({@link Graph#addCorrTyped}). */
     Id addCorr(Graph g, int planIx, Id id, String typName) {
-        int t = typOf(typ, create0 + planIx, g, typName);
-        g.insertNode(new Node(id, t, St.GHOST, null, null));
-        return id;
+        return g.addCorrTyped(id, typOf(typ, create0 + planIx, g, typName));
     }
 
     /** Der Ghost-Knoten {@code id} der Planposition {@code planIx}
-     *  ({@link Graph#addGhostAt}). */
+     *  ({@link Graph#addGhostTyped}). */
     Id addGhost(Graph g, int planIx, Id id, String typName) {
-        int t = typOf(typ, create0 + planIx, g, typName);
-        g.insertNode(new Node(id, t, St.GHOST, null, null));
-        return id;
+        return g.addGhostTyped(id, typOf(typ, create0 + planIx, g, typName));
     }
 
     /** Das abgeleitete Blatt {@code id} der Planposition {@code planIx}
-     *  ({@link Graph#addDerivedLeafAt}). */
+     *  ({@link Graph#addDerivedLeafTyped}). */
     Id addDerivedLeaf(Graph g, int planIx, Id id, String typName, Id source, Chain transform) {
-        int t = typOf(typ, create0 + planIx, g, typName);
-        g.insertNode(new Node(id, t, St.GHOST, source, transform));
-        return id;
+        return g.addDerivedLeafTyped(id, typOf(typ, create0 + planIx, g, typName), source,
+                transform);
     }
 
     /** Das Konstanten-Blatt {@code id} der Planposition {@code planIx}
-     *  ({@link Graph#addKonstLeafAt}): erst der Typ, dann die Konstante,
-     *  wie dort. */
+     *  ({@link Graph#addKonstLeafTyped}): erst der Typ, dann die
+     *  Konstante, wie in {@link Graph#addKonstLeaf}. */
     Id addKonstLeaf(Graph g, int planIx, Id id, String typName, String value) {
         int at = create0 + planIx;
         int t = typOf(typ, at, g, typName);
@@ -201,13 +193,12 @@ final class Names {
                         + " behalten, die Tabelle des Graphen nennt " + now);
             }
         }
-        g.insertNode(new Node(id, t, St.GHOST, null, null, k));
-        return id;
+        return g.addKonstLeafTyped(id, t, k);
     }
 
     /** Die Attribut-Korrespondenz des dynamischen Blatts der Planposition
      *  {@code planIx}: eine Korrespondenz vom Typ {@code corr_typ} an der
-     *  Quelle des Blatts ({@link Graph#addCorr}). */
+     *  Quelle des Blatts ({@link Graph#addCorrTyped}). */
     Id addAttrCorr(Graph g, int planIx, Id source, String corr, String typName, Id[] bindings) {
         int at = create0 + planIx;
         String name = attrCorrName[at];
@@ -216,27 +207,15 @@ final class Names {
             attrCorrName[at] = name;
         }
         int t = typOf(attrCorrTyp, at, g, name);
-        Id id = Ident.identCorr(source, name, bindings);
-        g.insertNode(new Node(id, t, St.GHOST, null, null));
-        return id;
+        return g.addCorrTyped(Ident.identCorr(source, name, bindings), t);
     }
 
     /** Das Quellblatt des dynamischen Blatts der Planposition
      *  {@code planIx}: das erste matchbare Kind von {@code anchor} mit dem
-     *  Typ {@code attrName} ({@link Graph#childLeafOfType}). */
+     *  Typ {@code attrName} ({@link Graph#childLeafOfTyp}). */
     Id childLeaf(Graph g, int planIx, Id anchor, String attrName) {
         int t = knownTyp(attr, create0 + planIx, g, attrName);
-        Id found = null;
-        if (t != NONE) {
-            for (Part p : g.partsOfType(anchor, t)) {
-                if (!p.outgoing) continue;
-                Node n = g.node(p.other);
-                if (n != null && n.status.matchable()) {
-                    found = p.other;
-                    break;
-                }
-            }
-        }
+        Id found = t == NONE ? null : g.childLeafOfTyp(anchor, t);
         if (Engine.CHECKS) {
             Id want = g.childLeafOfType(anchor, attrName);
             if (!Objects.equals(want, found)) {

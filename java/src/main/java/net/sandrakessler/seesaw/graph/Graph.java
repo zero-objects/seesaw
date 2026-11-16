@@ -106,25 +106,12 @@ public final class Graph {
     }
 
     public Id addGhost(Id parent, String typName) {
-        return addGhostAt(Ident.identGhost(parent, typName), typName);
-    }
-
-    /** {@link #addGhost} mit schon abgeleiteter Identitaet (Rust
-     *  {@code add_ghost_at}). */
-    public Id addGhostAt(Id id, String typName) {
-        insertNode(new Node(id, intern(typName), St.GHOST, null, null));
-        return id;
+        return addGhostTyped(Ident.identGhost(parent, typName), intern(typName));
     }
 
     public Id addDerivedLeaf(Id parent, String typName, Id source, Chain t) {
-        return addDerivedLeafAt(Ident.identDerived(parent, typName, source, t), typName, source, t);
-    }
-
-    /** {@link #addDerivedLeaf} mit schon abgeleiteter Identitaet (Rust
-     *  {@code add_derived_leaf_at}). */
-    public Id addDerivedLeafAt(Id id, String typName, Id source, Chain t) {
-        insertNode(new Node(id, intern(typName), St.GHOST, source, t));
-        return id;
+        return addDerivedLeafTyped(Ident.identDerived(parent, typName, source, t), intern(typName),
+                source, t);
     }
 
     /** Corr-Knoten (Match-Digest-Identität, Spec §1.4). */
@@ -140,38 +127,66 @@ public final class Graph {
     }
 
     public Id addCorr(Id anchor, String typName, Id[] refs) {
-        return addCorrAt(Ident.identCorr(anchor, typName, refs), typName);
-    }
-
-    /** {@link #addCorr} mit schon abgeleiteter Identitaet (Rust
-     *  {@code add_corr_at}). */
-    public Id addCorrAt(Id id, String typName) {
-        insertNode(new Node(id, intern(typName), St.GHOST, null, null));
-        return id;
+        return addCorrTyped(Ident.identCorr(anchor, typName, refs), intern(typName));
     }
 
     /** Erstes matchbares Kind-Blatt vom Typ (dynamische Bindings). */
     public Id childLeafOfType(Id anchor, String typName) {
         Integer t = typesByName.get(typName);
         if (t == null) return null;
-        for (Part p : partsOfType(anchor, t)) {
+        return childLeafOfTyp(anchor, t);
+    }
+
+    /** Regel-Konstanten-Blatt (§3b.4): Wert wohnt im Regelsatz. */
+    public Id addKonstLeaf(Id parent, String typName, String ruleName, int planIx, String value) {
+        return addKonstLeafTyped(Ident.identKonst(parent, typName, ruleName, planIx),
+                intern(typName), internKonst(value));
+    }
+
+    // ── Anlegen und Lesen mit der Kennung eines Typs statt seines Namens
+    //    (Rust graph.rs). Die Engine ruft sie mit den Kennungen, die sie
+    //    je Graph behaelt (engine.Names). ──
+
+    /** {@link #addCorr} fuer eine schon abgeleitete Identitaet und einen
+     *  schon eingetragenen Typ (Rust {@code add_corr_typed}). Wie
+     *  {@link #addCorr} ohne die Markierung als Korrespondenz
+     *  ({@link #markCorr}), die Rust hier setzt. */
+    public Id addCorrTyped(Id id, int typ) {
+        insertNode(new Node(id, typ, St.GHOST, null, null));
+        return id;
+    }
+
+    /** {@link #addGhost} fuer eine schon abgeleitete Identitaet und einen
+     *  schon eingetragenen Typ (Rust {@code add_ghost_typed}). */
+    public Id addGhostTyped(Id id, int typ) {
+        insertNode(new Node(id, typ, St.GHOST, null, null));
+        return id;
+    }
+
+    /** {@link #addDerivedLeaf} fuer eine schon abgeleitete Identitaet und
+     *  einen schon eingetragenen Typ (Rust {@code add_derived_leaf_typed}). */
+    public Id addDerivedLeafTyped(Id id, int typ, Id source, Chain t) {
+        insertNode(new Node(id, typ, St.GHOST, source, t));
+        return id;
+    }
+
+    /** {@link #addKonstLeaf} fuer eine schon abgeleitete Identitaet, einen
+     *  schon eingetragenen Typ und eine schon eingetragene Konstante
+     *  ({@link #internKonst}, Rust {@code add_konst_leaf_typed}). */
+    public Id addKonstLeafTyped(Id id, int typ, int konst) {
+        insertNode(new Node(id, typ, St.GHOST, null, null, konst));
+        return id;
+    }
+
+    /** {@link #childLeafOfType} fuer einen schon nachgeschlagenen Typ
+     *  (Rust {@code child_leaf_of_typ}). */
+    public Id childLeafOfTyp(Id anchor, int typ) {
+        for (Part p : partsOfType(anchor, typ)) {
             if (!p.outgoing) continue;
             Node n = node(p.other);
             if (n != null && n.status.matchable()) return p.other;
         }
         return null;
-    }
-
-    /** Regel-Konstanten-Blatt (§3b.4): Wert wohnt im Regelsatz. */
-    public Id addKonstLeaf(Id parent, String typName, String ruleName, int planIx, String value) {
-        return addKonstLeafAt(Ident.identKonst(parent, typName, ruleName, planIx), typName, value);
-    }
-
-    /** {@link #addKonstLeaf} mit schon abgeleiteter Identitaet (Rust
-     *  {@code add_konst_leaf_at}). */
-    public Id addKonstLeafAt(Id id, String typName, String value) {
-        insertNode(new Node(id, intern(typName), St.GHOST, null, null, internKonst(value)));
-        return id;
     }
 
     public void setNodeStatus(Id id, St st) {
