@@ -59,8 +59,12 @@ public final class JavaSuite {
      * Die Zellen der Rust-Messreihe {@code 2026-11-15-auswahl}: die großen
      * ({@code k700/n2000}, {@code k700/n20000}, {@code f20000}) für die
      * Messung, die kleinen ({@code k50/n2000}, {@code f2000}) für den
-     * Vergleich der Fingerprints. {@code delta-change-same} hat die
-     * Java-Seite nicht. Dazu je Protokoll eines Hosts im Verzeichnis
+     * Vergleich der Fingerprints. Dazu die Zellen mit mehreren Engines in
+     * einem Prozess ({@code langpack/engines/k700/n200/e34},
+     * {@code langpack/index/k700/e100}). {@code delta-change-same} und
+     * {@code langpack/engines/k700/n2000/e10} (nicht in der Messreihe
+     * {@code 2026-11-15-auswahl}) hat die Java-Seite nicht. Dazu je
+     * Protokoll eines Hosts im Verzeichnis
      * {@code SEESAW_PDE_DUMP} die Zellen {@code pde/load/<name>},
      * {@code pde/graph/<name>}, {@code pde/open/<name>} und für
      * {@code <name>-edit} {@code pde/edit/<name>} ({@link PdeReplay});
@@ -99,6 +103,14 @@ public final class JavaSuite {
                         s -> Langpack.deltaDelete(spec, 2000, index, s)));
             }
         }
+        Langpack.Spec batches = new Langpack.Spec(700, 200);
+        out.add(new Cell("langpack/engines/k700/n200/e34",
+                "Läufe nacheinander, Modell, Regeln und Engine je Lauf neu",
+                s -> Langpack.engines(batches, 34, index, s)));
+        Langpack.Spec rulesOnly = new Langpack.Spec(700, 0);
+        out.add(new Cell("langpack/index/k700/e100",
+                "100 Engines über neu geladene Regeln, je eine leere Expansion",
+                s -> Langpack.indexOnly(rulesOnly, 100, index, s)));
         for (int families : new int[] {2000, 20000}) {
             String size = "f" + families;
             out.add(new Cell("f2p/batch/" + size, "Batch durch run (Seed und Schritte)",

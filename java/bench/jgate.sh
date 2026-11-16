@@ -86,7 +86,7 @@ REF=$R/benches/suite/results/2026-11-15-auswahl
 JVM="-Xms8g -Xmx8g -XX:+UseParallelGC"
 MAIN=net.sandrakessler.seesaw.bench.JavaSuite
 # Rust-Zellen der Referenz, die JavaSuite nicht hat (Regex über den Zellnamen).
-NOT_JAVA='^langpack/engines/|^langpack/index/|/delta-change-same/'
+NOT_JAVA='/delta-change-same/'
 # Zellen der Nachfahrt; sie prüft nur der Teil pde, jede Rust-Zelle genau ein Teil.
 PDE='^pde/'
 PDE_DIR=${SEESAW_PDE_DUMP:-/root/seesaw-java/pde-dump}

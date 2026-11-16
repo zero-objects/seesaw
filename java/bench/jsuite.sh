@@ -55,7 +55,8 @@ CELLS="langpack/add/k700/n2000 langpack/seed/k700/n2000 langpack/backward/k700/n
 langpack/add/k700/n20000 langpack/delta-add/k700/n20000/d200
 langpack/delta-change/k700/n20000/d200 langpack/delta-delete/k700/n20000/d200
 langpack/delta-delete/k700/n20000/d2000 f2p/batch/f20000 f2p/add/f20000
-f2p/delta-add/f20000/d1000 f2p/delta-delete/f20000/d1000"
+f2p/delta-add/f20000/d1000 f2p/delta-delete/f20000/d1000
+langpack/engines/k700/n200/e34 langpack/index/k700/e100"
 
 die() { echo "$*" >&2; exit 1; }
 

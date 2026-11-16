@@ -248,6 +248,84 @@ public final class Langpack {
         return outcome(m.g, e, m.vs, steps, measured, first);
     }
 
+    /** Summe der Zähler {@code name} der Engines, -1 wo ein Stand ihn
+     *  nicht hat. */
+    private static long sum(List<Engine> engines, String name) {
+        long sum = 0;
+        for (Engine e : engines) {
+            long n = Counters.of(e, name);
+            if (n < 0) return -1;
+            sum += n;
+        }
+        return sum;
+    }
+
+    /**
+     * {@code engines} Läufe nacheinander in einem Prozess, jeder mit
+     * eigenem Modell, eigenem Regelsatz und eigener Engine (Rust
+     * {@code langpack::engines}): ein Aufrufer, der je Eingabe die Regeln
+     * lädt und eine Engine baut. Modelle und Regeln entstehen vor der
+     * Messstrecke. Der Fingerprint deckt alle Läufe
+     * ({@link #fingerprintOfText}), Schritte, angewandte Schritte, Knoten
+     * und Suchen sind die Summen.
+     */
+    public static Outcome engines(Spec spec, int engines, boolean useIndex, Section measured) {
+        List<Model> models = new ArrayList<>(engines);
+        List<List<Rule>> ruleSets = new ArrayList<>(engines);
+        for (int i = 0; i < engines; i++) {
+            Model m = new Model(spec);
+            ruleSets.add(Rules.load(rulesJson(spec.kinds()), m.g));
+            models.add(m);
+        }
+        List<Engine> runs = new ArrayList<>(engines);
+        measured.start();
+        long steps = 0;
+        for (int i = 0; i < engines; i++) {
+            Model m = models.get(i);
+            Engine e = new Engine(ruleSets.get(i), useIndex);
+            e.seed(m.g, m.vs);
+            steps += saturate(e, m.g, m.vs);
+            runs.add(e);
+        }
+        measured.stop();
+        StringBuilder all = new StringBuilder();
+        long applied = 0;
+        long nodes = 0;
+        for (int i = 0; i < engines; i++) {
+            Model m = models.get(i);
+            Engine e = runs.get(i);
+            applied += e.cascade.size();
+            nodes += m.g.allNodes().size();
+            all.append(fingerprint(m.g, e, m.vs));
+        }
+        return new Outcome(steps, applied, nodes, fingerprintOfText(all.toString()),
+                measured.wallNanos(), 0, sum(runs, "searches"), sum(runs, "seedsByIndex"));
+    }
+
+    /**
+     * {@code engines} Engines nacheinander, jede über neu geladene Regeln,
+     * jede mit einer Expansion, die nichts findet (Rust
+     * {@code langpack::index_only}): was es eine Engine kostet, zu ihrem
+     * Index zu kommen. Alle Regelsätze liegen im selben Graphen, gemessen
+     * werden Bau der Engines und Expansionen. Ergebnis der letzten Engine.
+     */
+    public static Outcome indexOnly(Spec spec, int engines, boolean useIndex, Section measured) {
+        Graph g = new Graph();
+        Map<Id, String> vs = new HashMap<>();
+        Id lone = g.addBaseline("lone", "Lone");
+        List<List<Rule>> ruleSets = new ArrayList<>(engines);
+        for (int i = 0; i < engines; i++) ruleSets.add(Rules.load(rulesJson(spec.kinds()), g));
+        List<Engine> runs = new ArrayList<>(engines);
+        measured.start();
+        for (List<Rule> rules : ruleSets) {
+            Engine e = new Engine(rules, useIndex);
+            e.elementsAdded(g, vs, List.of(lone));
+            runs.add(e);
+        }
+        measured.stop();
+        return outcome(g, runs.get(runs.size() - 1), vs, 0, measured);
+    }
+
     /** Ein synchronisiertes Modell mit Engine, Ausgang der Delta-Zellen. */
     private static Engine synchronised(Model m, boolean useIndex) {
         List<Rule> rules = Rules.load(rulesJson(m.spec.kinds()), m.g);
@@ -481,10 +559,21 @@ public final class Langpack {
         }
         byte[] out = new byte[32];
         h.finalize32(out);
+        return hex16(out);
+    }
+
+    /** Fingerprint mehrerer Läufe ({@code fingerprint::of_text}): der Hash
+     *  über ihre Fingerprints in ihrer Folge. */
+    static String fingerprintOfText(String fingerprints) {
+        return hex16(Blake3.hash(fingerprints.getBytes(StandardCharsets.UTF_8)));
+    }
+
+    /** Die ersten 16 Hex-Zeichen eines Digests. */
+    private static String hex16(byte[] digest) {
         StringBuilder sb = new StringBuilder(16);
         for (int i = 0; i < 8; i++) {
-            sb.append(Character.forDigit((out[i] >> 4) & 0xF, 16))
-                    .append(Character.forDigit(out[i] & 0xF, 16));
+            sb.append(Character.forDigit((digest[i] >> 4) & 0xF, 16))
+                    .append(Character.forDigit(digest[i] & 0xF, 16));
         }
         return sb.toString();
     }
