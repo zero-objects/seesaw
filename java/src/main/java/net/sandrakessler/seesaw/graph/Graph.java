@@ -316,11 +316,23 @@ public final class Graph {
         return out;
     }
 
+    /**
+     * Wert eines Blatts: der Kette der Quellen bis zum Baseline-Blatt oder
+     * zur Regelkonstante folgen, dann die Transformationen von der Quelle
+     * her anwenden. Eine Regelkonstante und ein Blatt ohne Quelle liefern
+     * ihren Wert direkt, ohne Liste. Nur ein abgeleitetes Blatt legt die
+     * Kette an.
+     */
     public String resolveValue(Id id, Map<Id, String> values) {
+        Node n = node(id);
+        if (n == null) return null;
+        if (n.konstIx >= 0) return konstValues.get(n.konstIx);
+        if (n.derivedSource == null) return values.get(id);
         ArrayList<Chain> chain = new ArrayList<>();
-        Id cur = id;
+        chain.add(n.derivedTransform);
+        Id cur = n.derivedSource;
         while (true) {
-            Node n = node(cur);
+            n = node(cur);
             if (n == null) return null;
             if (n.konstIx >= 0) {
                 return applyChain(chain, konstValues.get(n.konstIx));
