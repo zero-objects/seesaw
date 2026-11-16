@@ -1,8 +1,9 @@
 #!/bin/sh
 # jgate.sh [teil ...]: Prüfungen des Java-Zweigs, auf codepit über das Board. Jede Ergebniszeile
-# beginnt mit dem Namen des Teils. Ohne Argument laufen alle Teile nacheinander; das dauert
-# länger als 5 Minuten, über das Board deshalb jeden Teil als eigenen Job fahren
-# (mvn1, mvn2, mvn3, fp, pde:java40, pde:open5, pde:open2 pde:open2-edit).
+# beginnt mit dem Namen des Teils. Ohne Argument laufen alle Teile nacheinander (mvn fp pde
+# diff); das dauert länger als 5 Minuten, über das Board deshalb jeden Teil als eigenen Job
+# fahren (mvn1, mvn2, mvn3, fp, pde:java40, pde:open5, pde:open2 pde:open2-edit, und die Stücke
+# von diff, siehe dort).
 #
 #   mvn   mvn test in drei Stellungen, je Stellung die Zeilen
 #         "mvn MVN_RC=… run=… failures=… errors=… skipped=… [argument]" und
@@ -42,6 +43,38 @@
 #         Am Ende "pde PDE_RC=… protokolle=… bestanden=… durchgefallen=…"; PDE_RC=0 nur, wenn
 #         jedes verlangte Protokoll besteht und protokolle>0.
 #           pde:<name>  nur das Protokoll <name>, für Jobs unter 5 Minuten
+#   diff  [n]  Differenztest gegen Java 2.0.2 (Vorgabe n=1500). Dieselben Szenarien
+#         (Worlds.scenario, Seeds 1 bis n) laufen durch die Engine dieses Baums und durch die von
+#         v2.0.2; verglichen werden je Szenario die SHA-256 über alle Abzüge (Worlds.dump) der
+#         Wellen, Graph, Kaskade, Rückgaben von step und Zustand der Engine. Die Referenz liegt in
+#         SEESAW_DIFF_REF (Vorgabe /root/seesaw-java/ref) und muss vorher dort sein, auf dem Mac:
+#           git archive v2.0.2 java | ssh codepit 'rm -rf /root/seesaw-java/ref && mkdir -p
+#           /root/seesaw-java/ref && tar -x -C /root/seesaw-java/ref'
+#         Dazu kopiert der Teil Worlds.java (ohne Index-Argument und ohne seedFactor, das 2.0.2
+#         nicht kennt) und DiffDump.java dieses Baums in die Referenz, setzt in deren pom.xml die
+#         jackson-databind-Version dieses Baums (2.17.2 liegt nicht im lokalen Repository) und baut
+#         sie dort. Fehlt die
+#         Referenz oder enthält sie AnchorIndex, ist das FEHLER (REF_FEHLT, REF_ZU_NEU), kein Erfolg.
+#         Ein Stück sind eine Welt und eine Richtung (gerichtet/ungerichtet). Je Stück eine Zeile
+#         "diff <welt>/<richtung> DIFF n=… gleich=… erste_abweichung=… wellen=… angewandt=…
+#         sekunden=…" (erste_abweichung=welt/richtung/seed=…/welle=… oder keine) und
+#         "diff <welt>/<richtung> VERDIKT=bestanden" oder "…VERDIKT=durchgefallen <gründe>".
+#         Bestanden nur, wenn beide Seiten n Szenarien lieferten, alle gleich sind, wellen>0 und
+#         angewandt>0 (mindestens ein angewandter Schritt) und beide Seiten ohne Fehler liefen. Bei
+#         einer Abweichung stehen die erste abweichende Zeile beider Seiten dabei.
+#         Gegenprobe (diff:gegenprobe): die Seite dieses Baums verändert mit -Dseesaw.diff.mutate
+#         eine Zeile eines Abzugs; bestanden nur, wenn der Vergleich genau dieses Szenario meldet.
+#         Am Ende "diff DIFF_RC=… stuecke=… bestanden=… durchgefallen=…".
+#           diff               alle Stücke und die Gegenprobe (länger als 5 Minuten, auf codepit
+#                              etwa 20 Minuten); family/ungerichtet läuft darin in Stücken zu
+#                              250 Seeds (diff:family/ungerichtet@1-250 … @1251-1500)
+#           diff:<welt>        beide Richtungen einer Welt
+#           diff:<welt>/<richtung>  ein Stück
+#           diff:<welt>/<richtung>@<von>-<bis>  nur die Seeds von bis bis (für Jobs unter
+#                      5 Minuten; n=bis-von+1, erste_abweichung nennt den Seed wie sonst)
+#           diff:gegenprobe    nur die Gegenprobe
+#         Welten: followup family predicates predicates_no_equals. Das n steht hinter dem Teil
+#         ("diff 1500", "diff:family/gerichtet 1500").
 #
 # Exit-Code 1, wenn ein Teil nicht besteht. Gefahren wird der Baum, in dem dieses Skript liegt
 # (auf codepit /root/seesaw-java/src).
@@ -297,8 +330,219 @@ pde() {
     [ $rc -eq 0 ] || status=1
 }
 
-[ $# -gt 0 ] || set -- mvn fp pde
-for part in "$@"; do
+DIFF_REF=${SEESAW_DIFF_REF:-/root/seesaw-java/ref}
+DIFF_N=1500
+DIFF_BARGS=""
+DIFF_WORLDS="followup family predicates predicates_no_equals"
+DIFF_DIRS="gerichtet ungerichtet"
+DIFF_MAIN=net.sandrakessler.seesaw.engine.DiffDump
+DIFF_PKG=src/test/java/net/sandrakessler/seesaw/engine
+diff_ready=""
+diff_total=0; diff_passed=0; diff_failed=0
+
+# Baut beide Seiten einmal je Aufruf: diese Seite per test-compile (Klassenpfad
+# /tmp/jgate-diff.cp), die Referenz per compile plus javac der beiden Testdateien (Klassenpfad
+# /tmp/jgate-diffref.cp). Rückgabe ungleich 0 bei Fehler, mit Zeilen "diff …".
+diff_build() {
+    [ "$diff_ready" = ok ] && return 0
+    if ! build_suite diff; then
+        echo "diff BUILD_FEHLER Seite=dieser Baum"
+        return 1
+    fi
+    rj=$DIFF_REF/java
+    if [ ! -f "$rj/pom.xml" ] || [ ! -d "$rj/src/main" ]; then
+        echo "diff REF_FEHLT $rj (git archive v2.0.2 java | ssh codepit tar -x -C $DIFF_REF)"
+        return 1
+    fi
+    if [ -e "$rj/src/main/java/net/sandrakessler/seesaw/engine/AnchorIndex.java" ]; then
+        echo "diff REF_ZU_NEU $rj enthält AnchorIndex, ist nicht v2.0.2"
+        return 1
+    fi
+    mkdir -p "$rj/$DIFF_PKG"
+    sed -e 's/new Engine(rules, useIndex)/new Engine(rules)/' -e '/if (indexSeed) e.seedFactor = 0;/d' \
+        "$J/$DIFF_PKG/Worlds.java" >"$rj/$DIFF_PKG/Worlds.java"
+    if grep -q -e 'seedFactor' -e 'new Engine(rules, ' "$rj/$DIFF_PKG/Worlds.java"; then
+        echo "diff BUILD_FEHLER Worlds.java der Referenz: Index-Argument nicht entfernt"
+        return 1
+    fi
+    cp "$J/$DIFF_PKG/DiffDump.java" "$rj/$DIFF_PKG/DiffDump.java"
+    # jackson-databind wie in diesem Baum (2.17.2 liegt nicht im lokalen Repository); die Engine
+    # selbst bleibt der Stand v2.0.2.
+    jv=$(sed -n '/<artifactId>jackson-databind<\/artifactId>/{n;s/.*<version>\(.*\)<\/version>.*/\1/p;}' "$J/pom.xml")
+    sed -i "/<artifactId>jackson-databind<\/artifactId>/{n;s|<version>.*</version>|<version>$jv</version>|;}" "$rj/pom.xml"
+    cd "$rj" || return 1
+    if ! { timeout 200 mvn -q -o -B compile && deps_cp /tmp/jgate-diffref.cp; } >/tmp/jgate-diff-refbuild.log 2>&1; then
+        grep -E '^\[ERROR\]' /tmp/jgate-diff-refbuild.log | head -10 | sed 's/^/diff   /'
+        echo "diff BUILD_FEHLER Seite=Referenz"
+        return 1
+    fi
+    rm -rf target/diff-classes && mkdir -p target/diff-classes
+    if ! javac -d target/diff-classes -cp "target/classes:$(cat /tmp/jgate-diffref.cp)" \
+            "$DIFF_PKG/Worlds.java" "$DIFF_PKG/DiffDump.java" >/tmp/jgate-diff-refjavac.log 2>&1; then
+        head -10 /tmp/jgate-diff-refjavac.log | sed 's/^/diff   /'
+        echo "diff BUILD_FEHLER Seite=Referenz (javac)"
+        return 1
+    fi
+    cd "$J" || return 1
+    diff_ready=ok
+}
+
+# diff_side <b|r> <ausgabe> <fehlerausgabe> <java-argument ...>: ein Lauf von DiffDump.
+diff_side() {
+    side=$1; o=$2; e=$3; shift 3
+    if [ "$side" = b ]; then
+        (cd "$J" && timeout 280 java $DIFF_BARGS -cp "target/classes:target/test-classes:$(cat /tmp/jgate-diff.cp)" \
+            $DIFF_MAIN "$@") >"$o" 2>"$e"
+    else
+        (cd "$DIFF_REF/java" && timeout 280 java -cp "target/diff-classes:target/classes:$(cat /tmp/jgate-diffref.cp)" \
+            $DIFF_MAIN "$@") >"$o" 2>"$e"
+    fi
+}
+
+# Zeile, Welle und Seed der ersten Abweichung zweier Abzüge im Modus voll.
+diff_first_line() {
+    cmpout=$(cmp "$1" "$2" 2>&1)
+    L=$(printf '%s\n' "$cmpout" | sed -n 's/.*line \([0-9][0-9]*\).*/\1/p' | head -1)
+    [ -n "$L" ] || { echo "welle=? (cmp: $cmpout)"; return; }
+    case $cmpout in *EOF*) L=$((L + 1)) ;; esac
+    f=$1; [ "$(wc -l <"$1")" -ge "$L" ] || f=$2
+    awk -v L="$L" 'NR <= L && /^@@ / { h = $0 } NR == L { print h; exit }' "$f" | sed 's/^@@ //'
+    echo "    dieser Baum: $(sed -n "${L}p" "$1" | cut -c1-300)"
+    echo "    v2.0.2:      $(sed -n "${L}p" "$2" | cut -c1-300)"
+}
+
+# diff_piece <welt> <richtung> <n>: setzt P_SAME, P_FIRST (Seed oder leer), P_WHY, P_INFO.
+diff_piece() {
+    w=$1; d=$2; n=$3; seeds=${4:-$3}
+    P_SAME=0; P_FIRST=""; P_WHY=""; P_INFO=""; P_WAVES=0; P_APPLIED=0
+    t0=$(date +%s%N)
+    diff_side b /tmp/jgate-diff-b.out /tmp/jgate-diff-b.err "$w" "$d" "$seeds"; brc=$?
+    diff_side r /tmp/jgate-diff-r.out /tmp/jgate-diff-r.err "$w" "$d" "$seeds"; rrc=$?
+    P_SECS=$(awk -v a="$t0" -v b="$(date +%s%N)" 'BEGIN { printf "%.1f", (b - a) / 1e9 }')
+    [ $brc -ne 0 ] && { P_WHY="$P_WHY lauf_dieser_baum_rc=$brc"; head -3 /tmp/jgate-diff-b.err | cut -c1-300; }
+    [ $rrc -ne 0 ] && { P_WHY="$P_WHY lauf_referenz_rc=$rrc"; head -3 /tmp/jgate-diff-r.err | cut -c1-300; }
+    # Zeilen szenario=… beider Seiten nach Zeilennummer vergleichen.
+    res=$(awk -v n="$n" '
+        FNR == NR { if ($1 == "szenario") r[++nr] = $0; else if ($1 == "summe") rs = $0; next }
+        $1 == "szenario" {
+            nb++
+            if (nb <= nr && $0 == r[nb]) same++
+            else if (first == "") { first = $2; sub(/^seed=/, "", first) }
+        }
+        $1 == "summe" { bs = $0 }
+        END {
+            w = bs; sub(/.*wellen=/, "", w); sub(/ .*/, "", w)
+            a = bs; sub(/.*angewandt=/, "", a)
+            print nb + 0, nr + 0, same + 0, first, w + 0, a + 0, (bs == rs && bs != "") ? "gleich" : "ungleich"
+        }' /tmp/jgate-diff-r.out /tmp/jgate-diff-b.out)
+    set -- $res
+    nb=$1; nr=$2; P_SAME=$3
+    if [ $# -eq 7 ]; then P_FIRST=$4; P_WAVES=$5; P_APPLIED=$6; sums=$7; else P_WAVES=$4; P_APPLIED=$5; sums=$6; fi
+    [ "$nb" -ne "$n" ] && P_WHY="$P_WHY szenarien_dieser_baum=$nb"
+    [ "$nr" -ne "$n" ] && P_WHY="$P_WHY szenarien_referenz=$nr"
+    [ "$P_SAME" -ne "$n" ] && P_WHY="$P_WHY abweichend=$((n - P_SAME))"
+    [ "$sums" != gleich ] && P_WHY="$P_WHY summe_$sums"
+    [ "$P_WAVES" -eq 0 ] && P_WHY="$P_WHY wellen=0"
+    [ "$P_APPLIED" -eq 0 ] && P_WHY="$P_WHY angewandt=0"
+    # Ohne Abweichung in den Szenarien, aber ungleich oder zu wenig: ohne erste Abweichung melden.
+    if [ -n "$P_FIRST" ]; then
+        diff_side b /tmp/jgate-diff-bv.out /tmp/jgate-diff-bv.err "$w" "$d" "$seeds" voll "$P_FIRST"
+        diff_side r /tmp/jgate-diff-rv.out /tmp/jgate-diff-rv.err "$w" "$d" "$seeds" voll "$P_FIRST"
+        P_INFO=$(diff_first_line /tmp/jgate-diff-bv.out /tmp/jgate-diff-rv.out)
+    fi
+}
+
+# Ein Stück: Zeilen DIFF und VERDIKT.
+diff_one() {
+    w=$1; d=$2; seeds=$DIFF_N; n=$DIFF_N
+    case $d in
+        *@*)
+            seeds=${d#*@}; d=${d%%@*}
+            n=$(printf '%s' "$seeds" | awk -F- '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ && $2 >= $1 { print $2 - $1 + 1 }')
+            if [ -z "$n" ]; then echo "diff $w/$d VERDIKT=durchgefallen Bereich=$seeds ungültig"; diff_total=$((diff_total + 1)); diff_failed=$((diff_failed + 1)); return; fi
+            ;;
+    esac
+    diff_total=$((diff_total + 1))
+    diff_piece "$w" "$d" "$n" "$seeds"
+    where=keine
+    [ -n "$P_FIRST" ] && where="$w/$d/seed=$P_FIRST/$(printf '%s\n' "$P_INFO" | head -1 | sed 's/^seed=[0-9]* //')"
+    echo "diff $w/$d DIFF n=$n seeds=$seeds gleich=$P_SAME erste_abweichung=$where wellen=$P_WAVES angewandt=$P_APPLIED sekunden=$P_SECS"
+    [ -n "$P_FIRST" ] && printf '%s\n' "$P_INFO" | sed 1d
+    if [ -z "$P_WHY" ]; then
+        diff_passed=$((diff_passed + 1))
+        echo "diff $w/$d VERDIKT=bestanden"
+    else
+        diff_failed=$((diff_failed + 1))
+        echo "diff $w/$d VERDIKT=durchgefallen$P_WHY"
+    fi
+}
+
+# Alle Seeds einer Welt und Richtung. family/ungerichtet läuft in Stücken zu 250 Seeds, ein Lauf
+# mit allen 1500 Seeds braucht auf codepit mehr als 10 Minuten (und überschreitet die Zeitgrenze
+# je Seite von diff_side).
+diff_all_seeds() {
+    if [ "$1/$2" = family/ungerichtet ] && [ "$DIFF_N" -gt 250 ]; then
+        lo=1
+        while [ $lo -le "$DIFF_N" ]; do
+            hi=$((lo + 249)); [ $hi -gt "$DIFF_N" ] && hi=$DIFF_N
+            diff_one "$1" "$2@$lo-$hi"
+            lo=$((hi + 1))
+        done
+    else
+        diff_one "$1" "$2"
+    fi
+}
+
+# Gegenprobe: dieser Baum verändert eine Zeile, der Vergleich muss genau dieses Szenario melden.
+diff_probe() {
+    diff_total=$((diff_total + 1))
+    DIFF_BARGS="-Dseesaw.diff.mutate=7"
+    diff_piece followup gerichtet 40
+    DIFF_BARGS=""
+    mut=$(sed -n 's/^mutiert seed=\([0-9][0-9]*\)$/\1/p' /tmp/jgate-diff-b.err | head -1)
+    where=keine
+    [ -n "$P_FIRST" ] && where="followup/gerichtet/seed=$P_FIRST/$(printf '%s\n' "$P_INFO" | head -1 | sed 's/^seed=[0-9]* //')"
+    echo "diff gegenprobe DIFF n=40 gleich=$P_SAME mutiert_seed=${mut:-keiner} erste_abweichung=$where"
+    [ -n "$P_FIRST" ] && printf '%s\n' "$P_INFO" | sed 1d
+    if [ -n "$mut" ] && [ "$P_FIRST" = "$mut" ] && [ "$P_SAME" -eq 39 ]; then
+        diff_passed=$((diff_passed + 1))
+        echo "diff gegenprobe VERDIKT=bestanden (die veränderte Zeile wurde gemeldet)"
+    else
+        diff_failed=$((diff_failed + 1))
+        echo "diff gegenprobe VERDIKT=durchgefallen (veränderte Zeile nicht genau gemeldet: mutiert=${mut:-keiner} gemeldet=${P_FIRST:-keine} gleich=$P_SAME)"
+    fi
+}
+
+# diff [<stück>]: leer = alle Stücke und die Gegenprobe.
+diff_part() {
+    spec=$1
+    diff_total=0; diff_passed=0; diff_failed=0
+    if [ "$DIFF_N" -le 0 ]; then
+        echo "diff DIFF_RC=1 n=$DIFF_N ungültig"
+        status=1
+        return
+    fi
+    if ! diff_build; then
+        echo "diff DIFF_RC=1"
+        status=1
+        return
+    fi
+    case $spec in
+        "") for w in $DIFF_WORLDS; do for d in $DIFF_DIRS; do diff_all_seeds $w $d; done; done; diff_probe ;;
+        gegenprobe) diff_probe ;;
+        */*@*) diff_one "${spec%%/*}" "${spec#*/}" ;;
+        */*) diff_all_seeds "${spec%%/*}" "${spec#*/}" ;;
+        *) for d in $DIFF_DIRS; do diff_all_seeds "$spec" $d; done ;;
+    esac
+    rc=0
+    [ $diff_total -eq 0 ] || [ $diff_failed -ne 0 ] && rc=1
+    echo "diff DIFF_RC=$rc stuecke=$diff_total bestanden=$diff_passed durchgefallen=$diff_failed"
+    [ $rc -eq 0 ] || status=1
+}
+
+[ $# -gt 0 ] || set -- mvn fp pde diff
+while [ $# -gt 0 ]; do
+    part=$1; shift
     case $part in
         mvn) mvn_one 1; mvn_one 2; mvn_one 3 ;;
         mvn1) mvn_one 1 ;;
@@ -307,6 +551,11 @@ for part in "$@"; do
         fp) fp ;;
         pde) pde ;;
         pde:*) pde "${part#pde:}" ;;
+        diff|diff:*)
+            # Eine Zahl dahinter ist das n, sonst gilt 1500.
+            DIFF_N=1500
+            if [ $# -gt 0 ]; then case $1 in ''|*[!0-9]*) ;; *) DIFF_N=$1; shift ;; esac; fi
+            diff_part "$(case $part in diff) ;; *) printf '%s' "${part#diff:}" ;; esac)" ;;
         *) echo "$part unbekannter Teil"; exit 2 ;;
     esac
 done
