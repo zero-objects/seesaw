@@ -281,6 +281,9 @@ final class MatcherTest {
         int suchen;
         int matches;
         int weg;
+        /** Stellen, deren Plan Links hat, die kein Schritt prüft
+         *  ({@code Plan.closing}). */
+        int mitClosing;
 
         Vergleich(Graph g, Map<Id, String> vals, List<Rule> rules) {
             this.g = g;
@@ -312,8 +315,30 @@ final class MatcherTest {
             // aus den Participations), wie die Engine sie einträgt.
             for (Id[] m : a) alt.record(ri, m);
             for (Id[] m : n) neu.record(g, ri, m);
+            if (Matcher.plan(r, fixed).closing.length > 0) mitClosing++;
             suchen++;
             matches += n.size();
+        }
+
+        /** Jede Regel mit je zwei festen Positionen, besetzt aus einem
+         *  Match der Suche ohne feste Position (2.0.2). Der Plan nennt
+         *  dann die Links zwischen den beiden und die Selbstlinks in
+         *  {@code Plan.closing}. */
+        void paare(String wo) {
+            for (int ri = 0; ri < rules.size(); ri++) {
+                Rule r = rules.get(ri);
+                int n = r.patNodes.size();
+                for (Id[] m : Alt.find(g, vals, r, new Id[n])) {
+                    for (int i = 0; i < n; i++) {
+                        for (int j = i + 1; j < n; j++) {
+                            Id[] fixed = new Id[n];
+                            fixed[i] = m[i];
+                            fixed[j] = m[j];
+                            stelle(wo, ri, fixed);
+                        }
+                    }
+                }
+            }
         }
 
         private static Id[] fixed(Id[] fixed) {
@@ -464,6 +489,76 @@ final class MatcherTest {
         assertEquals(1, v.neu.matches.size());
     }
 
+    /**
+     * Zwei feste Positionen aus einem bekannten Match und ein Muster mit
+     * Selbstlink. Links, die kein Schritt prüft ({@code Plan.closing}),
+     * hat ein Plan nur mit einem Selbstlink oder einem Link zwischen zwei
+     * festen Positionen, hier je Plan beide. Die Suche liefert dieselbe
+     * Folge wie die von 2.0.2, auch wenn eine dieser Verbindungen nicht
+     * matchbar ist. Die Matches stammen aus dem Graphen, in dem alle
+     * Verbindungen SOLID sind.
+     */
+    @Test
+    void zweiFestePositionenUndSelbstlinkWieInJava202() {
+        Graph g = new Graph();
+        Map<Id, String> vals = Map.of();
+        Id a = g.addBaseline("a", "X");
+        Id a2 = g.addBaseline("a2", "X");
+        Id b = g.addBaseline("b", "Y");
+        Id b2 = g.addBaseline("b2", "Y");
+        Id c = g.addBaseline("c", "Z");
+        Id c2 = g.addBaseline("c2", "Z");
+        g.connect(a, b, St.SOLID);
+        g.connect(a, b2, St.SOLID);
+        g.connect(a2, b, St.SOLID);
+        Id bc = g.connect(b, c, St.SOLID);
+        g.connect(b2, c, St.SOLID);
+        g.connect(b, c2, St.SOLID);
+        Id cc = g.connect(c, c, St.SOLID);
+        g.connect(c2, c2, St.SOLID);
+        Id ac = g.connect(a, c, St.SOLID);
+        g.connect(c2, a2, St.SOLID);
+        // X → Y → Z, Z → Z, X und Z richtungsfrei verbunden.
+        Rule r = regel(g, "Selbstlink", List.of("X", "Y", "Z"),
+                List.of(PatLink.directed(0, 1), PatLink.directed(1, 2), PatLink.directed(2, 2),
+                        PatLink.context(0, 2)));
+        List<Id[]> bekannt = Alt.find(g, vals, r, new Id[3]);
+        assertEquals(3, bekannt.size(), "Matches im Graphen mit allen Verbindungen SOLID");
+        int[][] paare = {{0, 1}, {0, 2}, {1, 2}};
+        int geschlossen = 0;
+        St[] status = {St.SOLID, St.GHOST, St.TENTATIVE_TOMBSTONE, St.TOMBSTONE};
+        for (St sCc : status) {
+            for (St sAc : status) {
+                g.setConnectionStatus(cc, sCc);
+                g.setConnectionStatus(ac, sAc);
+                g.setConnectionStatus(bc, sAc == St.GHOST ? St.TOMBSTONE : St.SOLID);
+                for (Id[] m : bekannt) {
+                    for (int[] p : paare) {
+                        Id[] fixed = new Id[3];
+                        fixed[p[0]] = m[p[0]];
+                        fixed[p[1]] = m[p[1]];
+                        Matcher.Plan plan = Matcher.plan(r, fixed);
+                        assertTrue(plan.closing.length > 0, "Selbstlink in closing");
+                        String wo = "cc " + sCc + ", ac " + sAc + ", fest " + text(Vergleich.fixed(fixed));
+                        List<Id[]> alt = Alt.find(g, vals, r, fixed);
+                        List<Id[]> neu = Matcher.findMatchesWithFixed(g, vals, r, fixed);
+                        assertEquals(text(alt), text(neu), wo);
+                        geschlossen += plan.closing.length;
+                    }
+                }
+            }
+        }
+        // Je Plan der Selbstlink und der Link zwischen den beiden festen
+        // Positionen.
+        assertEquals(16 * 3 * 3 * 2, geschlossen);
+        Vergleich v = new Vergleich(g, vals, List.of(r));
+        for (St st : status) {
+            g.setConnectionStatus(cc, st);
+            v.paare(st.toString());
+        }
+        v.engineGleich("selbstlink");
+    }
+
     private static Id blatt(Graph g, Map<Id, String> vals, String name, String typ, String wert) {
         Id id = g.addBaseline(name, typ);
         vals.put(id, wert);
@@ -588,6 +683,9 @@ final class MatcherTest {
         e.elementsAdded(m.g, m.vs, m.all);
         saturate(e, m.g, m.vs);
         v.alle("f2p synchron");
+        int vorher = v.mitClosing;
+        v.paare("f2p synchron, zwei feste");
+        assertTrue(v.mitClosing > vorher, "keine Stelle mit Plan.closing");
         for (int i = 0; i < 3; i++) {
             List<Id> fresh = m.grow();
             e.admitDelta(List.of(Engine.DeltaDomain.SOURCE));

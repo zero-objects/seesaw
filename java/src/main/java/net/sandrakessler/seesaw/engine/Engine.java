@@ -487,6 +487,12 @@ public final class Engine {
      * {@link Links#filedUnder} aus deren Enden (Rust 87b270a), fuer eine Id,
      * die der Graph nicht kennt, aus dem Index der nicht gehaltenen Links,
      * den {@link Links#fileLinks} hier weiterfuehrt.
+     *
+     * <p>Unter {@link #checks} wirft der Aufruf, wenn das Todo den
+     * Kandidaten nicht aufnimmt, weil schon einer mit demselben Schluessel
+     * darin steht. Dahin fuehrt nur ein Host, der {@link #retractMatch}
+     * fuer einen toten Match ruft, dessen Schluessel ein anderer Match
+     * haelt. Ohne Pruefung bleibt der Kandidat des anderen stehen.
      */
     void record(Graph g, int ruleIx, Id[] refs) {
         MatchKey k = new MatchKey(ruleIx, refs);
@@ -499,7 +505,10 @@ public final class Engine {
         Rule rule = rules.get(ruleIx);
         links.fileLinks(g, rule, refs, ix);
         matches.add(new MatchRec(k));
-        todo.add(new TodoKey(rule.rank, k, ix));
+        if (!todo.add(new TodoKey(rule.rank, k, ix)) && checks) {
+            throw new IllegalStateException("record: im Todo steht schon ein Kandidat mit dem "
+                    + "Schluessel des Matches " + ix + ", Regel " + rule.name);
+        }
     }
 
     /**
@@ -520,16 +529,38 @@ public final class Engine {
         kill(refs, matches.size());
     }
 
-    /** Toetet die Matches {@code mixes} mit einer Nummer unter
-     *  {@code below} sofort: tot und aus dem Todo (Rust {@code kill}). */
+    /**
+     * Toetet die Matches {@code mixes} mit einer Nummer unter {@code below}
+     * sofort: tot und aus dem Todo (Rust {@code kill}). Aus dem Todo geht
+     * der Kandidat mit dem Schluessel eines solchen Matches nur, wenn er
+     * selbst eine Nummer unter {@code below} traegt.
+     *
+     * <p>{@code below} kleiner als die Zahl der Matches kommt von
+     * {@link Links#settleRemoved}: zwischen {@link #elementRemoved} und
+     * dieser Tuer kann {@link #record(int, Id[])} einen Match mit dem
+     * Schluessel eines Matches eingetragen haben, der seinen Schluessel
+     * verlor (tentativ zurueckgezogener Anker) und nicht im Todo steht.
+     * 2.0.2 toetete beim Aufruf, der Kandidat des spaeter eingetragenen
+     * Matches blieb. Sonst traegt jeder Kandidat im Todo eine Nummer unter
+     * {@code below}.
+     */
     void kill(IntList mixes, int below) {
+        boolean all = below >= matches.size();
         for (int i = 0, n = mixes.size(); i < n; i++) {
             int mix = mixes.get(i);
             if (mix >= below) continue;
             MatchRec m = matches.get(mix);
             if (!m.dead) {
                 m.dead = true;
-                todo.remove(new TodoKey(rules.get(m.ruleIx).rank, m.key, mix));
+                TodoKey k = new TodoKey(rules.get(m.ruleIx).rank, m.key, mix);
+                if (all) {
+                    todo.remove(k);
+                } else {
+                    TodoKey there = todo.ceiling(k);
+                    if (there != null && there.compareTo(k) == 0 && there.mix < below) {
+                        todo.remove(there);
+                    }
+                }
             }
         }
     }
@@ -1528,6 +1559,10 @@ public final class Engine {
             // Die Identitaeten der Plan-Knoten, einmal abgeleitet: fuer
             // die Duplikat-Pruefung, den V7-Guard und die Anwendung.
             Planned planned = planOf(g, rule, k.refs, ids, names);
+            if (checks && (planned == Planned.EXISTS) != creationExists(g, rule, k.refs)) {
+                throw new IllegalStateException("planOf: " + planned + ", creationExists "
+                        + (planned != Planned.EXISTS) + ", Regel " + rule.name);
+            }
             if (planned == Planned.EXISTS) {
                 // Ebenfalls ein Duplikat: alles, was der Plan erzeugen
                 // wuerde, ist da.

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
@@ -497,5 +498,127 @@ final class LinksTest {
         assertEquals(2, e.cascade.size());
         assertEquals(1, corrsAt(g, x1));
         assertEquals(0, corrsAt(g, x0));
+    }
+
+    /** Die Stelle von {@code x} in der Ref-Folge des Kandidaten. */
+    private static int at(Engine.TodoKey k, Id x) {
+        for (int i = 0; i < k.refs.length; i++) {
+            if (k.refs[i].equals(x)) return i;
+        }
+        throw new AssertionError("nicht in der Ref-Folge");
+    }
+
+    /**
+     * Ein Match hat seinen Schluessel verloren: sein Anker war tentativ
+     * zurueckgezogen, als sein Kandidat gezogen wurde. Er lebt und steht
+     * nicht im Todo. Dann {@link Engine#elementRemoved} fuer eine
+     * Verbindung, auf der er ruht (vorgemerkt), und
+     * {@link Engine#record(int, Id[])} mit demselben Schluessel: ein neuer
+     * Match mit Kandidat. Die naechste Tuer mit Graph toetet den alten
+     * Match, der Kandidat des neuen bleibt. 2.0.2 toetete den alten Match
+     * beim Aufruf, der neue wurde angewandt.
+     */
+    @Test
+    void derKandidatEinesSpaeterEingetragenenMatchesBleibt() {
+        ContextLink w = contextLinkGraph(1);
+        Graph g = w.g();
+        Id a = w.a();
+        Id x0 = w.xs().get(0);
+        Map<Id, String> vs = new HashMap<>();
+        Engine e = forward(w.rules());
+        e.seed(g, vs);
+        assertEquals(Boolean.TRUE, e.step(g, vs), "Root");
+        assertEquals(1, e.todo.size(), "der Kandidat von Child ueber x0");
+        Engine.TodoKey child = e.todo.first();
+        g.setNodeStatus(x0, St.TENTATIVE_TOMBSTONE);
+        assertNull(e.step(g, vs), "der Anker ist tentativ zurueckgezogen");
+        assertFalse(e.matches.get(child.mix).dead, "der Match lebt");
+        assertNull(e.byKey.get(child.key), "ohne Schluessel");
+        assertTrue(e.todo.isEmpty());
+        g.setNodeStatus(x0, St.SOLID);
+        Id named = Ident.identConnection(corrAb(g), a);
+        e.elementRemoved(named);
+        e.record(child.ruleIx, child.refs.clone());
+        assertEquals(1, e.todo.size(), "der Kandidat des neuen Matches");
+        assertEquals(Boolean.TRUE, e.step(g, vs), "der neue Match wird angewandt");
+        assertTrue(e.matches.get(child.mix).dead, "der alte Match ist tot");
+        assertEquals(2, e.cascade.size());
+        assertEquals(1, corrsAt(g, x0));
+    }
+
+    /**
+     * {@link Engine#record(int, Id[])} bei bestehendem Index der nicht
+     * gehaltenen Links: ohne Graph ist offen, welche Verbindungen gehalten
+     * werden, der Index faellt weg. Die naechste Frage baut ihn fuer ihren
+     * Graphen neu, und der neue Match steht darin. Unter
+     * {@code -Dseesaw.checks=true} vergleicht {@link Links#filedUnder}
+     * jede Antwort mit der Ablage von 2.0.2.
+     */
+    @Test
+    void einOhneGraphEingetragenerMatchVerwirftDenIndex() {
+        ContextLink w = contextLinkGraph(1);
+        Graph g = w.g();
+        Id a = w.a();
+        Map<Id, String> vs = new HashMap<>();
+        Engine e = forward(w.rules());
+        e.seed(g, vs);
+        assertEquals(Boolean.TRUE, e.step(g, vs), "Root");
+        Engine.TodoKey child = e.todo.first();
+        Id named = Ident.identConnection(corrAb(g), a);
+        assertEquals(1, size(e.links.filedUnder(g, named)), "der Match von Child ueber x0");
+        assertEquals(g.uid(), indexGraph(e), "ein Index fuer g");
+        Id x1 = g.addBaseline("a/x1", "X");
+        g.connect(a, x1, St.SOLID);
+        Id[] refs = child.refs.clone();
+        refs[at(child, w.xs().get(0))] = x1;
+        e.record(child.ruleIx, refs);
+        assertNull(e.links.unheld, "ohne Graph faellt der Index weg");
+        int[] resting = array(e.links.filedUnder(g, named));
+        assertEquals(g.uid(), indexGraph(e), "neu gebaut fuer g");
+        assertArrayEquals(new int[] {child.mix, e.matches.size() - 1}, resting,
+                "beide Matches von Child, der neue darunter");
+        e.elementRemoved(named);
+        assertNull(e.step(g, vs), "die Kandidaten von Child sind tot");
+        assertEquals(1, e.cascade.size(), "nur Root");
+    }
+
+    /**
+     * Unter Pruefung wirft {@link Engine#record}, wenn das Todo den neuen
+     * Kandidaten nicht aufnimmt, weil dort schon einer mit demselben
+     * Schluessel steht. Dahin fuehrt nur ein Aufruf ausserhalb des
+     * Vertrags: ein Host ruft das oeffentliche {@link Engine#retractMatch}
+     * fuer einen toten Match, dessen Schluessel inzwischen ein anderer
+     * Match haelt. Ohne Pruefung bleibt der Kandidat des anderen stehen.
+     */
+    @Test
+    void einBelegterSchluesselImTodoWirftUnterPruefung() {
+        for (boolean checks : new boolean[] {true, false}) {
+            ContextLink w = contextLinkGraph(1);
+            Graph g = w.g();
+            Map<Id, String> vs = new HashMap<>();
+            Engine e = new Engine(w.rules(), Engine.defaultUseIndex(), checks);
+            e.admitDelta(List.of(Engine.DeltaDomain.SOURCE));
+            e.seed(g, vs);
+            assertEquals(Boolean.TRUE, e.step(g, vs), "Root");
+            Engine.TodoKey child = e.todo.first();
+            e.elementRemoved(w.xs().get(0));
+            assertTrue(e.matches.get(child.mix).dead);
+            assertTrue(e.todo.isEmpty());
+            // Der tote Match gibt seinen Schluessel her, ein neuer Match
+            // bekommt ihn, der tote nimmt ihn dem neuen.
+            e.retractMatch(g, child.mix, new ArrayList<>());
+            e.record(child.ruleIx, child.refs.clone());
+            int other = e.matches.size() - 1;
+            e.retractMatch(g, child.mix, new ArrayList<>());
+            assertNull(e.byKey.get(child.key));
+            assertEquals(1, e.todo.size(), "der Kandidat des neuen Matches");
+            if (checks) {
+                assertThrows(IllegalStateException.class,
+                        () -> e.record(child.ruleIx, child.refs.clone()));
+            } else {
+                e.record(child.ruleIx, child.refs.clone());
+                assertEquals(other, e.todo.first().mix, "der Kandidat des anderen bleibt");
+            }
+        }
     }
 }
