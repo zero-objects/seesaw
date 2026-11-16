@@ -41,13 +41,17 @@ import net.sandrakessler.seesaw.engine.Langpack;
  * {@code gc_n=} (GC-Zeit und -Läufe in der Strecke), je das Minimum
  * über die gemessenen Läufe, {@code searches=} (gestartete Suchen der
  * Engine im ganzen Lauf, auch außerhalb der Strecke, -1, wo der Stand
- * den Zähler nicht hat) und {@code warmup=}.
+ * den Zähler nicht hat), {@code warmup=} und {@code proc_cpu_ms=} (CPU
+ * des ganzen Prozesses in der Strecke, alle Threads, Minimum über die
+ * gemessenen Läufe, -1, wo die JVM sie nicht liefert, siehe
+ * {@link Section}).
  *
  * <p>Die Thread-CPU zählt nur den Thread, der die Strecke fährt. In den
  * Zellen {@code .../reseed/.../t4} und {@code t8} laufen die Suchen auf
  * Threads, die die Engine startet, ihre CPU ist darin nicht enthalten
  * (die Rust-Suite misst die User-CPU des Prozesses). Dort ist die
- * Wall-Zeit der Vergleichswert.
+ * Wall-Zeit der Vergleichswert. {@code proc_cpu_ms=} zählt die CPU aller
+ * Threads des Prozesses, auch der Such-Threads, des GC und des JIT.
  *
  * <p>Kann der Stand eine Zelle nicht (eine Zelle {@code t4} oder
  * {@code t8} gegen Hauptklassen ohne {@code Engine.seedWithThreads},
@@ -242,6 +246,7 @@ public final class JavaSuite {
         long alloc = Long.MAX_VALUE;
         long gcMillis = Long.MAX_VALUE;
         long gcCount = Long.MAX_VALUE;
+        long procCpu = Long.MAX_VALUE;
         long heap = -1;
         for (int i = 0; i < warmup + reps; i++) {
             System.gc();
@@ -260,6 +265,7 @@ public final class JavaSuite {
             alloc = Math.min(alloc, s.allocBytes());
             gcMillis = Math.min(gcMillis, s.gcMillis());
             gcCount = Math.min(gcCount, s.gcCount());
+            procCpu = procCpu < 0 || s.procCpuNanos() < 0 ? -1 : Math.min(procCpu, s.procCpuNanos());
             if (i == warmup) heap = s.heapBytes();
         }
         Arrays.sort(cpu);
@@ -279,6 +285,7 @@ public final class JavaSuite {
                 "gc_ms=" + gcMillis,
                 "gc_n=" + gcCount,
                 "searches=" + first.searches(),
-                "warmup=" + warmup));
+                "warmup=" + warmup,
+                "proc_cpu_ms=" + (procCpu < 0 ? "-1" : ms(procCpu))));
     }
 }

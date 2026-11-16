@@ -16,6 +16,12 @@ import java.util.List;
  * <li>Thread-CPU (User und System) des Threads, der die Strecke fährt
  *     ({@code ThreadMXBean.getCurrentThreadCpuTime}). GC und JIT laufen
  *     auf eigenen Threads und sind nicht enthalten.</li>
+ * <li>CPU (User und System) des ganzen Prozesses, also aller seiner
+ *     Threads, auch GC, JIT und der Threads, auf denen
+ *     {@code Engine.seedWithThreads} sucht
+ *     ({@code OperatingSystemMXBean.getProcessCpuTime}). Gegenstück zur
+ *     CPU des Prozesses, die die Rust-Suite misst (dort nur User). -1, wo
+ *     die JVM sie nicht liefert.</li>
  * <li>Wall-Zeit ({@code System.nanoTime}).</li>
  * <li>Bytes, die der Thread in der Strecke alloziert
  *     ({@code getCurrentThreadAllocatedBytes}).</li>
@@ -40,15 +46,18 @@ public final class Section {
     private static final List<GarbageCollectorMXBean> GCS =
             ManagementFactory.getGarbageCollectorMXBeans();
     private static final MemoryMXBean MEMORY = ManagementFactory.getMemoryMXBean();
+    private static final com.sun.management.OperatingSystemMXBean OS =
+            (com.sun.management.OperatingSystemMXBean) ManagementFactory.getOperatingSystemMXBean();
 
     private final boolean liveHeap;
     private boolean started, running, stopped;
     /** Wall-Zeit bei {@link #start}, für {@link #elapsedNanos}. */
     private long wallStart;
     /** Stand zu Beginn des laufenden Stücks. */
-    private long wall0, cpu0, alloc0, gcMillis0, gcCount0;
-    /** Summen der beendeten Stücke. */
-    private long wallNanos, cpuNanos, allocBytes, gcMillis, gcCount;
+    private long wall0, cpu0, alloc0, gcMillis0, gcCount0, proc0;
+    /** Summen der beendeten Stücke. {@code procNanos} -1, sobald ein
+     *  Stück die CPU des Prozesses nicht lesen konnte. */
+    private long wallNanos, cpuNanos, allocBytes, gcMillis, gcCount, procNanos;
     private long heapBytes = -1;
 
     /** Ohne Messung des Heaps. */
@@ -110,19 +119,21 @@ public final class Section {
         gcMillis0 = gcMillisNow();
         gcCount0 = gcCountNow();
         alloc0 = THREADS.getCurrentThreadAllocatedBytes();
+        proc0 = OS.getProcessCpuTime();
         cpu0 = THREADS.getCurrentThreadCpuTime();
         wall0 = System.nanoTime();
     }
 
-    /** Wall, CPU, Allokation, GC-Zeit, GC-Läufe, in umgekehrter
-     *  Reihenfolge von {@link #begin} gelesen. */
+    /** Wall, CPU, Allokation, GC-Zeit, GC-Läufe, CPU des Prozesses, in
+     *  umgekehrter Reihenfolge von {@link #begin} gelesen. */
     private static long[] now() {
         long wall = System.nanoTime();
         long cpu = THREADS.getCurrentThreadCpuTime();
+        long proc = OS.getProcessCpuTime();
         long alloc = THREADS.getCurrentThreadAllocatedBytes();
         long ms = gcMillisNow();
         long n = gcCountNow();
-        return new long[] {wall, cpu, alloc, ms, n};
+        return new long[] {wall, cpu, alloc, ms, n, proc};
     }
 
     private void end(long[] now) {
@@ -132,6 +143,7 @@ public final class Section {
         allocBytes += now[2] - alloc0;
         gcMillis += now[3] - gcMillis0;
         gcCount += now[4] - gcCount0;
+        if (procNanos >= 0) procNanos = proc0 < 0 || now[5] < 0 ? -1 : procNanos + now[5] - proc0;
     }
 
     /** Wall-Zeit seit {@link #start}, Unterbrechungen eingeschlossen,
@@ -141,6 +153,10 @@ public final class Section {
     public long wallNanos() { return wallNanos; }
 
     public long cpuNanos() { return cpuNanos; }
+
+    /** CPU des ganzen Prozesses in der Strecke, -1, wo die JVM sie nicht
+     *  liefert. */
+    public long procCpuNanos() { return procNanos; }
 
     public long allocBytes() { return allocBytes; }
 

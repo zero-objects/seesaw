@@ -2,7 +2,8 @@
 """jreport.py <tsv>: Auswertung einer TSV von JavaSuite (java/bench/jsuite.sh).
 
 Je Zelle und Label über alle Zeilen (Runden): Thread-CPU min (Spalte 4), Wall min
-(Spalte 6), alloc (Minimum, MB) und gc_ms (Minimum). Dann die Prüfung, dass Schritte,
+(Spalte 6), alloc (Minimum, MB), gc_ms (Minimum) und proc_cpu_ms (CPU des ganzen Prozesses,
+Minimum, "-" für Zeilen ohne die Spalte oder mit -1). Dann die Prüfung, dass Schritte,
 angewandte Schritte, Knoten und Fingerprint (Spalten 8 bis 11) je Zelle über alle Labels
 und Zeilen gleich sind. Exit-Code 1 bei einer Abweichung.
 
@@ -41,8 +42,17 @@ def parse(path):
                 "result": tuple(cols[7:11]),
                 "alloc": int(extra["alloc"]) if "alloc" in extra else None,
                 "gc_ms": int(extra["gc_ms"]) if "gc_ms" in extra else None,
+                "proc_cpu_ms": proc_cpu(extra.get("proc_cpu_ms")),
             })
     return rows, unavailable
+
+
+def proc_cpu(value):
+    """proc_cpu_ms einer Zeile, None ohne die Spalte oder mit -1."""
+    if value is None:
+        return None
+    v = float(value)
+    return v if v >= 0 else None
 
 
 def minimum(values):
@@ -58,12 +68,14 @@ def main():
     for r in rows:
         groups.setdefault(r["cell"], OrderedDict()).setdefault(r["label"], []).append(r)
 
-    header = ("Zelle", "Label", "Zeilen", "CPU min ms", "Wall min ms", "alloc MB", "gc_ms")
+    header = ("Zelle", "Label", "Zeilen", "CPU min ms", "Wall min ms", "alloc MB", "gc_ms",
+              "proc_cpu min ms")
     table = []
     for cell, labels in groups.items():
         for label, rs in labels.items():
             alloc = minimum(r["alloc"] for r in rs)
             gc = minimum(r["gc_ms"] for r in rs)
+            proc = minimum(r["proc_cpu_ms"] for r in rs)
             table.append((
                 cell,
                 label,
@@ -72,6 +84,7 @@ def main():
                 f"{min(r['wall_min'] for r in rs):.1f}",
                 "-" if alloc is None else f"{alloc / 2**20:.1f}",
                 "-" if gc is None else str(gc),
+                "-" if proc is None else f"{proc:.1f}",
             ))
     widths = [max(len(row[i]) for row in [header] + table) for i in range(len(header))]
     for row in [header] + table:

@@ -35,7 +35,10 @@
 #         Zeilen davon hat. Ein Aufruf bleibt unter LIMIT Sekunden: einen weiteren Lauf startet
 #         er nur, wenn die längste bisherige Dauer der Zelle (<tsv>.dauer) mal 1,25 noch in
 #         die Zeit passt, eine Zelle ohne bekannte Dauer nur als ersten Lauf des Aufrufs. Dann
-#         meldet er "ladder offen=<n>". Erneut aufrufen bis "ladder fertig".
+#         meldet er "ladder offen=<n>". Erneut aufrufen bis "ladder fertig". Vor dem ersten und
+#         nach dem letzten Lauf einer Runde in einem Aufruf hängt er die Ausgabe von uptime
+#         (Load Average) an <tsv>.uptime an: Zeit (UTC), runde=<r>, vor oder nach (unterbrochen,
+#         wenn der Aufruf mitten in der Runde endet), uptime.
 #
 # Eine Zelle, die ein Stand nicht kann (…/reseed/…/t4 und t8 ohne Engine.seedWithThreads), schreibt
 # die Zeile "<label> <zelle> nicht_verfuegbar <grund>" mit Exit-Code 0. Sie zählt als Lauf, die
@@ -227,7 +230,12 @@ cmd_ladder() {
     labels=$(ladder_lines | awk '{ print $1 }')
     [ -n "$labels" ] || die "ladder: keine Stände in $LADDER"
     elapsed() { echo $(( $(date +%s) - start )); }
+    # Load Average zu einer Runde: runde, vor|nach|unterbrochen.
+    load() {
+        printf '%s\trunde=%s\t%s\t%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" "$2" "$(uptime)" >> "$tsv.uptime"
+    }
     stop() {
+        [ "${began:-0}" -eq 1 ] && load "$round" unterbrochen
         echo "ladder offen=$(open_runs "$tsv" "$cells" "$labels") Zeilen in $(basename "$tsv"): $(wc -l < "$tsv" 2>/dev/null || echo 0)"
         exit 0
     }
@@ -250,6 +258,7 @@ cmd_ladder() {
 
     round=1
     while [ $round -le "$ROUNDS" ]; do
+        began=0
         for cell in $cells; do
             for label in $labels; do
                 [ "$(lines_of "$tsv" "$label" "$cell")" -lt $round ] || continue
@@ -257,6 +266,10 @@ cmd_ladder() {
                     est=$(longest "$tsv" "$cell")
                     [ "$est" -eq 0 ] && stop
                     [ $(( $(elapsed) + est * 5 / 4 )) -gt "$LIMIT" ] && stop
+                fi
+                if [ $began -eq 0 ]; then
+                    load "$round" vor
+                    began=1
                 fi
                 run_one "$tsv" "$label" "$cell" 3 5 $(( LIMIT - $(elapsed) ))
                 rc=$?
@@ -268,6 +281,7 @@ cmd_ladder() {
                 worked=1
             done
         done
+        [ $began -eq 1 ] && load "$round" nach
         round=$((round + 1))
     done
     echo "ladder fertig, Zeilen in $(basename "$tsv"): $(wc -l < "$tsv")"
