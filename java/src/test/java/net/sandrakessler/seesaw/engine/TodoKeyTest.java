@@ -2,19 +2,27 @@ package net.sandrakessler.seesaw.engine;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
 import java.util.Set;
 
 import org.junit.jupiter.api.Test;
 
+import net.sandrakessler.seesaw.graph.Graph;
 import net.sandrakessler.seesaw.ident.Id;
 import net.sandrakessler.seesaw.plan.Rule;
+import net.sandrakessler.seesaw.rules.Rules;
 
 /**
  * Reihenfolge der Todo-Entnahme: gleich der Ordnung von
@@ -171,5 +179,72 @@ final class TodoKeyTest {
             while (!e.todo.isEmpty()) entnommen.add(e.todo.pollFirst());
             gleicheFolge(wo + " Entnahme", erwartet, entnommen);
         }
+    }
+
+    /**
+     * Gegenstueck zu {@code head_is_consistent_with_the_sequence_order}
+     * auf der Rust-Seite: der Kopf sind die ersten 16 Byte der ersten Id
+     * (0 fuer eine leere Folge), und wo sich zwei Koepfe unterscheiden,
+     * ordnen sie wie die Folgen.
+     */
+    @Test
+    void kopfOrdnetWieDieFolge() {
+        Random rnd = new Random(13);
+        Id[] pool = pool(rnd, 60);
+        int verschieden = 0;
+        int gleich = 0;
+        for (int i = 0; i < 20_000; i++) {
+            Id[] a = refs(rnd, pool, 2);
+            Id[] b = refs(rnd, pool, 2);
+            Engine.TodoKey x = new Engine.TodoKey(0, a, 0);
+            Engine.TodoKey y = new Engine.TodoKey(0, b, 0);
+            assertEquals(a.length == 0 ? 0L : ByteBuffer.wrap(a[0].b).getLong(0), x.head0);
+            assertEquals(a.length == 0 ? 0L : ByteBuffer.wrap(a[0].b).getLong(8), x.head1);
+            int c = Long.compareUnsigned(x.head0, y.head0);
+            if (c == 0) c = Long.compareUnsigned(x.head1, y.head1);
+            if (c == 0) {
+                gleich++;
+            } else {
+                verschieden++;
+                assertEquals(Integer.signum(altFolge(a, b)), Integer.signum(c));
+            }
+        }
+        assertTrue(gleich > 500, "nur " + gleich + " gleiche Koepfe");
+        assertTrue(verschieden > 500, "nur " + verschieden + " verschiedene Koepfe");
+    }
+
+    /** Ein Schluessel je Match: matches, todo, byKey und applied halten
+     *  dasselbe Objekt, ohne Kopie der Ref-Folge. */
+    @Test
+    void einSchluesselJeMatch() {
+        String json = """
+            {"format":3,"name":"ein_schluessel","rules":[{
+              "name":"A_2_B","rank":10,
+              "left":{"anchor":"a","nodes":[{"name":"a","type":"A"}],"links":[]},
+              "right":{"anchor":"b","nodes":[{"name":"b","type":"B"}],"links":[]},
+              "corrs":[{"type":"AB","left":"a","right":"b","role":"establishes"}]
+            }]}""";
+        Graph g = new Graph();
+        List<Rule> rules = Rules.load(json, g);
+        g.addBaseline("a1", "A");
+        g.addBaseline("a2", "A");
+        Engine e = new Engine(rules);
+        e.seed(g, Map.of());
+        assertEquals(2, e.matches.size());
+        Set<MatchKey> imTodo = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Engine.TodoKey t : e.todo) imTodo.add(t.key);
+        Set<MatchKey> imIndex = Collections.newSetFromMap(new IdentityHashMap<>());
+        imIndex.addAll(e.byKey.keySet());
+        for (Engine.MatchRec m : e.matches) {
+            assertTrue(imTodo.contains(m.key));
+            assertTrue(imIndex.contains(m.key));
+            assertSame(m.refs, m.key.refs);
+            assertEquals(m.ruleIx, m.key.ruleIx);
+        }
+        while (e.step(g, Map.of()) != null) { /* bis zum Fixpunkt */ }
+        assertFalse(e.applied.isEmpty());
+        Set<MatchKey> imSpeicher = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Engine.MatchRec m : e.matches) imSpeicher.add(m.key);
+        for (MatchKey k : e.applied) assertTrue(imSpeicher.contains(k));
     }
 }

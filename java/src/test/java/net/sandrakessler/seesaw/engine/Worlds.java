@@ -258,7 +258,14 @@ final class Worlds {
             ids(out, "refs", List.of(k.refs));
             out.append('\n');
         }
-        for (Engine.AppliedKey k : e.applied) {
+        // applied ist eine Hash-Menge ohne Ordnung: die Zeilen in der
+        // Ordnung von 2.0.2 (Regelindex, dann Ref-Folge). jgate.sh diff
+        // baut diese Datei auch gegen v2.0.2, dort ist der Elementtyp
+        // AppliedKey, hier MatchKey, daher var; beide haben ruleIx und refs.
+        var applied = new ArrayList<>(e.applied);
+        applied.sort((x, y) -> x.ruleIx != y.ruleIx ? Integer.compare(x.ruleIx, y.ruleIx)
+                : Matcher.compareBindings(x.refs, y.refs));
+        for (var k : applied) {
             out.append("applied rule=").append(k.ruleIx);
             ids(out, "refs", List.of(k.refs));
             out.append('\n');

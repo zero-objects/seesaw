@@ -27,35 +27,66 @@ public final class Engine {
     /** Domäne, in der ein vollständiges Host-Delta entstanden ist. */
     public enum DeltaDomain { SOURCE, TARGET }
 
+    /**
+     * Todo-Schluessel: (Rang absteigend, Ref-Folge absteigend,
+     * Regelindex aufsteigend), wie in 2.0.2.
+     *
+     * <p>Vor der Ref-Folge steht ihr Kopf ({@link #head0},
+     * {@link #head1}, Rust {@code head}). Wo sich zwei Koepfe
+     * unterscheiden, ordnen sie wie die Folgen selbst, an der
+     * Reihenfolge aendert sich also nichts. Der Vergleich muss dann nicht
+     * ueber das Array zur ersten Id gehen.
+     */
     static final class TodoKey implements Comparable<TodoKey> {
         final long rank;
+        /** Die ersten 16 Byte der ersten Id der Folge als zwei long,
+         *  Big-Endian; 0 fuer eine leere Folge. */
+        final long head0, head1;
         final Id[] refs;
         final int ruleIx;
+        /** Schluessel des Matches, derselbe wie im Match-Speicher, in
+         *  {@link #byKey} und {@link #applied}; null in einer Schranke
+         *  von {@link #stepWithLimit}. */
+        final MatchKey key;
 
+        /** Eine Schranke, ohne Match. */
         TodoKey(long rank, Id[] refs, int ruleIx) {
-            this.rank = rank; this.refs = refs; this.ruleIx = ruleIx;
+            this(rank, refs, ruleIx, null);
+        }
+
+        /** Der Eintrag eines Matches. */
+        TodoKey(long rank, MatchKey key) {
+            this(rank, key.refs, key.ruleIx, key);
+        }
+
+        private TodoKey(long rank, Id[] refs, int ruleIx, MatchKey key) {
+            this.rank = rank;
+            this.head0 = refs.length == 0 ? 0 : word(refs[0].b, 0);
+            this.head1 = refs.length == 0 ? 0 : word(refs[0].b, 8);
+            this.refs = refs;
+            this.ruleIx = ruleIx;
+            this.key = key;
+        }
+
+        /** Acht Byte ab {@code from}, Big-Endian. */
+        static long word(byte[] b, int from) {
+            long w = 0;
+            for (int i = from; i < from + 8; i++) w = (w << 8) | (b[i] & 0xFF);
+            return w;
         }
 
         @Override public int compareTo(TodoKey o) {
-            // (Reverse(rank), Reverse(refs), ruleIx)
+            // (Reverse(rank), Reverse(head), Reverse(refs), ruleIx). Die
+            // Koepfe ohne Vorzeichen, wie die Byte-Ordnung der Id.
             int c = Long.compare(o.rank, rank);
+            if (c != 0) return c;
+            c = Long.compareUnsigned(o.head0, head0);
+            if (c != 0) return c;
+            c = Long.compareUnsigned(o.head1, head1);
             if (c != 0) return c;
             c = Matcher.compareBindings(o.refs, refs);
             if (c != 0) return c;
             return Integer.compare(ruleIx, o.ruleIx);
-        }
-    }
-
-    static final class AppliedKey implements Comparable<AppliedKey> {
-        final int ruleIx;
-        final Id[] refs;
-
-        AppliedKey(int r, Id[] refs) { ruleIx = r; this.refs = refs; }
-
-        @Override public int compareTo(AppliedKey o) {
-            int c = Integer.compare(ruleIx, o.ruleIx);
-            if (c != 0) return c;
-            return Matcher.compareBindings(refs, o.refs);
         }
     }
 
@@ -77,11 +108,14 @@ public final class Engine {
     static final class MatchRec {
         final int ruleIx;
         final Id[] refs;
+        /** Regelindex und Ref-Folge als Schluessel, dasselbe Objekt im
+         *  Todo, in {@link #byKey} und in {@link #applied}. */
+        final MatchKey key;
         boolean dead;
         /** Provenienz-Kante Match → Kaskaden-Eintrag (null = nicht angewandt). */
         Integer entry;
 
-        MatchRec(int ruleIx, Id[] refs) { this.ruleIx = ruleIx; this.refs = refs; }
+        MatchRec(MatchKey key) { this.ruleIx = key.ruleIx; this.refs = key.refs; this.key = key; }
     }
 
     /** Sättigungs-Verdikt (Spiegel von engine::Termination). */
@@ -96,7 +130,12 @@ public final class Engine {
     }
 
     final TreeSet<TodoKey> todo = new TreeSet<>();
-    final TreeSet<AppliedKey> applied = new TreeSet<>();
+    /**
+     * Die angewandten Matches (Rust {@code applied}). Befragt, ergaenzt,
+     * gekuerzt und auf leer geprueft, nie durchlaufen: eine Hash-Menge,
+     * ohne Ordnung.
+     */
+    final HashSet<MatchKey> applied = new HashSet<>();
     /** (Regelindex, Ref-Folge) → Index im Match-Speicher. */
     final HashMap<MatchKey, Integer> byKey = new HashMap<>();
     final ArrayList<MatchRec> matches = new ArrayList<>();
@@ -353,9 +392,11 @@ public final class Engine {
                 byElement.computeIfAbsent(e, x -> new IntList()).add(ix);
             }
         }
+        // Ein Schluessel je Match, geteilt von Match-Speicher, Todo,
+        // byKey und spaeter applied.
         byKey.put(k, ix);
-        matches.add(new MatchRec(ruleIx, refs));
-        todo.add(new TodoKey(rules.get(ruleIx).rank, refs, ruleIx));
+        matches.add(new MatchRec(k));
+        todo.add(new TodoKey(rules.get(ruleIx).rank, k));
     }
 
     /** delete/modify (Spec §1.6): Matches des Elements EAGER töten. */
@@ -366,7 +407,7 @@ public final class Engine {
             MatchRec m = matches.get(refs.get(i));
             if (!m.dead) {
                 m.dead = true;
-                todo.remove(new TodoKey(rules.get(m.ruleIx).rank, m.refs, m.ruleIx));
+                todo.remove(new TodoKey(rules.get(m.ruleIx).rank, m.key));
             }
         }
     }
@@ -377,17 +418,15 @@ public final class Engine {
      *  folgen (TT + Queue). Spiegel von retract_match. */
     public void retractMatch(Graph g, int mix, ArrayList<Id> queue) {
         MatchRec m = matches.get(mix);
-        int ruleIx = m.ruleIx;
-        Id[] refs = m.refs;
         Integer entry = m.entry;
         if (!m.dead) {
             m.dead = true;
-            todo.remove(new TodoKey(rules.get(ruleIx).rank, refs, ruleIx));
+            todo.remove(new TodoKey(rules.get(m.ruleIx).rank, m.key));
         }
         // Reclaim-Fähigkeit: Vermerk VERGESSEN, damit eine identische
         // Re-Ableitung erneut anwenden (resurrektieren) kann.
-        applied.remove(new AppliedKey(ruleIx, refs));
-        byKey.remove(new MatchKey(ruleIx, refs));
+        applied.remove(m.key);
+        byKey.remove(m.key);
         if (entry != null) {
             Entry e = cascade.get(entry);
             for (Id c : e.created) {
@@ -1002,8 +1041,8 @@ public final class Engine {
             }
             todo.remove(k);
             Rule rule = rules.get(k.ruleIx);
-            AppliedKey ak = new AppliedKey(k.ruleIx, k.refs);
-            if (applied.contains(ak)) continue;
+            MatchKey mk = k.key;
+            if (applied.contains(mk)) continue;
             // TT-Anker feuern nicht (Reclaim-Zombie-Schutz): vergessener
             // Match wird vom nächsten Seed neu gefunden, falls resurrektiert.
             boolean anchorTt = false;
@@ -1012,7 +1051,7 @@ public final class Engine {
                 Node an = g.node(k.refs[pos]);
                 if (an != null && an.status == St.TENTATIVE_TOMBSTONE) { anchorTt = true; break; }
             }
-            if (anchorTt) { byKey.remove(new MatchKey(k.ruleIx, k.refs)); continue; }
+            if (anchorTt) { byKey.remove(mk); continue; }
             boolean translated = !rule.corrRecognition.isEmpty();
             for (Object[] rec : rule.corrRecognition) {
                 String typ = (String) rec[0];
@@ -1039,7 +1078,7 @@ public final class Engine {
                 if (!found) { translated = false; break; }
             }
             if (translated || creationExists(g, rule, k.refs)) {
-                applied.add(ak);
+                applied.add(mk);
                 return false;
             }
             // V7-Guard
@@ -1064,9 +1103,9 @@ public final class Engine {
             // die dieser Eintrag gebaut hat, zeigt auf ihn zurueck.
             for (Id pid : cr.nodes) byProduct.computeIfAbsent(pid, x -> new ArrayList<>()).add(eix);
             for (Id pid : cr.edges) byProduct.computeIfAbsent(pid, x -> new ArrayList<>()).add(eix);
-            applied.add(ak);
+            applied.add(mk);
             // Provenienz-Kante materialisieren (für retractFor ohne Scan).
-            Integer mix = byKey.get(new MatchKey(k.ruleIx, k.refs));
+            Integer mix = byKey.get(mk);
             if (mix != null) matches.get(mix).entry = eix;
             expandAt(g, vals, cr.nodes);
             return true;
