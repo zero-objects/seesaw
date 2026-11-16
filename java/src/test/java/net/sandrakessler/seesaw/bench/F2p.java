@@ -60,7 +60,7 @@ public final class F2p {
                 + "\"role\":\"establishes\",\"bindings\":[{\"left\":\"l1\",\"right\":\"r1\"}]}]}";
     }
 
-    static String rulesJson() {
+    public static String rulesJson() {
         return "{\"format\":3,\"name\":\"f2p\",\"rules\":["
                 + registerRule() + ","
                 + memberRule("Father_2_Male", "Father", 850) + ","
@@ -72,18 +72,19 @@ public final class F2p {
     private static final String[] ROLES = {"Father", "Mother", "Sons", "Daughters"};
 
     /** Register, darunter die Familien mit ihren vier Rollen, je Rolle
-     *  ein Mitglied mit Vornamen. */
-    static final class Model {
-        final Graph g = new Graph();
-        final Map<Id, String> vs = new HashMap<>();
+     *  ein Mitglied mit Vornamen. Öffentlich für {@code MatcherTest}
+     *  (Paket engine). */
+    public static final class Model {
+        public final Graph g = new Graph();
+        public final Map<Id, String> vs = new HashMap<>();
         final Id reg;
         /** Jeder Baseline-Knoten, in der Reihenfolge des Anlegens. */
-        final List<Id> all = new ArrayList<>();
+        public final List<Id> all = new ArrayList<>();
         /** Die {@code Member}-Knoten, in der Reihenfolge des Anlegens. */
-        final List<Id> members = new ArrayList<>();
+        public final List<Id> members = new ArrayList<>();
         int families;
 
-        Model(int families) {
+        public Model(int families) {
             reg = g.addBaseline("reg", "FamilyRegister");
             Id regname = g.addBaseline("reg/name", "regName");
             g.connect(reg, regname, St.SOLID);
@@ -95,7 +96,7 @@ public final class F2p {
 
         /** Fügt eine Familie mit ihren vier Mitgliedern hinzu; liefert die
          *  neuen Knoten. */
-        List<Id> grow() {
+        public List<Id> grow() {
             int i = families++;
             Id f = g.addBaseline("f" + i, "Family");
             g.connect(reg, f, St.SOLID);

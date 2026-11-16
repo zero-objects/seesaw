@@ -6,6 +6,8 @@ import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.TreeSet;
 
+import net.sandrakessler.seesaw.ident.Id;
+
 /**
  * Die Participation-Liste eines Knotens: eine Menge in der Ordnung von
  * {@link Part} (Rust {@code Parts}). Ein sortiertes Array bis
@@ -129,6 +131,37 @@ public final class Parts implements Iterable<Part> {
     public Iterable<Part> ofType(int typ) {
         return new OfType(this, typ);
     }
+
+    /**
+     * Der erste Eintrag in der Ordnung von Part mit diesem
+     * {@code otherTyp}, {@code other} und {@code outgoing}, gleich welche
+     * Verbindung; null, wenn es keinen gibt. Die Verbindung
+     * source→target steht in der Liste von source als (Typ von target,
+     * target, ausgehend). Im Array eine binäre Suche ohne neues Objekt.
+     */
+    public Part first(int otherTyp, Id other, boolean outgoing) {
+        if (tree != null) {
+            Part p = tree.ceiling(new Part(otherTyp, other, outgoing, ZERO));
+            return p != null && p.otherTyp == otherTyp && p.outgoing == outgoing
+                    && p.other.equals(other) ? p : null;
+        }
+        int lo = 0, hi = n;
+        while (lo < hi) {
+            int mid = (lo + hi) >>> 1;
+            Part p = flat[mid];
+            int c = Integer.compare(p.otherTyp, otherTyp);
+            if (c == 0) c = p.other.compareTo(other);
+            if (c == 0) c = Boolean.compare(p.outgoing, outgoing);
+            if (c < 0) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo == n) return null;
+        Part p = flat[lo];
+        return p.otherTyp == otherTyp && p.outgoing == outgoing && p.other.equals(other) ? p : null;
+    }
+
+    /** Die kleinste Id, untere Grenze der Verbindung in {@link #first}. */
+    private static final Id ZERO = new Id(new byte[32]);
 
     /** Ist die Liste eine {@code TreeSet}? Für Tests. */
     boolean isTree() {

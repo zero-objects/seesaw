@@ -5,6 +5,7 @@ import net.sandrakessler.seesaw.ident.Ident;
 import net.sandrakessler.seesaw.rules.Chain;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -194,15 +195,39 @@ public final class Graph {
         if (c != null) c.status = st;
     }
 
-    /** matchbar (Solid|Ghost|TT) — für den Matcher. */
+    /**
+     * Die Id der Verbindung source→target, wenn der Graph eine hält, gleich
+     * welcher Status (Rust {@code Graph::connection_id}). Gelesen aus der
+     * Participation-Liste von {@code source}: es ist die Id, die
+     * {@link Ident#identConnection} liefert, ohne sie neu abzuleiten. null,
+     * wenn es {@code target} oder die Verbindung nicht gibt.
+     */
+    public Id connectionId(Id source, Id target) {
+        Node t = node(target);
+        if (t == null) return null;
+        Slot s = map.get(source);
+        if (s == null || s.parts == null) return null;
+        Part p = s.parts.first(t.typ, target, true);
+        if (p == null) return null;
+        assert p.connection.equals(Ident.identConnection(source, target));
+        return p.connection;
+    }
+
+    /** matchbar (Solid|Ghost|TT) — für den Matcher. Die Verbindung wird
+     *  über {@link #connectionId} gefunden. */
     public boolean connected(Id s, Id t) {
-        Conn c = conn(Ident.identConnection(s, t));
+        Id id = connectionId(s, t);
+        if (id == null) return false;
+        Conn c = conn(id);
         return c != null && c.status.matchable();
     }
 
-    /** nicht-tentativ (Solid|Ghost) — für die Duplikat-Unterdrückung. */
+    /** nicht-tentativ (Solid|Ghost) — für die Duplikat-Unterdrückung. Die
+     *  Verbindung wird über {@link #connectionId} gefunden. */
     public boolean connectedAlive(Id s, Id t) {
-        Conn c = conn(Ident.identConnection(s, t));
+        Id id = connectionId(s, t);
+        if (id == null) return false;
+        Conn c = conn(id);
         return c != null && c.status.alive();
     }
 
@@ -249,6 +274,16 @@ public final class Graph {
         int n = 0;
         for (ArrayList<Id> ids : byType.values()) n += ids.size();
         return n;
+    }
+
+    /**
+     * Die Ids aller Knoten des Typs {@code typ}, gleich welchen Status, in
+     * der Folge des Einfügens, ohne Kopie und nur zum Lesen.
+     * {@link #nodesOfType} liefert davon die matchbaren als eigene Liste.
+     */
+    public List<Id> idsOfType(int typ) {
+        ArrayList<Id> ids = byType.get(typ);
+        return ids == null ? List.of() : Collections.unmodifiableList(ids);
     }
 
     public List<Id> nodesOfType(int typ) {

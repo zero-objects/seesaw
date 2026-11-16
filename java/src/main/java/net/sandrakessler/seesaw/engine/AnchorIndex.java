@@ -313,7 +313,7 @@ public final class AnchorIndex {
      * bei der ersten Suche an dem Platz. Die Pläne der Regel {@code r}
      * beginnen bei {@code planAt[r]}.
      */
-    private final AtomicReferenceArray<List<Matcher.Step>> plans;
+    private final AtomicReferenceArray<Matcher.Plan> plans;
     private final int[] planAt;
     /** Digest dessen, was der Index aus den Regeln gelesen hat. */
     private final byte[] shape;
@@ -472,13 +472,13 @@ public final class AnchorIndex {
      * {@code rule} verankert ist. {@code r} ist diese Regel aus den
      * Regeln, für die der Index gebaut wurde.
      */
-    List<Matcher.Step> plan(int rule, int pos, Rule r) {
+    Matcher.Plan plan(int rule, int pos, Rule r) {
         int i = planAt[rule] + pos;
-        List<Matcher.Step> p = plans.get(i);
+        Matcher.Plan p = plans.get(i);
         if (p == null) {
             Id[] fixed = new Id[r.patNodes.size()];
             fixed[pos] = ZERO;
-            plans.compareAndSet(i, null, Matcher.buildPlan(r, fixed));
+            plans.compareAndSet(i, null, Matcher.plan(r, fixed));
             p = plans.get(i);
         }
         return p;

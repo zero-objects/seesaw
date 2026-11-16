@@ -144,6 +144,8 @@ public final class Engine {
     /** Groesse der Regelliste, fuer die {@link #index} gilt. */
     private int indexRules = -1;
     private final AnchorIndex.Walk walk = new AnchorIndex.Walk();
+    /** Arbeitsspeicher der verankerten Suchen, über die Suchen behalten. */
+    private final Matcher.Scratch scratch = new Matcher.Scratch();
     /** Zahl der gestarteten Suchen (Expansion und Seed) und der Seeds,
      *  die ueber den Index gingen. Diagnose fuer Tests und Messung. */
     long searches;
@@ -312,6 +314,17 @@ public final class Engine {
     private static final char[] HEX = "0123456789abcdef".toCharArray();
 
     public void record(int ruleIx, Id[] refs) {
+        record(null, ruleIx, refs);
+    }
+
+    /**
+     * Wie {@link #record(int, Id[])}. Die Id der Verbindung eines Links
+     * steht in der Participation-Liste der Quelle in {@code g}, wo der
+     * Graph die Verbindung hält ({@link Graph#connectionId}); sonst (ein
+     * richtungsfreier Link, den der Graph andersherum hält, oder ohne
+     * Graph) wird sie wie bisher abgeleitet. Beides ist dieselbe Id.
+     */
+    void record(Graph g, int ruleIx, Id[] refs) {
         String k = key(ruleIx, refs);
         if (byKey.containsKey(k)) return;
         int ix = matches.size();
@@ -328,7 +341,8 @@ public final class Engine {
         for (PatLink l : rules.get(ruleIx).patLinks) {
             if (l.kind == PatLink.Kind.SAME_VALUE) continue;
             if (l.from < refs.length && l.to < refs.length) {
-                Id e = Ident.identConnection(refs[l.from], refs[l.to]);
+                Id e = g == null ? null : g.connectionId(refs[l.from], refs[l.to]);
+                if (e == null) e = Ident.identConnection(refs[l.from], refs[l.to]);
                 byElement.computeIfAbsent(e, x -> new ArrayList<>()).add(ix);
             }
         }
@@ -607,7 +621,7 @@ public final class Engine {
     public void seedRule(Graph g, Map<Id, String> vals, int ri) {
         Rule r = rules.get(ri);
         Id[] fixed = new Id[r.patNodes.size()];
-        for (Id[] m : Matcher.findMatchesWithFixed(g, vals, r, fixed)) record(ri, m);
+        for (Id[] m : Matcher.findMatchesWithFixed(g, vals, r, fixed)) record(g, ri, m);
     }
 
     /**
@@ -619,6 +633,7 @@ public final class Engine {
      * Matches und tragen sie in derselben Reihenfolge ein.
      */
     public void seed(Graph g, Map<Id, String> vals) {
+        Sink sink = (ri, m) -> record(g, ri, m);
         if (useIndex && index() != null) {
             if (CHECKS) {
                 Found indexed = new Found();
@@ -626,15 +641,15 @@ public final class Engine {
                 seedByIndex(g, vals, indexed);
                 seedByScan(g, vals, plain);
                 checkSame("der Seed", indexed, plain);
-                indexed.into(this::record);
+                indexed.into(sink);
                 return;
             }
             if (seedThroughIndex(g)) {
-                seedByIndex(g, vals, this::record);
+                seedByIndex(g, vals, sink);
                 return;
             }
         }
-        seedByScan(g, vals, this::record);
+        seedByScan(g, vals, sink);
     }
 
     /** Ein Scan je zugelassener Regel ueber den ganzen Graphen. Die
@@ -716,14 +731,14 @@ public final class Engine {
                 continue;
             }
             found.clear();
-            List<Matcher.Step> plan = null;
+            Matcher.Plan plan = null;
             while (next < candidates.length && AnchorIndex.rule(candidates[next]) == ri) {
-                Id[] fixed = new Id[n];
-                fixed[0] = starts.get(AnchorIndex.node(candidates[next]));
+                Id start = starts.get(AnchorIndex.node(candidates[next]));
                 next++;
                 if (plan == null) plan = ix.plan(ri, 0, r);
                 searches++;
-                found.addAll(Matcher.findMatchesPlanned(g, vals, r, plan, fixed));
+                Matcher.findMatchesPlanned(g, vals, r, plan, 0, start, scratch);
+                found.addAll(scratch.found);
             }
             found.sort(Matcher::compareBindings);
             for (Id[] m : found) sink.match(ri, m);
@@ -781,6 +796,7 @@ public final class Engine {
      * er den Match zieht, auf dem Graphen, wie er dann ist.
      */
     public void expandAt(Graph g, Map<Id, String> vals, List<Id> newNodes) {
+        Sink sink = (ri, m) -> record(g, ri, m);
         if (useIndex && index() != null) {
             if (CHECKS) {
                 Found indexed = new Found();
@@ -788,13 +804,13 @@ public final class Engine {
                 expandByIndex(g, vals, newNodes, indexed);
                 expandUnfiltered(g, vals, newNodes, plain);
                 checkSame("die Expansion", indexed, plain);
-                indexed.into(this::record);
+                indexed.into(sink);
                 return;
             }
-            expandByIndex(g, vals, newNodes, this::record);
+            expandByIndex(g, vals, newNodes, sink);
             return;
         }
-        expandUnfiltered(g, vals, newNodes, this::record);
+        expandUnfiltered(g, vals, newNodes, sink);
     }
 
     /** Die Expansion von 2.0.2: jeder neue Knoten an jeder aktiven
@@ -827,12 +843,13 @@ public final class Engine {
             int ri = AnchorIndex.rule(t);
             int pos = AnchorIndex.pos(t);
             Rule r = rules.get(ri);
-            Id[] fixed = new Id[r.patNodes.size()];
-            fixed[pos] = newNodes.get(AnchorIndex.node(t));
             searches++;
-            for (Id[] m : Matcher.findMatchesPlanned(g, vals, r, ix.plan(ri, pos, r), fixed)) {
-                sink.match(ri, m);
-            }
+            // Die Suche schreibt in den Arbeitsspeicher der Engine, der
+            // Abnehmer liest die Matches daraus (er sucht nicht selbst).
+            Matcher.findMatchesPlanned(g, vals, r, ix.plan(ri, pos, r), pos,
+                    newNodes.get(AnchorIndex.node(t)), scratch);
+            ArrayList<Id[]> found = scratch.found;
+            for (int i = 0, k = found.size(); i < k; i++) sink.match(ri, found.get(i));
         }
     }
 
