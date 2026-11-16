@@ -142,7 +142,7 @@ public final class Matcher {
         if (!step.links.isEmpty()) {
             int[] first = step.links.get(0);
             Id anchor = cur[first[0]];
-            for (Part p : g.partsByOtherType(anchor, pn.typ)) {
+            for (Part p : g.partsOfType(anchor, pn.typ)) {
                 if (first[1] == 1 && p.outgoing) continue;      // cand ist source ⇒ part incoming
                 if (first[1] == 0 && !p.outgoing) continue;     // cand ist target ⇒ part outgoing
                 candidates.add(p.other);

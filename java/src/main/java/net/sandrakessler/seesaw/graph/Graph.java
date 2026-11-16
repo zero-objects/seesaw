@@ -109,7 +109,7 @@ public final class Graph {
     public Id childLeafOfType(Id anchor, String typName) {
         Integer t = typesByName.get(typName);
         if (t == null) return null;
-        for (Part p : partsByOtherType(anchor, t)) {
+        for (Part p : partsOfType(anchor, t)) {
             if (!p.outgoing) continue;
             Node n = node(p.other);
             if (n != null && n.status.matchable()) return p.other;
@@ -193,17 +193,36 @@ public final class Graph {
         return s == null ? List.of() : s.parts;
     }
 
-    /** Range über (otherTyp, *) wie parts_by_other_type. */
+    /** Range über (otherTyp, *) wie parts_by_other_type, als eigene
+     *  Liste (der Aufrufer darf sie verändern). */
     public List<Part> partsByOtherType(Id id, int typ) {
         Slot s = map.get(id);
         if (s == null) return List.of();
         List<Part> out = new ArrayList<>();
-        Part from = new Part(typ, new Id(new byte[32]), false, new Id(new byte[32]));
-        for (Part p : s.parts.tailSet(from, true)) {
-            if (p.otherTyp != typ) break;
-            out.add(p);
-        }
+        for (Part p : ofType(s, typ)) out.add(p);
         return out;
+    }
+
+    /**
+     * Die Participations von {@code id}, deren Gegenende den Typ
+     * {@code typ} hat, in Part-Ordnung (Rust {@code Graph::parts_by_other_type}
+     * über {@code Parts::of_type}). Eine Sicht auf die Liste des Knotens:
+     * ein Aufruf legt weder eine Liste noch eine {@code Id} an. Wer die
+     * Liste während des Durchlaufs ändert, bekommt eine
+     * {@code ConcurrentModificationException}.
+     */
+    public Iterable<Part> partsOfType(Id id, int typ) {
+        Slot s = map.get(id);
+        return s == null ? List.of() : ofType(s, typ);
+    }
+
+    /** Bereich {@code otherTyp == typ} der Liste von {@code s}, zwischen
+     *  den festen Grenzen aus {@link Part#lowerBound}. */
+    private static Iterable<Part> ofType(Slot s, int typ) {
+        Part lo = Part.lowerBound(typ);
+        // Über Integer.MAX_VALUE gibt es keinen Typ, der den Bereich oben begrenzt.
+        if (typ == Integer.MAX_VALUE) return s.parts.tailSet(lo, true);
+        return s.parts.subSet(lo, true, Part.lowerBound(typ + 1), false);
     }
 
     /** Zahl der Knoten eines Typs, gleich welchen Status. */

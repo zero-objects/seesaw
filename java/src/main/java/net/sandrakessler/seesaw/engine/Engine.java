@@ -990,7 +990,7 @@ public final class Engine {
                 Integer t = g.lookup(typ);
                 Integer ept = g.lookup(endTyp);
                 if (t != null && ept != null) {
-                    for (Part p : g.partsByOtherType(k.refs[pos], t)) {
+                    for (Part p : g.partsOfType(k.refs[pos], t)) {
                         Conn c = g.conn(p.connection);
                         Node other = g.node(p.other);
                         if (c == null || !c.status.alive()
