@@ -206,6 +206,9 @@ public final class Graph {
         return c != null && c.status.alive();
     }
 
+    /** Alle Participations von {@code id} in der Ordnung von Part, die Liste des
+     *  Knotens selbst. {@code Iterator.remove} entfernt aus ihr wie bisher.
+     *  Ohne Platz und im Platz einer Verbindung eine leere Liste. */
     public Iterable<Part> parts(Id id) {
         Slot s = map.get(id);
         return s == null || s.parts == null ? List.of() : s.parts;
@@ -222,11 +225,12 @@ public final class Graph {
     }
 
     /**
-     * Die Participations von {@code id}, deren Gegenende den Typ
-     * {@code typ} hat, in Part-Ordnung (Rust {@code Graph::parts_by_other_type}
-     * über {@code Parts::of_type}). Eine Sicht auf die Liste des Knotens:
-     * ein Aufruf legt weder eine Liste noch eine {@code Id} an. Wer die
-     * Liste während des Durchlaufs ändert, bekommt eine
+     * Die Participations von {@code id}, deren anderes Ende den Typ
+     * {@code typ} hat ({@code otherTyp == typ}), in der Ordnung von Part (Rust
+     * {@code Graph::parts_by_other_type} über {@code Parts::of_type}). Eine
+     * Sicht auf die Liste des Knotens: ein Aufruf legt weder eine Liste noch
+     * eine {@code Id} an. Wer die Liste während des Durchlaufs ändert (außer
+     * über {@code Iterator.remove}), bekommt eine
      * {@code ConcurrentModificationException}.
      */
     public Iterable<Part> partsOfType(Id id, int typ) {
@@ -350,7 +354,7 @@ public final class Graph {
     public static final class Slot {
         public Node node;
         public Conn connection;
-        /** Participations des Knotens, in Part-Ordnung. null im Platz
+        /** Participations des Knotens, in der Ordnung von Part. null im Platz
          *  einer Verbindung. */
         public Parts parts;
 

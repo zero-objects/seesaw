@@ -8,35 +8,36 @@ import java.util.TreeSet;
 
 /**
  * Die Participation-Liste eines Knotens: eine Menge in der Ordnung von
- * {@link Part} (Rust {@code Parts}). Ein sortiertes Array, solange sie
- * kurz ist, eine {@code TreeSet} ab {@link #TREE_AT} Einträgen. Die
- * meisten Knoten haben wenige Participations, für die eine
- * {@code TreeSet} (ein Eintragsobjekt je Participation) den größten
- * Teil des Speichers ausmachte. Wenige Hubs haben viele, in deren Array
- * ein Einfügen zu viel verschieben würde.
+ * {@link Part} (Rust {@code Parts}). Ein sortiertes Array bis
+ * {@link #TREE_AT} Einträge, mit dem nächsten Eintrag wird sie eine
+ * {@code TreeSet}. Die meisten Knoten haben wenige Participations, für
+ * die eine {@code TreeSet} (ein Objekt je Eintrag) den größten Teil des
+ * Speichers ausmachte. Wenige Hubs haben viele, in deren Array ein
+ * Einfügen zu viel verschieben würde.
  *
  * <p>Das Array beginnt mit zwei Plätzen: die meisten Knoten haben eine
  * oder zwei Participations (ein Blatt, eine Verbindung zum Besitzer).
  *
- * <p>Eine Liste in Baumform bleibt in Baumform, auch wenn {@link #remove}
- * sie wieder unter {@link #TREE_AT} Einträge bringt. Rust kennt kein
- * Entfernen, eine Liste wird dort nie kürzer.
+ * <p>Eine Liste, die eine {@code TreeSet} ist, bleibt es, auch wenn
+ * {@link #remove} sie wieder auf {@link #TREE_AT} oder weniger Einträge
+ * bringt. Rust kennt kein Entfernen, eine Liste wird dort nie kürzer.
  *
- * <p>Wer die Liste während eines Durchlaufs ändert, bekommt beim
- * nächsten Schritt eine {@code ConcurrentModificationException}, wie
- * bisher bei der {@code TreeSet}.
+ * <p>Wer die Liste während eines Durchlaufs ändert (außer über
+ * {@code Iterator.remove} desselben Durchlaufs), bekommt beim nächsten
+ * Schritt eine {@code ConcurrentModificationException}, wie bisher bei
+ * der {@code TreeSet}.
  */
 public final class Parts implements Iterable<Part> {
     /** Hat das Array so viele Einträge, wird die Liste beim nächsten
-     *  Einfügen zur {@code TreeSet} (Rust {@code PARTS_TREE_AT}). */
+     *  Einfügen eine {@code TreeSet} (Rust {@code PARTS_TREE_AT}). */
     public static final int TREE_AT = 48;
 
     /** Sortiert, belegt sind die ersten {@code n} Plätze. null vor dem
-     *  ersten Eintrag und in Baumform. */
+     *  ersten Eintrag und solange {@code tree} gilt. */
     private Part[] flat;
     private int n;
-    /** Nicht null: die Liste ist in Baumform, {@code flat} und {@code n}
-     *  gelten nicht. */
+    /** Nicht null: die Liste ist diese {@code TreeSet}, {@code flat} und
+     *  {@code n} gelten nicht. */
     private TreeSet<Part> tree;
     /** Zahl der Änderungen, gegen sie prüft ein Durchlauf des Arrays. */
     private int mods;
@@ -56,7 +57,7 @@ public final class Parts implements Iterable<Part> {
     /**
      * Fügt {@code p} ein. {@code false}, wenn eine gleiche Participation
      * schon da ist (eine Menge wie bisher die {@code TreeSet}). Hat das
-     * Array schon {@link #TREE_AT} Einträge, wird die Liste zur
+     * Array schon {@link #TREE_AT} Einträge, wird die Liste eine
      * {@code TreeSet}.
      */
     public boolean add(Part p) {
@@ -88,39 +89,48 @@ public final class Parts implements Iterable<Part> {
         return true;
     }
 
-    /** Entfernt {@code p}. {@code false}, wenn es nicht da war. Die Form
-     *  (Array oder Baum) bleibt. */
+    /** Entfernt {@code p}. {@code false}, wenn es nicht da war. Ein
+     *  Array bleibt ein Array, eine {@code TreeSet} eine {@code TreeSet}. */
     public boolean remove(Part p) {
         if (tree != null) {
             if (!tree.remove(p)) return false;
+            mods++;
         } else {
             int at = find(p);
             if (at < 0) return false;
-            System.arraycopy(flat, at + 1, flat, at, n - at - 1);
-            flat[--n] = null;
+            removeAt(at);
         }
-        mods++;
         return true;
     }
 
-    /** Alle Einträge in Part-Ordnung. */
+    /** Entfernt den Eintrag {@code flat[at]}. */
+    private void removeAt(int at) {
+        System.arraycopy(flat, at + 1, flat, at, n - at - 1);
+        flat[--n] = null;
+        mods++;
+    }
+
+    /** Alle Einträge in der Ordnung von Part. {@code Iterator.remove} entfernt
+     *  den zuletzt gelieferten Eintrag, wie bisher bei der {@code TreeSet}. */
     @Override public Iterator<Part> iterator() {
         return tree != null ? tree.iterator() : new Run(this, 0, n);
     }
 
     /**
-     * Die Einträge, deren Gegenende den Typ {@code typ} hat, in
-     * Part-Ordnung (Rust {@code Parts::of_type}). Eine Sicht: jeder
-     * Durchlauf sucht den Bereich in der Liste, wie sie dann ist. Im
-     * Array über den Typ allein, er ist das erste Glied der Ordnung. In
-     * Baumform zwischen den festen Grenzen aus {@link Part#lowerBound}.
-     * Legt weder eine Liste noch eine {@code Id} an.
+     * Die Einträge, deren anderes Ende den Typ {@code typ} hat
+     * ({@code otherTyp == typ}), in der Ordnung von Part (Rust
+     * {@code Parts::of_type}). Eine Sicht: jeder Durchlauf sucht den
+     * Bereich in der Liste, wie sie dann ist. Im Array über
+     * {@code otherTyp} allein, es ist das erste Glied der Ordnung. In der
+     * {@code TreeSet} zwischen den festen Grenzen aus
+     * {@link Part#lowerBound}. Legt weder eine Liste noch eine {@code Id}
+     * an. {@code Iterator.remove} entfernt den zuletzt gelieferten Eintrag.
      */
     public Iterable<Part> ofType(int typ) {
         return new OfType(this, typ);
     }
 
-    /** In Baumform? Für Tests. */
+    /** Ist die Liste eine {@code TreeSet}? Für Tests. */
     boolean isTree() {
         return tree != null;
     }
@@ -129,9 +139,9 @@ public final class Parts implements Iterable<Part> {
         return flat == null ? -1 : Arrays.binarySearch(flat, 0, n, p);
     }
 
-    /** Erster Index in {@code a[from, to)}, dessen Gegentyp nicht kleiner
-     *  als {@code typ} ist, mit {@code after} der erste, dessen Gegentyp
-     *  größer ist. */
+    /** Erster Index in {@code a[from, to)}, dessen {@code otherTyp} nicht
+     *  kleiner als {@code typ} ist, mit {@code after} der erste, dessen
+     *  {@code otherTyp} größer ist. */
     private static int typeBound(Part[] a, int from, int to, int typ, boolean after) {
         int lo = from, hi = to;
         while (lo < hi) {
@@ -143,7 +153,7 @@ public final class Parts implements Iterable<Part> {
         return lo;
     }
 
-    /** Sicht auf den Bereich eines Gegentyps. */
+    /** Sicht auf den Bereich {@code otherTyp == typ}. */
     private static final class OfType implements Iterable<Part> {
         private final Parts owner;
         private final int typ;
@@ -168,13 +178,15 @@ public final class Parts implements Iterable<Part> {
         }
     }
 
-    /** Durchlauf über {@code flat[from, to)} einer Liste in Arrayform. */
+    /** Durchlauf über {@code flat[from, to)} einer Liste, die ein Array ist. */
     private static final class Run implements Iterator<Part> {
         private final Parts owner;
         private final Part[] a;
-        private final int to;
-        private final int mods;
+        private int to;
+        private int mods;
         private int i;
+        /** Index des zuletzt gelieferten Eintrags, -1: keiner oder schon entfernt. */
+        private int last = -1;
 
         Run(Parts owner, int from, int to) {
             this.owner = owner;
@@ -191,7 +203,20 @@ public final class Parts implements Iterable<Part> {
         @Override public Part next() {
             if (owner.mods != mods) throw new ConcurrentModificationException();
             if (i >= to) throw new NoSuchElementException();
+            last = i;
             return a[i++];
+        }
+
+        /** Entfernt den zuletzt gelieferten Eintrag. Das Array bleibt
+         *  dasselbe, der Durchlauf geht beim folgenden Eintrag weiter. */
+        @Override public void remove() {
+            if (last < 0) throw new IllegalStateException();
+            if (owner.mods != mods) throw new ConcurrentModificationException();
+            owner.removeAt(last);
+            i = last;
+            to--;
+            last = -1;
+            mods = owner.mods;
         }
     }
 }

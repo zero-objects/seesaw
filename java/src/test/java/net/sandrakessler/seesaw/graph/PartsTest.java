@@ -13,7 +13,9 @@ import java.util.ConcurrentModificationException;
 import java.util.HexFormat;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.TreeMap;
 import java.util.TreeSet;
 
 import org.junit.jupiter.api.Test;
@@ -23,15 +25,16 @@ import net.sandrakessler.seesaw.ident.Ident;
 import net.sandrakessler.seesaw.ident.St;
 
 /**
- * Participation-Liste eines Knotens: Typbereich und Reihenfolge wie die
- * bisherige Fassung über einer {@code TreeSet} (Java 2.0.2).
+ * Participation-Liste eines Knotens: Bereich je {@code otherTyp} und
+ * Reihenfolge wie die bisherige Fassung über einer {@code TreeSet} (Java 2.0.2).
  */
 class PartsTest {
 
-    /** Zahl der Participations des Hubs, um den Wechsel bei 48 herum. */
+    /** Zahl der Participations, um den Wechsel vom Array zur TreeSet herum
+     *  (Array bis 48, TreeSet ab 49). */
     private static final int[] GROESSEN = {1, 47, 48, 49, 200};
 
-    /** Gegentypen, nach denen gefragt wird: vorhandene, fehlende und die Ränder von int. */
+    /** Werte von otherTyp, nach denen gefragt wird: vorhandene, fehlende und die Ränder von int. */
     private static final int[] TYPEN = {Integer.MIN_VALUE, -1, 0, 1, 2, 3, 4, 5, Integer.MAX_VALUE};
 
     /** {@code partsByOtherType} in der Fassung von Java 2.0.2. */
@@ -56,26 +59,29 @@ class PartsTest {
     }
 
     /**
-     * Ein Hub mit {@code n} Nachbarn über drei Typen (A, B, C). Der Hub
-     * hat den Typ 0, A bis C die Typen 1 bis 3. Gerade Nachbarn hängen
-     * am Hub als Ziel, ungerade als Quelle, jeder fünfte in beide
-     * Richtungen. {@code erwartet} bekommt die Participations des Hubs.
+     * Ein Hub mit genau {@code n} Participations über drei Typen (A, B, C).
+     * Der Hub hat den Typ 0, A bis C die Typen 1 bis 3. Nachbar i hängt am
+     * Hub als Ziel, wenn i gerade ist, als Quelle, wenn i ungerade ist,
+     * jeder fünfte in beide Richtungen (zwei Participations mit demselben
+     * anderen Ende), solange n nicht erreicht ist. {@code erwartet}
+     * bekommt die Participations des Hubs.
      */
     private static Id hub(Graph g, int n, TreeSet<Part> erwartet) {
         Id hub = g.addBaseline("hub", "Hub");
         String[] typen = {"A", "B", "C"};
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; erwartet.size() < n; i++) {
             Id x = g.addBaseline("x" + i, typen[i % 3]);
             int t = g.node(x).typ;
             if (i % 2 == 0 || i % 5 == 0) {
                 assertNotNull(g.connect(hub, x, St.SOLID));
                 erwartet.add(new Part(t, x, true, Ident.identConnection(hub, x)));
             }
-            if (i % 2 == 1 || i % 5 == 0) {
+            if ((i % 2 == 1 || i % 5 == 0) && erwartet.size() < n) {
                 assertNotNull(g.connect(x, hub, St.SOLID));
                 erwartet.add(new Part(t, x, false, Ident.identConnection(x, hub)));
             }
         }
+        assertEquals(n, erwartet.size());
         return hub;
     }
 
@@ -86,6 +92,9 @@ class PartsTest {
             TreeSet<Part> erwartet = new TreeSet<>();
             Id h = hub(g, n, erwartet);
             assertEquals(liste(erwartet), liste(g.parts(h)), "parts n=" + n);
+            assertEquals(n, g.map.get(h).parts.size(), "size n=" + n);
+            // Bis 48 Einträge ein Array, ab dem 49. eine TreeSet.
+            assertEquals(n > Parts.TREE_AT, g.map.get(h).parts.isTree(), "Form n=" + n);
             for (int typ : TYPEN) {
                 List<String> alt = liste(bisherig(erwartet, typ));
                 Iterable<Part> sicht = g.partsOfType(h, typ);
@@ -105,14 +114,19 @@ class PartsTest {
         Graph g = new Graph();
         TreeSet<Part> amHub = new TreeSet<>();
         Id h = hub(g, 49, amHub);
-        for (int i = 0; i < 49; i++) {
-            Id x = Ident.identBaseline("x" + i);
-            TreeSet<Part> erwartet = new TreeSet<>();
-            if (i % 2 == 0 || i % 5 == 0) erwartet.add(new Part(0, h, false, Ident.identConnection(h, x)));
-            if (i % 2 == 1 || i % 5 == 0) erwartet.add(new Part(0, h, true, Ident.identConnection(x, h)));
-            assertEquals(liste(erwartet), liste(g.parts(x)), "Nachbar " + i);
+        // Jeder Participation am Hub entspricht eine am Nachbarn, Richtung umgekehrt.
+        TreeMap<Id, TreeSet<Part>> nachbarn = new TreeMap<>();
+        for (Part p : amHub) {
+            nachbarn.computeIfAbsent(p.other, k -> new TreeSet<>())
+                    .add(new Part(0, h, !p.outgoing, p.connection));
+        }
+        assertTrue(nachbarn.size() > 1);
+        for (Map.Entry<Id, TreeSet<Part>> e : nachbarn.entrySet()) {
+            Id x = e.getKey();
+            TreeSet<Part> erwartet = e.getValue();
+            assertEquals(liste(erwartet), liste(g.parts(x)), "Nachbar");
             for (int typ : TYPEN) {
-                assertEquals(liste(bisherig(erwartet, typ)), liste(g.partsOfType(x, typ)), "Nachbar " + i + " typ=" + typ);
+                assertEquals(liste(bisherig(erwartet, typ)), liste(g.partsOfType(x, typ)), "Nachbar typ=" + typ);
             }
         }
     }
@@ -162,12 +176,12 @@ class PartsTest {
         return new Id(b);
     }
 
-    /** Die i-te Participation: drei Gegentypen, je zwei mit gleichem Gegenende. */
+    /** Die i-te Participation: drei Werte von otherTyp, je zwei mit gleichem anderen Ende. */
     private static Part part(int i) {
         return new Part(i % 3, id(i / 2), i % 2 == 0, id(1000 + i));
     }
 
-    /** Parts und TreeSet antworten gleich: Durchlauf, Größe, Typbereiche, Enthaltensein. */
+    /** Parts und TreeSet antworten gleich: Durchlauf, size, Bereiche je otherTyp, contains. */
     private static void gleich(TreeSet<Part> erwartet, Parts parts, String wo) {
         assertEquals(liste(erwartet), liste(parts), "Durchlauf " + wo);
         assertEquals(erwartet.size(), parts.size(), "size " + wo);
@@ -196,7 +210,7 @@ class PartsTest {
                 gleich(erwartet, parts, "n=" + n + " nach " + (i + 1));
             }
             assertFalse(parts.contains(part(n)), "fehlt n=" + n);
-            // Bis 48 Einträge ein Array, ab dem 49. ein Baum (Rust: v.len() >= PARTS_TREE_AT).
+            // Bis 48 Einträge ein Array, ab dem 49. eine TreeSet (Rust: v.len() >= PARTS_TREE_AT).
             assertEquals(n > Parts.TREE_AT, parts.isTree(), "Form n=" + n);
         }
     }
@@ -256,7 +270,7 @@ class PartsTest {
     // ── Slot und connectReporting ──
 
     @Test
-    void verbindungsplatzOhneListeKnotenplatzMitListe() {
+    void platzDerVerbindungOhneListe() {
         Graph g = new Graph();
         Id s = g.addBaseline("s", "A");
         Id t = g.addBaseline("t", "B");
@@ -269,7 +283,7 @@ class PartsTest {
         // Ein leerer Platz aus slot() hat wie bisher eine Liste.
         assertNotNull(g.slot(Ident.identBaseline("neu")).parts);
         assertNotNull(new Graph.Slot().parts);
-        // Ein Hub über 48 Participations hält sie in Baumform.
+        // Ein Hub mit mehr als 48 Participations hält sie als TreeSet.
         Graph h = new Graph();
         Id hub = hub(h, 200, new TreeSet<>());
         assertTrue(h.map.get(hub).parts.isTree());
@@ -323,5 +337,51 @@ class PartsTest {
         assertEquals(1, liste(g.parts(s)).size());
         assertEquals(1, liste(g.parts(t)).size());
         assertEquals(0, liste(g.parts(u)).size());
+    }
+
+    @Test
+    void iteratorRemoveWieBeiDerTreeSet() {
+        for (int n : GROESSEN) {
+            Parts parts = new Parts();
+            TreeSet<Part> erwartet = new TreeSet<>();
+            for (int i = 0; i < n; i++) {
+                parts.add(part(i));
+                erwartet.add(part(i));
+            }
+            boolean tree = parts.isTree();
+            // Jeden dritten Eintrag im Durchlauf aller Einträge entfernen.
+            Iterator<Part> it = parts.iterator();
+            Iterator<Part> ref = erwartet.iterator();
+            int k = 0;
+            while (it.hasNext()) {
+                Part p = it.next();
+                assertEquals(0, ref.next().compareTo(p), "Folge n=" + n);
+                if (k++ % 3 == 0) {
+                    it.remove();
+                    ref.remove();
+                }
+            }
+            assertFalse(ref.hasNext());
+            gleich(erwartet, parts, "n=" + n + " nach Iterator.remove");
+            assertEquals(tree, parts.isTree(), "Form bleibt n=" + n);
+            // Im Durchlauf der Sicht eines Typs alle Einträge dieses Typs entfernen.
+            Iterator<Part> sicht = parts.ofType(1).iterator();
+            while (sicht.hasNext()) {
+                sicht.next();
+                sicht.remove();
+            }
+            erwartet.removeIf(p -> p.otherTyp == 1);
+            gleich(erwartet, parts, "n=" + n + " nach Iterator.remove der Sicht");
+            // remove ohne next und zweimal nach einem next.
+            Iterator<Part> w = parts.iterator();
+            assertThrows(IllegalStateException.class, w::remove, "ohne next n=" + n);
+            if (w.hasNext()) {
+                w.next();
+                w.remove();
+                assertThrows(IllegalStateException.class, w::remove, "zweimal n=" + n);
+                erwartet.pollFirst();
+            }
+            gleich(erwartet, parts, "n=" + n + " am Ende");
+        }
     }
 }

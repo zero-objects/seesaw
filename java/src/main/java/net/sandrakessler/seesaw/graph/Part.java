@@ -25,19 +25,19 @@ public final class Part implements Comparable<Part> {
         return connection.compareTo(p.connection);
     }
 
-    // ── Feste Grenzen der Typbereiche ──
+    // ── Feste Grenzen der Bereiche je otherTyp ──
 
     private static final Id NULL_ID = new Id(new byte[32]);
     /** Bis zu diesem Typ (ausschließlich) liegen die Grenzen fest vor. */
     private static final int BOUNDS_MAX = 1 << 16;
-    /** Grenze je Typ ab 0, ohne Lücken. Wächst unter der Klassensperre
-     *  durch Kopie, ein Eintrag ändert sich nie. */
+    /** Grenze je Typ ab 0, ohne Lücken. Wächst durch Kopie unter der
+     *  Sperre der Klasse (synchronized), ein Eintrag ändert sich nie. */
     private static volatile Part[] bounds = new Part[0];
 
     /**
      * Untere Grenze des Bereichs {@code otherTyp == typ} in einer nach
      * Part geordneten Menge: kleiner oder gleich jeder Participation mit
-     * diesem Gegentyp, größer als jede mit kleinerem Gegentyp. Der
+     * diesem {@code otherTyp}, größer als jede mit kleinerem. Der
      * Bereich eines Typs liegt damit von {@code lowerBound(typ)}
      * einschließlich bis {@code lowerBound(typ + 1)} ausschließlich.
      *

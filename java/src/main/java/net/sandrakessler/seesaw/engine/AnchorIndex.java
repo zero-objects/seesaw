@@ -108,8 +108,8 @@ public final class AnchorIndex {
      */
     private static final class Group {
         final byte dir;
-        /** Gegentyp: die Gruppe liest den Bereich {@code otherTyp == typ}
-         *  der Beteiligungsliste. */
+        /** Die Gruppe liest den Bereich {@code otherTyp == typ} der
+         *  Beteiligungsliste. */
         final int typ;
         /** Das Kind ohne Wertprädikat, -1 = keins. */
         int any = -1;
