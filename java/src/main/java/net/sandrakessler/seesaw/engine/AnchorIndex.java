@@ -12,6 +12,7 @@ import java.util.function.IntPredicate;
 import net.sandrakessler.seesaw.graph.Graph;
 import net.sandrakessler.seesaw.graph.Node;
 import net.sandrakessler.seesaw.graph.Part;
+import net.sandrakessler.seesaw.graph.Parts;
 import net.sandrakessler.seesaw.hash.Blake3;
 import net.sandrakessler.seesaw.ident.Id;
 import net.sandrakessler.seesaw.plan.PatLink;
@@ -107,10 +108,9 @@ public final class AnchorIndex {
      */
     private static final class Group {
         final byte dir;
+        /** Gegentyp: die Gruppe liest den Bereich {@code otherTyp == typ}
+         *  der Beteiligungsliste. */
         final int typ;
-        /** Grenzen des Bereichs {@code otherTyp == typ} in der
-         *  Beteiligungsliste. */
-        final Part lo, hi;
         /** Das Kind ohne Wertprädikat, -1 = keins. */
         int any = -1;
         /** Kinder mit {@code equals}, nach Wert. */
@@ -120,8 +120,6 @@ public final class AnchorIndex {
 
         Group(byte dir, int typ) {
             this.dir = dir; this.typ = typ;
-            lo = new Part(typ, ZERO, false, ZERO);
-            hi = new Part(typ + 1, ZERO, false, ZERO);
         }
     }
 
@@ -580,9 +578,11 @@ public final class AnchorIndex {
      * des Knotens, an dem der Gang steht.
      */
     private void walk(Graph g, Map<Id, String> vals, Graph.Slot slot, int at, Walk st) {
+        Parts parts = slot.parts;
+        if (parts == null) return;
         for (Group group : groups[at]) {
             boolean valued = group.equals != null || group.other != null;
-            for (Part p : slot.parts.subSet(group.lo, true, group.hi, false)) {
+            for (Part p : parts.ofType(group.typ)) {
                 if (group.dir != ANY && (group.dir == OUT) != p.outgoing) continue;
                 // Der Status der Kante und des Nachbarn wird hier nicht
                 // gelesen. Ein Pfad über ein zurückgezogenes Element

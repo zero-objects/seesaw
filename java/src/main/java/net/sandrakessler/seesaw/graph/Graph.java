@@ -9,7 +9,6 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.TreeSet;
 
 import net.sandrakessler.seesaw.engine.Matcher;
 import net.sandrakessler.seesaw.ident.Id;
@@ -60,13 +59,23 @@ public final class Graph {
     }
 
     public void insertNode(Node n) {
+        // Ein neuer Platz kommt mit seiner Liste aus slot().
         Slot s = slot(n.id);
         if (s.node != null) {
             if (s.node.status == St.TENTATIVE_TOMBSTONE) s.node.status = n.status;
             return;
         }
         s.node = n;
+        partsOf(s);
         byType.computeIfAbsent(n.typ, k -> new ArrayList<>()).add(n.id);
+    }
+
+    /** Die Liste im Platz eines Knotens. Ein Platz ohne Liste (er hielt
+     *  bisher nur eine Verbindung) bekommt hier eine. */
+    private static Parts partsOf(Slot s) {
+        Parts p = s.parts;
+        if (p == null) s.parts = p = new Parts();
+        return p;
     }
 
     public Id addBaseline(String external, String typName) {
@@ -145,30 +154,39 @@ public final class Graph {
         return r == null ? null : r.id;
     }
 
-    /** Spiegel von connect_reporting: M5-Reklamation durch Nutzung + fresh-Flag. */
+    /**
+     * Spiegel von connect_reporting: M5-Reklamation durch Nutzung + fresh-Flag.
+     * Jeder Endpunkt wird einmal nachgeschlagen, sein Platz liefert Knoten
+     * und Liste. Der Platz der Verbindung wird einmal nachgeschlagen und
+     * trägt keine Liste.
+     */
     public ConnResult connectReporting(Id source, Id target, St status) {
-        Node s = node(source), t = node(target);
+        Slot ss = map.get(source), ts = map.get(target);
+        Node s = ss == null ? null : ss.node, t = ts == null ? null : ts.node;
         if (s == null || t == null) return null;
         if (s.status == St.TOMBSTONE || t.status == St.TOMBSTONE) return null;
         // Reklamation durch Nutzung (M5): lebendige Verbindung
         // re-legitimiert einen tentativ zurückgezogenen Endpunkt.
         if (status != St.TOMBSTONE && status != St.TENTATIVE_TOMBSTONE) {
-            for (Id id : new Id[] { source, target }) {
-                Node n = node(id);
-                if (n != null && n.status == St.TENTATIVE_TOMBSTONE) n.status = St.GHOST;
-            }
+            if (s.status == St.TENTATIVE_TOMBSTONE) s.status = St.GHOST;
+            if (t.status == St.TENTATIVE_TOMBSTONE) t.status = St.GHOST;
         }
         Id id = Ident.identConnection(source, target);
-        Slot cs = slot(id);
+        Slot cs = map.computeIfAbsent(id, Graph::connectionSlot);
         if (cs.connection != null) {
             if (cs.connection.status == St.TENTATIVE_TOMBSTONE)
                 cs.connection.status = status;
             return new ConnResult(id, false);
         }
         cs.connection = new Conn(id, source, target, status);
-        slot(source).parts.add(new Part(t.typ, target, true, id));
-        slot(target).parts.add(new Part(s.typ, source, false, id));
+        partsOf(ss).add(new Part(t.typ, target, true, id));
+        partsOf(ts).add(new Part(s.typ, source, false, id));
         return new ConnResult(id, true);
+    }
+
+    /** Neuer Platz für eine Verbindung, ohne Liste. */
+    private static Slot connectionSlot(Id id) {
+        return new Slot(null);
     }
 
     public void setConnectionStatus(Id id, St st) {
@@ -190,7 +208,7 @@ public final class Graph {
 
     public Iterable<Part> parts(Id id) {
         Slot s = map.get(id);
-        return s == null ? List.of() : s.parts;
+        return s == null || s.parts == null ? List.of() : s.parts;
     }
 
     /** Range über (otherTyp, *) wie parts_by_other_type, als eigene
@@ -199,7 +217,7 @@ public final class Graph {
         Slot s = map.get(id);
         if (s == null) return List.of();
         List<Part> out = new ArrayList<>();
-        for (Part p : ofType(s, typ)) out.add(p);
+        if (s.parts != null) for (Part p : s.parts.ofType(typ)) out.add(p);
         return out;
     }
 
@@ -213,16 +231,7 @@ public final class Graph {
      */
     public Iterable<Part> partsOfType(Id id, int typ) {
         Slot s = map.get(id);
-        return s == null ? List.of() : ofType(s, typ);
-    }
-
-    /** Bereich {@code otherTyp == typ} der Liste von {@code s}, zwischen
-     *  den festen Grenzen aus {@link Part#lowerBound}. */
-    private static Iterable<Part> ofType(Slot s, int typ) {
-        Part lo = Part.lowerBound(typ);
-        // Über Integer.MAX_VALUE gibt es keinen Typ, der den Bereich oben begrenzt.
-        if (typ == Integer.MAX_VALUE) return s.parts.tailSet(lo, true);
-        return s.parts.subSet(lo, true, Part.lowerBound(typ + 1), false);
+        return s == null || s.parts == null ? List.of() : s.parts.ofType(typ);
     }
 
     /** Zahl der Knoten eines Typs, gleich welchen Status. */
@@ -333,9 +342,26 @@ public final class Graph {
         return v;
     }
 
+    /**
+     * Platz eines Teilnehmers in der Map: ein Knoten mit seiner
+     * Participation-Liste oder eine Verbindung (Rust {@code Slot}). Der
+     * Platz einer Verbindung trägt keine Liste.
+     */
     public static final class Slot {
         public Node node;
         public Conn connection;
-        public final TreeSet<Part> parts = new TreeSet<>();
+        /** Participations des Knotens, in Part-Ordnung. null im Platz
+         *  einer Verbindung. */
+        public Parts parts;
+
+        /** Leerer Platz mit Liste, wie bisher. */
+        public Slot() {
+            parts = new Parts();
+        }
+
+        /** Platz einer Verbindung, ohne Liste. */
+        private Slot(Conn connection) {
+            this.connection = connection;
+        }
     }
 }
