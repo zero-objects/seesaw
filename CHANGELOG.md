@@ -327,8 +327,223 @@ with `-Dseesaw.checks=true` both ways run and are compared. Java
 reproduces steps, applied steps, node count and fingerprint of the Rust
 cells of the language-pack workload at the sizes `k50/n2000`,
 `k700/n2000` and `k700/n20000`. `add k700/n2000`: 62 893 ms → 431 ms,
-30 769 505 searches → 9 905 (Java 21, one machine under load). Not
-ported: leaving the earlier nodes of a delta out of the search.
+30 769 505 searches → 9 905 (Java 21, one machine under load). The next
+section starts from this state. The earlier nodes of a delta were not
+left out of the search there and are from stage T11 on.
+
+### Java: port of the performance work
+
+The Java engine took over the performance work of the Rust engine
+above (rounds 1 to 4 of `perf/main` and the options taken in
+`perf/select`) in ten stages, T4 to T13, and added changes of its own.
+It builds on the anchor index of the section before, which is the state
+the measurements call L0. What the engine does is meant to stay the
+one of Java 2.0.2: graph, cascade and its order, the results of `step`.
+Steps, applied steps, node count and fingerprint of every measured
+cell equal the ones of the Rust cells (792 measured lines of the Java
+cells and 108 of `pde`, none differing), and a differential test
+against Java 2.0.2 runs in `java/bench/jgate.sh`. The exceptions are
+doors that a host reaches only outside the contract. They are listed
+below.
+
+Stages, with the thread CPU in ms (minimum over three rounds) of
+three cells. A dash means the stage was not measured on that cell
+(the stages T5a, T6a, T7a and T7b are Java-only and were run on the
+20 cells of the measuring route, not on `pde`):
+
+| stage | commit | what it changes | `langpack/add/k700/n2000` | `f2p/add/f20000` | `pde/open/java40` |
+|---|---|---|---|---|---|
+| L0 | fa12974 | anchor index as in the section before | 377.9 | 10 025.0 | 46 042.9 |
+| T4 | 8d45be1 | `Id` holds four longs and its hash | 372.1 | 9 796.6 | 44 160.7 |
+| T5a | 4031e6c | `partsByOtherType` without objects per call | 374.6 | 10 100.3 | - |
+| T5 | 4ec47f7 | participation list `Parts`, a slot holds a node or a connection | 389.8 | 9 967.1 | 39 721.7 |
+| T6a | 3f4b3d4 | `resolveValue` without a list per call | 362.7 | 9 890.4 | - |
+| T6 | 99c5300 | the matcher reads the connection of the candidate | 123.9 | 4 262.6 | 15 704.3 |
+| T7a | 1130956 | match key without a hex string | 109.9 | 3 697.1 | - |
+| T7b | 3c45369 | `byElement` without boxing | 116.0 | 3 808.8 | - |
+| T7 | 99b93a8 | ref sequence held once, applied set as a hash set | 104.9 | 3 437.4 | 13 953.5 |
+| T8 | c1beffb | retraction without copies, plan ids once per step | 88.9 | 2 589.7 | 12 947.6 |
+| T9 | bb7ece3 | one lookup per pulled match (this commit documents the basis, the code came with an earlier commit of the task) | 87.2 | 2 520.4 | 12 855.4 |
+| T10 | a33721b | connections not in `byElement`, side index per graph | 77.6 | 2 364.0 | 12 205.9 |
+| T11 | 02cb0a8 | anchor index as in Rust, walk in one pass | 68.2 | 2 391.0 | 7 865.5 |
+| T12 | 74a8631 | index shared per rule set, names once per graph | 61.7 | 2 427.1 | 7 464.2 |
+| T13 | 49cf169 | `Engine.seedWithThreads` | 61.3 | 2 254.5 | 7 521.3 |
+| end | 246227e | process CPU per cell, load per round | 57.4 | 2 301.2 | 7 519.4 |
+
+A stage is the last commit of its task, so the code of a stage can
+come with an earlier commit of the same task. What each stage took over:
+
+- T4: `Id` keeps the 32 bytes and, in addition, four longs and the hash,
+  computed once. `hashCode` keeps its value (`Arrays.hashCode` over the
+  bytes), so maps keyed by `Id` iterate in the order of 2.0.2.
+- T5: the participation list of a node is a sorted array up to 48
+  entries and a `TreeSet` above (class `Parts`). `Parts.ofType` is a
+  range without new objects. A slot of the map holds a node or a
+  connection. The id of a connection can be read from the
+  participation.
+- T6: a candidate taken from a participation list brings its
+  connection, the matcher reads the status there. The check at the end
+  of a search covers only the links no step has checked. Candidates are
+  tried without intermediate lists.
+- T7: one `MatchKey` per match, shared by the match store, the todo,
+  the key index and the applied set. The todo key carries the head of
+  the ref sequence. `byElement` is a map of `IntList`.
+- T8: the identities of the nodes of a step are derived once. The
+  products of an entry are found from the two ends of a connection.
+  Retraction reads and writes each status in one access.
+- T9: the candidate in the todo carries the number of its match,
+  "applied" is a mark on that number, a step looks a pulled match up
+  once.
+- T10: a match is filed under its nodes only. The matches that rest on a
+  removed connection are found from the lists of its two ends, and for
+  an id the graph does not hold from an index of the links the graph
+  does not hold. The index is built at the first such question,
+  `record` carries it on, and it is bound to `Graph.uid()`.
+- T11: the anchor index is aligned with Rust: places under the marked
+  path nodes by their own value predicate, a walk that does not enter
+  nodes the anchored search leaves out, the earlier nodes of the same
+  delta left out (the section before says they were not), an index built
+  without copies of the paths, candidates of large deltas distributed
+  instead of sorted, and one pass over the participation list.
+- T12: an engine without an index from its host takes the index of its
+  rule set from a store of the process (the last 32 rule sets, compared
+  by what the index reads from the rules). The type and
+  constant ids a rule names are resolved once per graph.
+- T13: `Engine.seedWithThreads(Graph, Map, int)` runs the searches of the
+  seed in pieces on several threads and records the matches on the
+  calling thread in the order of `seed`. With 0 or 1 thread it is
+  `seed`. The anchored seed over the index keeps the form of the Java
+  seed (`firstOnly`).
+
+Changes of the Java engine with no counterpart in Rust: the hash of `Id`
+once (T4), `partsByOtherType` without objects (T5a), `resolveValue`
+without a list (T6a), the match key without a hex string (T7a),
+`byElement` without boxing (T7b). After T13 the names of a rule are
+built through typed methods of `Graph` instead of nodes made in
+`Names`, and tests of doors that had none and the replay of the whole `pde`
+protocol in `jgate.sh` were added.
+
+Measured, L0 against the end state (minimum over three rounds, the
+Rust value is the minimum of three rounds of five samples on
+`perf/select`). "Java:Rust" is the Java value divided by the Rust
+value of the same cell. Thread CPU is the CPU of the calling thread
+(Rust: user CPU of the process). In the `reseed` cells the thread CPU
+leaves out the threads of the search and is not comparable, there wall
+time is used on both sides. The `reseed` cells with 4 and 8 threads
+did not exist before T13:
+
+| cell | measure | before (ms) | after (ms) | gain | Java:Rust before | Java:Rust after |
+|---|---|---|---|---|---|---|
+| `langpack/add/k700/n2000` | thread CPU | 377.9 | 57.4 | 6.58x | 19.2 | 2.9 |
+| `langpack/seed/k700/n2000` | thread CPU | 384.2 | 62.3 | 6.17x | 19.6 | 3.2 |
+| `langpack/backward/k700/n2000` | thread CPU | 269.8 | 58.9 | 4.58x | 16.6 | 3.6 |
+| `langpack/add/k700/n20000` | thread CPU | 3959.9 | 645.9 | 6.13x | 16.1 | 2.6 |
+| `langpack/delta-add/k700/n20000/d200` | thread CPU | 29.7 | 7.8 | 3.81x | 33.0 | 8.7 |
+| `langpack/delta-change/k700/n20000/d200` | thread CPU | 843.7 | 186.8 | 4.52x | 12.4 | 2.8 |
+| `langpack/delta-delete/k700/n20000/d200` | thread CPU | 192.1 | 34.2 | 5.62x | 10.9 | 1.9 |
+| `langpack/delta-delete/k700/n20000/d2000` | thread CPU | 1022.9 | 160.4 | 6.38x | 10.0 | 1.6 |
+| `f2p/batch/f20000` | thread CPU | 6819.8 | 2138.0 | 3.19x | 9.7 | 3.0 |
+| `f2p/add/f20000` | thread CPU | 10025.0 | 2301.2 | 4.36x | 12.3 | 2.8 |
+| `f2p/delta-add/f20000/d1000` | thread CPU | 416.5 | 133.2 | 3.13x | 14.6 | 4.7 |
+| `f2p/delta-delete/f20000/d1000` | thread CPU | 19.8 | 7.4 | 2.68x | 4.6 | 1.7 |
+| `langpack/engines/k700/n200/e34` | thread CPU | 1437.2 | 230.7 | 6.23x | 19.0 | 3.0 |
+| `langpack/index/k700/e100` | thread CPU | 803.5 | 146.5 | 5.48x | 14.5 | 2.6 |
+| `langpack/reseed/k700/n20000/t1` | wall | 2251.7 | 351.5 | 6.41x | 7.3 | 1.1 |
+| `langpack/reseed/k700/n20000/t4` | wall | - | 137.5 | - | - | 1.2 |
+| `langpack/reseed/k700/n20000/t8` | wall | - | 106.4 | - | - | 1.3 |
+| `f2p/reseed/f20000/t1` | wall | 3587.5 | 585.0 | 6.13x | 9.0 | 1.5 |
+| `f2p/reseed/f20000/t4` | wall | - | 336.3 | - | - | 1.4 |
+| `f2p/reseed/f20000/t8` | wall | - | 274.3 | - | - | 1.2 |
+| `pde/load/java40` | thread CPU | 349.0 | 368.7 | 0.95x | 1.5 | 1.6 |
+| `pde/graph/java40` | thread CPU | 866.5 | 811.7 | 1.07x | 4.8 | 4.5 |
+| `pde/open/java40` | thread CPU | 46042.9 | 7519.4 | 6.12x | 11.7 | 1.9 |
+
+The tables of all stages, the machine load during the runs and the
+limits of the measurement are in
+`benches/suite/results/2026-11-16-java/README.md`. The machine had a
+load average (one minute) between 3.4 and 41.6 on 16 cores during the runs.
+
+Doors with changed behaviour compared with 2.0.2, reached by a host
+only in the ways given:
+
+- `Engine.elementRemoved(Id)` with the id of a connection: the matches
+  resting on it die at the next door that takes a graph, on the graph of
+  that door.
+- `elementDeleted`, `elementChanged`, `retractFor` and `drainRetraction`
+  with the id of a connection that the passed graph does not hold:
+  the matches resting on it are withdrawn (they are found through the
+  index of the links not held), the entries that produced it are not.
+  2.0.2 did both. Such an id comes from a host that calls with another
+  graph than the one the engine ran on, for example the copy made by
+  `Graph.materialize()`, which leaves tombstoned connections out, or
+  from changes through the public field `Graph.map`. With
+  `-Dseesaw.checks=true` it throws.
+- `Engine.retractMatch` for a dead match whose key now belongs to
+  another match with the same ref sequence: the provenance edge and the
+  mark are set on that other match, 2.0.2 did not. Consequences found
+  in review: the mark stays at the other match and is never forgotten,
+  its verdict is `DUPLICATION`, a further match with the same key is
+  applied where 2.0.2 skipped it, a later retraction follows the entry
+  of the other match, and the todo keeps the old candidate where Rust
+  replaces it by number. `elementDeleted`, `elementChanged`,
+  `retractFor` and `step` do not lead there, only a host that calls
+  `retractMatch` itself. With checks on it throws.
+- `Engine.record(int, Id[])` (without a graph): the index of the links
+  not held is dropped (it is rebuilt at the next question), and so is
+  the bound per noted id. A match recorded this way after
+  `elementRemoved` is not killed by it, as in 2.0.2.
+- `Engine.linkRemoved(g, a, b)` with a connection id as `a` or `b`:
+  2.0.2 cut the file of the connection, it now returns without effect,
+  and with checks on it throws.
+- `new Engine(rules)` and `new Engine(rules, null)`: the anchor index
+  comes from the store of the process, which keeps up to 32 indexes
+  after the engines are gone. `AnchorIndex.forgetShared()` empties the
+  store.
+- `Matcher.findMatchesWithFixed` and `Matcher.enumerate`: a link without
+  direction that only one connection carries returns its match once,
+  not twice. Every user of the search in the engine discards the
+  repetition, a host that counts matches sees the difference.
+- `Graph.connected` and `Graph.connectedAlive` read through the target
+  node and the participation list of the source. A host that removes
+  participations by hand gets `false`.
+- `Graph.Slot.parts` has the type `Parts` instead of `TreeSet<Part>`, is
+  `null` in the slot of a connection and is not `final` any more:
+  `partsOf` assigns it when the slot of a connection gets a node.
+- `Graph.parts(Id)` returns a `Parts` as `Iterable<Part>`, not a
+  `TreeSet`. A cast by the host to `TreeSet` or `Collection` fails.
+  `partsByOtherType` still returns a fresh `ArrayList`.
+- `Id`: `equals`, `compareTo` and `hashCode` do not follow a change to
+  the public array `b` any more.
+- The checks (`-Dseesaw.checks=true`) throw at new places for calls
+  outside the contract: the cases above, and `Names` when the type
+  table of the graph was changed after the names were kept.
+- The rules of an engine are not to be exchanged while it holds matches,
+  and a host that replaces a rule in place in the list or changes
+  `Graph.typesByName` of a graph the engine has seen is outside the
+  contract. With checks on it throws.
+
+New public API: `Graph.uid()`, `Graph.partsOfType`, `Graph.idsOfType`,
+`Graph.connectionId`, `Graph.connectionIdTyped`, `Graph.retractNode`,
+`Graph.settleNode`, `Graph.retractConnection`, `Graph.settleConnection`,
+`Graph.resolveNodeValue`, `Graph.addCorrTyped`, `Graph.addGhostTyped`,
+`Graph.addDerivedLeafTyped`, `Graph.addKonstLeafTyped`,
+`Graph.childLeafOfTyp`, the class `Parts`, `Id.bytes()`,
+`AnchorIndex.forgetShared()` and `Engine.seedWithThreads`.
+
+As in Rust b9b3ce9, `record` carries the side index of the links not
+held forward, and after a change to a materialized copy of the graph the
+engine asks that index itself when a retraction looks for products
+the copy left out.
+
+Not taken over, and not measured:
+
+- The seed over the index stays at `firstOnly`. The seed part of Rust
+  17b7e52 hangs on `index_seed`, which is not in the plan, so the
+  anchored searches in `langpack/seed` differ from Rust (not measured).
+- The cost of `producersOf` and `restingOn` for a connection is not
+  measured by any cell. The cells delete nodes only. The path runs
+  when a host gives the id of a connection to `elementDeleted`,
+  `elementChanged` or `retractFor`.
 
 ### Tests
 
