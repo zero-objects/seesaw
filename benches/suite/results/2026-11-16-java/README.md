@@ -1,4 +1,4 @@
-# Java-Port der Performance-Arbeit: Messleiter, 2026-11-16 und 2026-11-17, codepit
+# Java-Port der Änderungen von perf/select: Messleiter, 2026-11-16 und 2026-11-17, codepit
 
 Zweig `perf/java`. Gemessen ist die Java-Implementierung auf 16 Ständen
 (L0 bis Ende) gegen die Rust-Implementierung auf `perf/select`
@@ -8,7 +8,7 @@ Was die Zahlen bedeuten, steht hier nicht.
 ## Stände
 
 Java-Stand je Zeile von `java/bench/ladder.txt`. Die Messstrecke
-(`JavaSuite`) kommt aus HEAD und läuft gegen das Haupt-JAR des Stands.
+(`JavaSuite`) kommt aus HEAD und läuft gegen das JAR der Hauptklassen des Stands.
 Die SHAs gelten nach dem Umformulieren der Commit-Nachrichten.
 
 | Label | SHA | Commit |
@@ -33,9 +33,9 @@ Die SHAs gelten nach dem Umformulieren der Commit-Nachrichten.
 `T4`, `T5`, `T6`, `T7` bis `T13` sind je der letzte Commit des Tasks im
 Plan. `T5a`, `T6a`, `T7a` und `T7b` sind Java-eigene Zwischenstände
 (kein Rust-Gegenstück) und nur mit den 20 Zellen der Messstrecke
-gemessen. `Ende` ist HEAD nach der Fix-Welle der Leseprüfung. Die
+gemessen. `Ende` ist der Stand 246227e nach den Korrekturen aus der Abschlussprüfung. Die
 Rust-Seite ist `perf/select` ohne Änderung, Binary `sel` ohne Features,
-Binary `par` mit `parallel_seed`, beide mit einer Codegen-Einheit
+Binary `par` mit `parallel_seed`, beide mit einer Einheit der Codeerzeugung
 (`CARGO_PROFILE_BENCH_CODEGEN_UNITS=1`).
 
 ## Zellen und Parameter
@@ -75,7 +75,7 @@ oder 1 (Fehler) zurück. Jeder Aufruf war ein Board-Job, darunter keiner
 Messstrecke), pde und Rust im Treiber selbst. Ein Lauf, der zweimal
 scheitert, würde in `step-fehler.txt` stehen. Die Datei ist leer.
 `ladder/resetup.sh` baut `/root/seesaw-java` nach einer neuen
-Reservierung auf (Quellen, pde-Spur, Stände, Treiber, bisherige
+Reservierung auf (Quellen, Protokoll `java40.trace`, Stände, Treiber, bisherige
 Ergebnisse). `step.state` hält die abgeschlossenen Schritte
 (`r<n> cells`, `r<n> pde`, `r<n> rust`).
 
@@ -97,10 +97,10 @@ Zeilen je Wert) stehen in `ladder/report-cells.txt` und
 ```
 cd benches/suite/results/2026-11-16-java/ladder
 A=../../2026-11-15-auswahl
-python3 ../../../../java/bench/jreport.py --ladder ../../../../java/bench/ladder.txt \
+python3 ../../../../../java/bench/jreport.py --ladder ../../../../../java/bench/ladder.txt \
   --ref $A/uid-cgu1.tsv:sel --ref $A/par.tsv:par --rust rust-ladder.tsv \
   --out report-cells.txt ladder.tsv
-python3 ../../../../java/bench/jreport.py --ladder ../../../../java/bench/ladder.txt \
+python3 ../../../../../java/bench/jreport.py --ladder ../../../../../java/bench/ladder.txt \
   --ref $A/uid-cgu1.tsv:sel --ref $A/par.tsv:par --rust rust-ladder.tsv \
   --out report-pde.txt ladder-pde.tsv
 ```
