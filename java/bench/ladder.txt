@@ -1,3 +1,18 @@
 # Stände der Messleiter: <label> <commit>, eine Zeile je Stand.
 # jsuite.sh send-ladder (Mac) überträgt sie, jsuite.sh ladder (codepit) baut und misst sie.
 L0 fa12974
+T4 8d45be1
+T5a 4031e6c
+T5 4ec47f7
+T6a 3f4b3d4
+T6 99c5300
+T7a 1130956
+T7b 3c45369
+T7 99b93a8
+T8 c1beffb
+T9 bb7ece3
+T10 a33721b
+T11 02cb0a8
+T12 74a8631
+T13 49cf169
+Ende 246227e

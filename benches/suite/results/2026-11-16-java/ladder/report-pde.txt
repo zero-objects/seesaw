@@ -1,0 +1,60 @@
+Messleiter ladder-pde.tsv: 108 Java-Zeilen, 0 Zeilen nicht_verfuegbar (0 Paare aus Zelle und Stand), 9 Rust-Zeilen, 3 Zellen, Stände L0 T4 T5a T5 T6a T6 T7a T7b T7 T8 T9 T10 T11 T12 T13 Ende
+Werte je Stand: Minimum über die Zeilen (Runden) der Zelle. n = Zahl der Zeilen mit Wert (n_proc für proc_cpu).
+
+== pde/load/java40
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+L0     3       349.0        349.1     280.0      0       3            360.0
+T4     3       378.0        378.1     281.2      0       3            770.0
+T5     3       362.0        362.1     275.2      0       3            370.0
+T6     3       392.6        392.9     275.0      0       3           1120.0
+T7     3       354.8        356.0     275.2      0       3            360.0
+T8     3       397.5        398.1     275.2      0       3            870.0
+T9     3       375.9        376.1     275.9      0       3            400.0
+T10    3       347.3        347.4     275.1      0       3            360.0
+T11    3       349.2        349.3     272.2      0       3            390.0
+T12    3       369.2        369.3     290.4      0       3            780.0
+T13    3       367.8        368.0     291.9      0       3            450.0
+Ende   3       368.7        369.5     290.4      0       3            750.0
+Gewinn L0/Ende (CPU): 0.95  Rust CPU min: 228.3 (3 Zeilen)  Faktor Java:Rust bei L0: 1.5, bei Ende: 1.6
+
+== pde/graph/java40
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+L0     3       866.5        866.8    1275.9      0       3            890.0
+T4     3       834.2        834.5    1288.9      0       3            840.0
+T5     3       822.2        822.7    1262.5      0       3            830.0
+T6     3       811.6        858.6    1262.5     44       3           1400.0
+T7     3       816.0        857.5    1262.5     42       3           1330.0
+T8     3       814.5        860.6    1262.5     43       3           1350.0
+T9     3       812.2        860.4    1262.5     43       3           1340.0
+T10    3       808.2        882.8    1262.5     43       3           1350.0
+T11    3       819.9        864.9    1262.5     42       3           1310.0
+T12    3       828.3        883.2    1262.5     43       3           1360.0
+T13    3       826.8        867.9    1262.5     41       3           1370.0
+Ende   3       811.7        853.3    1262.5     42       3           1330.0
+Gewinn L0/Ende (CPU): 1.07  Rust CPU min: 179.7 (3 Zeilen)  Faktor Java:Rust bei L0: 4.8, bei Ende: 4.5
+
+== pde/open/java40
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+L0     3     46042.9      46770.5   65311.3    698       3          54450.0
+T4     3     44160.7      44922.7   65080.5    702       3          52460.0
+T5     3     39721.7      40432.2   55972.8    637       3          47430.0
+T6     3     15704.3      16214.9   12323.9    493       3          21560.0
+T7     3     13953.5      14380.3   10838.5    420       3          18920.0
+T8     3     12947.6      13364.1    9146.3    356       3          17510.0
+T9     3     12855.4      13210.9    9133.3    353       3          17060.0
+T10    3     12205.9      12548.3    8128.9    340       3          16070.0
+T11    3      7865.5       8149.2    4289.5    282       3          11360.0
+T12    3      7464.2       7759.4    4280.3    281       3          10900.0
+T13    3      7521.3       7802.4    4281.6    279       3          11070.0
+Ende   3      7519.4       7801.7    4280.3    274       3          10970.0
+Gewinn L0/Ende (CPU): 6.12  Rust CPU min: 3937.1 (3 Zeilen)  Faktor Java:Rust bei L0: 11.7, bei Ende: 1.9
+
+Kurzform (L0 gegen Ende, ms, Faktor Java:Rust = Java-Wert geteilt durch Rust-Minimum)
+Zelle             Spalte       L0    Ende  Gewinn    Rust  Faktor L0  Faktor Ende
+pde/load/java40   CPU       349.0   368.7    0.95   228.3        1.5          1.6
+pde/graph/java40  CPU       866.5   811.7    1.07   179.7        4.8          4.5
+pde/open/java40   CPU     46042.9  7519.4    6.12  3937.1       11.7          1.9
+
+Fingerprint (Schritte, angewandte Schritte, Knoten, Fingerprint) gegen die Referenz derselben Zelle:
+java zeilen=108 gleich=108 abweichend=0 ohne_referenz=0
+rust zeilen=9 gleich=9 abweichend=0 ohne_referenz=0
