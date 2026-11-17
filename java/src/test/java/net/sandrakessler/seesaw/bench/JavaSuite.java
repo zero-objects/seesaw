@@ -51,7 +51,7 @@ import net.sandrakessler.seesaw.engine.Langpack;
  * Threads, die die Engine startet, ihre CPU ist darin nicht enthalten
  * (die Rust-Suite misst die User-CPU des Prozesses). Dort ist die
  * Wall-Zeit der Vergleichswert. {@code proc_cpu_ms=} zählt die CPU aller
- * Threads des Prozesses, auch der Such-Threads, des GC und des JIT.
+ * Threads des Prozesses, auch der Threads der Suche, des GC und des JIT.
  *
  * <p>Kann der Stand eine Zelle nicht (eine Zelle {@code t4} oder
  * {@code t8} gegen Hauptklassen ohne {@code Engine.seedWithThreads},

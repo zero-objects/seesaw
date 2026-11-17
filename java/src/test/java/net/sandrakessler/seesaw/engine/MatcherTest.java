@@ -413,7 +413,7 @@ final class MatcherTest {
      * besteht, sonst null. connected und connectedAlive wie in 2.0.2.
      */
     @Test
-    void verbindungAusDerParticipationListe() {
+    void verbindungAusDerBeteiligungsliste() {
         Graph g = new Graph();
         Id hub = g.addBaseline("hub", "H");
         List<Id> alle = new ArrayList<>(List.of(hub));

@@ -108,7 +108,7 @@ final class ApplyCreationTest {
         return r;
     }
 
-    /** Familien, Select-Anweisungen und Klassen, die Hälfte der Klassen
+    /** Familien, Anweisungen select und Klassen, die Hälfte der Klassen
      *  ohne Namen. Für beide Graphen gleich. */
     private static Graph welt(Map<Id, String> vals) {
         Graph g = new Graph();
