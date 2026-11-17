@@ -33,8 +33,10 @@
 #         TSV ladder.tsv. Baut fehlende JARs und die fehlende Messstrecke. Setzt fort, wo die
 #         TSV aufhört: in Runde r läuft ein Paar (Label, Zelle), wenn die TSV weniger als r
 #         Zeilen davon hat. Ein Aufruf bleibt unter LIMIT Sekunden: einen weiteren Lauf startet
-#         er nur, wenn die längste bisherige Dauer der Zelle (<tsv>.dauer) mal 1,25 noch in
-#         die Zeit passt, eine Zelle ohne bekannte Dauer nur als ersten Lauf des Aufrufs. Dann
+#         er nur, wenn die geschätzte Dauer mal 1,25 noch in die Zeit passt. Schätzung aus
+#         <tsv>.dauer: die längste Dauer desselben Paars (Label, Zelle), sonst die zuletzt
+#         gemessene Dauer der Zelle. Eine Zelle ohne bekannte Dauer läuft nur als erster Lauf
+#         des Aufrufs. Ein Lauf, der an der Zeitgrenze endet, läuft im nächsten Aufruf neu. Dann
 #         meldet er "ladder offen=<n>". Erneut aufrufen bis "ladder fertig". Vor dem ersten und
 #         nach dem letzten Lauf einer Runde in einem Aufruf hängt er die Ausgabe von uptime
 #         (Load Average) an <tsv>.uptime an: Zeit (UTC), runde=<r>, vor oder nach (unterbrochen,
@@ -198,10 +200,12 @@ lines_of() {
     awk -F'\t' -v l="$2" -v c="$3" '$1 == l && $2 == c { n++ } END { print n + 0 }' "$1"
 }
 
-# Längste bisherige Dauer (s) eines Laufs der Zelle über alle Labels, 0 wenn unbekannt.
-longest() {
+# Geschätzte Dauer (s) eines Laufs (Label, Zelle): die längste Dauer desselben Paars, sonst
+# die zuletzt gemessene Dauer der Zelle, 0 wenn die Zelle keine Dauer hat.
+estimate() {
     [ -f "$1.dauer" ] || { echo 0; return; }
-    awk -F'\t' -v c="$2" '$2 == c && $3 > m { m = $3 } END { print m + 0 }' "$1.dauer"
+    awk -F'\t' -v l="$2" -v c="$3" '$2 == c { last = $3; if ($1 == l && $3 > m) m = $3 }
+        END { print (m > 0 ? m : last) + 0 }' "$1.dauer"
 }
 
 # Zahl der noch fehlenden Läufe der Leiter: tsv, Zellen, Labels.
@@ -263,7 +267,7 @@ cmd_ladder() {
             for label in $labels; do
                 [ "$(lines_of "$tsv" "$label" "$cell")" -lt $round ] || continue
                 if [ $worked -eq 1 ]; then
-                    est=$(longest "$tsv" "$cell")
+                    est=$(estimate "$tsv" "$label" "$cell")
                     [ "$est" -eq 0 ] && stop
                     [ $(( $(elapsed) + est * 5 / 4 )) -gt "$LIMIT" ] && stop
                 fi
