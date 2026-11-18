@@ -251,6 +251,35 @@ final class AnchorIndexTest {
     }
 
     /**
+     * Die Zelle {@code langpack/seed/k700/n2000} der Rust-Suite (wie
+     * {@link Langpack#seed}): der Seed geht über den Index (Rust 0dcae91,
+     * der Gang ohne die kleineren Knoten aus Rust 17b7e52), dann die
+     * Schritte bis zur Sättigung. So viele verankerte Suchen und Gänge wie
+     * Rust auf fa12974, gezählt mit {@code cargo bench --bench suite
+     * --features perf_trace -- run langpack/seed/k700/n2000 --samples 1}
+     * ({@code seed_searches=0}, {@code anchored_searches=4953},
+     * {@code anchor_walk_visits=30775}). Schritte, Knoten und Fingerprint
+     * wie dort.
+     */
+    @Test
+    void verankerteSuchenImSeedWieRust() {
+        Langpack.Spec spec = new Langpack.Spec(700, 2000);
+        Langpack.Model m = new Langpack.Model(spec);
+        List<Rule> rules = Rules.load(Langpack.rulesJson(spec.kinds()), m.g);
+        Engine e = new Engine(rules, true);
+        e.seed(m.g, m.vs);
+        assertEquals(1, e.seedsByIndex, "der Seed ging nicht über den Index");
+        long steps = 0;
+        while (e.step(m.g, m.vs) != null) steps++;
+        assertEquals("5246 2623 12554 a4291bcc2e50900c", steps + " " + e.cascade.size() + " "
+                + m.g.allNodes().size() + " " + Langpack.fingerprint(m.g, e, m.vs),
+                "Schritte, angewandte Schritte, Knoten, Fingerprint");
+        assertEquals("anchored_searches=4953 seed_searches=0 anchor_walk_visits=30775",
+                "anchored_searches=" + e.anchoredSearches + " seed_searches=" + e.seedSearches
+                        + " anchor_walk_visits=" + e.walk.visits);
+    }
+
+    /**
      * Regeln, die viele verschiedene Typen unter einen Typ hängen (Rust
      * {@code the_index_keeps_the_matches_under_many_groups}): der
      * Präfixbaum-Knoten von {@code Item} hat zwei Gruppen je Regel, eine

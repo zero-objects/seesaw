@@ -1122,13 +1122,17 @@ public final class Engine {
      * Knoten aus gesucht: die Suche an einem Knoten laesst jeden kleineren
      * aus, und der Match mit einem kleineren Knoten wird an diesem Knoten
      * gefunden, wo der Index dessen Position ebenfalls anbietet (die
-     * Bedingung des Index ist notwendig). Ein Muster ohne Knoten hat
-     * keinen Platz im Index und wird direkt gesucht.
+     * Bedingung des Index ist notwendig). Der Gang des Index von einem
+     * Knoten betritt die kleineren ebenso nicht (Rust 17b7e52), er bietet
+     * also keinen Platz an, dessen Suche nur Matches mit einem kleineren
+     * Knoten faende. Ein Muster ohne Knoten hat keinen Platz im Index und
+     * wird direkt gesucht.
      */
     private void indexSeed(Graph g, Map<Id, String> vals, boolean[] admitted, Sink each) {
         AnchorIndex ix = index();
         ArrayList<Id> nodes = matchableNodes(g);
-        long[] candidates = ix.candidates(g, vals, nodes, walk, ri -> admitted[ri], null);
+        long[] candidates = ix.candidates(g, vals, nodes, walk, ri -> admitted[ri],
+                (ni, id) -> id.compareTo(nodes.get(ni)) < 0);
         int next = 0;
         // Die Matches einer Regel, nacheinander.
         ArrayList<Id[]> found = new ArrayList<>();
