@@ -307,12 +307,16 @@ pub struct Engine<'r> {
     /// Filed here are the created NODES. The entries that produced a
     /// created connection are found from its two ends when a deleted
     /// connection asks for them ([`Engine::producers_of`]); filing
-    /// every connection was more than half of the entries.
+    /// every connection was more than half of the entries. For a
+    /// connection the graph does not hold they come from `edges_made`.
     by_product: crate::hash::FxHashMap<GhostId, Ixs>,
     /// Test check of [`Engine::producers_of`]: the created connections
     /// filed as they were before.
     #[cfg(any(test, seesaw_checks))]
     by_product_filed: crate::hash::FxHashMap<GhostId, Ixs>,
+    /// The entries that created a connection, for an id the graph does
+    /// not know ([`EdgesMade`]). `None` until such a question comes.
+    edges_made: Option<EdgesMade>,
     pub cascade: Vec<Entry>,
     /// Runtime activation (tool configuration, e.g. Benchmarx
     /// decisions): None = all active. Inactive candidates stay in the
@@ -362,6 +366,23 @@ pub struct Engine<'r> {
     /// The names of the rules' plans and what they resolve to in the
     /// graph at hand ([`Names`]).
     names: Names,
+}
+
+/// The entries of the cascade that created a connection, by the id of
+/// the connection: ascending, an entry once per connection. 2.0.2 filed
+/// them in `by_product`. [`Engine::producers_of`] reads here only for an
+/// id the graph does not know, whose ends cannot be read off it: the
+/// host has replaced the graph by its materialized copy, which leaves
+/// tombstones out, or changed it through its public fields.
+///
+/// Built from the entries of the cascade at the first such question,
+/// and extended at every later one by the entries added since. The step
+/// does not keep it.
+#[derive(Default)]
+struct EdgesMade {
+    /// Number of entries of the cascade whose connections are filed.
+    upto: usize,
+    by_id: crate::hash::FxHashMap<GhostId, Ixs>,
 }
 
 /// Where the engine's [`AnchorIndex`] comes from.
@@ -648,6 +669,7 @@ impl<'r> Engine<'r> {
             by_product: Default::default(),
             #[cfg(any(test, seesaw_checks))]
             by_product_filed: Default::default(),
+            edges_made: None,
             saw_contradiction: false,
             cascade: Vec::new(),
             active: None,
@@ -1155,9 +1177,20 @@ impl<'r> Engine<'r> {
     /// dynamic attribute correspondence start at the correspondence the
     /// entry created). The producers of the ends and the entries of the
     /// matches that bind an end are therefore all the candidates.
-    fn producers_of(&self, g: &Graph, id: &GhostId) -> Ixs {
+    ///
+    /// An id the graph does not know may be a connection it does not
+    /// hold: the host has replaced the graph by its materialized copy,
+    /// which leaves tombstones out. If it is not filed as a node, its
+    /// producers come from [`EdgesMade`], as 2.0.2 found them in
+    /// `by_product`.
+    fn producers_of(&mut self, g: &Graph, id: &GhostId) -> Ixs {
         match g.connection(id) {
-            None => self.by_product.get(id).cloned().unwrap_or_default(),
+            None => match self.by_product.get(id) {
+                Some(nodes) => nodes.clone(),
+                // Neither a node nor a connection of the graph.
+                None if g.node(id).is_none() => self.producers_of_unheld(id),
+                None => Ixs::default(),
+            },
             Some(c) => {
                 let mut eixs: Vec<u32> = Vec::new();
                 for end in [&c.source, &c.target] {
@@ -1200,6 +1233,43 @@ impl<'r> Engine<'r> {
                 producers
             }
         }
+    }
+
+    /// The entries that created a connection with the id `id`, from
+    /// [`EdgesMade`], which is built here or extended by the entries
+    /// added to the cascade since the last question. An entry that names
+    /// the connection twice stands in it once, as in the answer from the
+    /// ends.
+    #[cold]
+    #[inline(never)]
+    fn producers_of_unheld(&mut self, id: &GhostId) -> Ixs {
+        let made = self.edges_made.get_or_insert_with(EdgesMade::default);
+        for eix in made.upto..self.cascade.len() {
+            for e in &self.cascade[eix].created_edges {
+                let ixs = made.by_id.entry(*e).or_default();
+                if ixs.as_slice().last() != Some(&(eix as u32)) {
+                    ixs.push(eix as u32);
+                }
+            }
+        }
+        made.upto = self.cascade.len();
+        let producers = made.by_id.get(id).cloned().unwrap_or_default();
+        #[cfg(any(test, seesaw_checks))]
+        {
+            let mut filed = self
+                .by_product_filed
+                .get(id)
+                .map(|ixs| ixs.as_slice().to_vec())
+                .unwrap_or_default();
+            // An entry that names a connection twice was filed twice.
+            filed.dedup();
+            assert_eq!(
+                producers.as_slice(),
+                filed.as_slice(),
+                "the producers of a connection the graph does not know differ from the filed ones"
+            );
+        }
+        producers
     }
 
     /// A single match loses its justification: invalidate it (dead +

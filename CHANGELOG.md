@@ -115,7 +115,24 @@ Engine bookkeeping:
   nodes without a copy.
 - The index from a product to the entries that produced it holds the
   created nodes. The producers of a created connection are found from
-  its two ends when a deleted connection asks for them.
+  its two ends when a deleted connection asks for them. For an id the
+  graph does not know and that is not filed as a node, they come from
+  an index of the connections each entry of the cascade created, built
+  at the first such question and extended at every later one by the
+  entries added since. The step does not keep it. Such an id comes
+  from a host that goes on with another graph than the one the engine
+  ran on, for example the copy made by `Graph::materialize`, which
+  leaves tombstoned connections out. `element_deleted`,
+  `element_changed` and `retract_for` with such an id withdraw the
+  matches resting on the connection and the entries that produced it,
+  as 2.0.2 did (`tests/verbindungs_ids.rs`, expected values from a run
+  of the file against `v2.0.2`). In `perf/select` the entries stayed.
+  A cell that deletes nodes pays one lookup of the id in the graph
+  where no node is filed under it. In
+  `langpack/delta-delete/k700/n20000` the instructions fell from 52.94
+  to 52.69 million (d200) and from 280.49 to 278.89 million (d2000),
+  user CPU 19.4 → 18.1 ms and 102.1 → 102.5 ms (minimum of two runs
+  of five samples on a machine under load).
 - Retraction walks the products of an entry without copying the lists
   and reads and writes each status in one access.
 
@@ -547,9 +564,10 @@ and extended at every later one. The step does not maintain it. Such
 an id comes from a host that calls with another graph than the one the
 engine ran on, for example the copy made by `Graph.materialize()`,
 which leaves tombstoned connections out, or from changes through the
-public field `Graph.map`. Rust `producers_of` in `perf/select` reads
-only the filed nodes for such an id and finds no producers (read in
-the code, not run).
+public field `Graph.map`. Rust `producers_of` in `perf/select` read
+only the filed nodes for such an id and found no producers (run with
+`tests/verbindungs_ids.rs`). It now reads them from an index of the
+connections each entry created, as here.
 
 `Engine.retractMatch`, called by a host for a dead match whose key now
 belongs to another match with the same ref sequence, behaves better
