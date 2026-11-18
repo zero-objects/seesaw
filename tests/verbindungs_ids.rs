@@ -9,14 +9,14 @@
 //! einer Verbindung bekommt. Die erwarteten Werte sind die eines Laufs
 //! dieser Datei gegen den Tag v2.0.2.
 //!
-//! Die Ablaeufe folgen den Java-Tests in `ErzeugerTest`.
+//! Die Ablaeufe folgen den Java-Tests in `ErzeugerTest` und `LinksTest`.
 //! Matches und `verdict` sind in Rust privat. Beobachtet wird deshalb,
 //! was im Graphen steht, und was ein neuer Seed mit Saettigung meldet.
 
 use std::collections::BTreeSet;
 
 use seesaw_tgg::engine::{DeltaDomain, Engine, Termination};
-use seesaw_tgg::graph::{Graph, ValueStore};
+use seesaw_tgg::graph::{preview_connection_id, Graph, ValueStore};
 use seesaw_tgg::ident::{GhostId, Status};
 use seesaw_tgg::plan::DirectedRule;
 
@@ -156,6 +156,17 @@ fn lebendige_korrespondenzen(g: &Graph, x: &GhostId) -> usize {
         .count()
 }
 
+/// Die Korrespondenz vom Typ `AB`, die `Root` erzeugt.
+fn korrespondenz_ab(g: &Graph) -> GhostId {
+    let mut found = g
+        .iter_nodes()
+        .filter(|n| n.is_corr && g.types.name(n.typ) == "AB")
+        .map(|n| n.id);
+    let ab = found.next().expect("eine Korrespondenz AB");
+    assert!(found.next().is_none(), "genau eine Korrespondenz AB");
+    ab
+}
+
 /// Der Host macht mit der materialisierten Kopie weiter. Sie laesst eine
 /// Verbindung weg, die `Root` erzeugt hat und die der Host vorher zum
 /// Tombstone gemacht hat, und der Host gibt deren Id an eine Tuer.
@@ -287,4 +298,97 @@ fn eine_verbindung_zwischen_gematchten_knoten_findet_ihren_erzeuger() {
     assert_eq!(laenge, 5, "ein neuer Match von Pair wird angewandt");
     assert_eq!(verdikt, Termination::Duplication);
     assert_eq!(lebend, (1, 1));
+}
+
+/// `link_removed` mit der Id einer Verbindung als `a` oder `b`. 2.0.2
+/// legte jeden Match auch unter der Verbindung jedes Links seines
+/// Musters ab und zog die Matches zurueck, die unter `a` und unter `b`
+/// standen. Vier Lagen in der Welt mit zwei Kindern, je eine frische
+/// Welt:
+///
+/// - 0: `corr → a` (der Graph haelt sie andersherum) und `a`,
+/// - 1: `a` und `corr → a`,
+/// - 2: `a → x0` (gehalten) und `x0`,
+/// - 3: `a → x0` auf der materialisierten Kopie, die sie als Tombstone
+///   weglaesst, und `x0`.
+///
+/// Die Matches von `Child`, die auf der Verbindung ruhen, fallen, die
+/// Konsolidierung macht ihre Erzeugnisse zu Tombstones, `Root` bleibt.
+/// Ein neuer Seed traegt sie wieder ein, und ihr Schritt widerspricht
+/// der Historie, ausser auf der Kopie.
+///
+/// Beobachtet je Lage: Tombstones unter den Knoten und den Verbindungen,
+/// ob die Korrespondenz von `Root` lebt, die lebendigen Korrespondenzen
+/// an `x0` und `x1`, das Verdikt eines neuen Seeds mit Saettigung und
+/// die Laenge der Kaskade danach.
+#[test]
+fn eine_verbindungs_id_in_link_removed_zieht_die_matches_auf_ihr_zurueck() {
+    let mut beobachtet = Vec::new();
+    for lage in 0..4 {
+        let at = format!("Lage {lage}");
+        let (mut g, a, xs, rules) = welt(2);
+        let (x0, x1) = (xs[0], xs[1]);
+        let vs = ValueStore::default();
+        let mut e = vorwaerts(&rules);
+        e.seed(&g, &vs);
+        saettigen(&mut e, &mut g, &vs);
+        e.consolidate(&mut g);
+        assert_eq!(e.cascade.len(), 3, "{at}: Root und zwei Child");
+        let ab = korrespondenz_ab(&g);
+        let named = preview_connection_id(&ab, &a);
+        let held = preview_connection_id(&a, &x0);
+        assert!(
+            g.connection(&named).is_none() && g.node(&named).is_none(),
+            "{at}: corr → a haelt der Graph nicht"
+        );
+        assert!(g.connection(&held).is_some(), "{at}: a → x0");
+        let mut h = match lage {
+            0 => {
+                e.link_removed(&mut g, &named, &a);
+                g
+            }
+            1 => {
+                e.link_removed(&mut g, &a, &named);
+                g
+            }
+            2 => {
+                e.link_removed(&mut g, &held, &x0);
+                g
+            }
+            _ => {
+                g.set_connection_status(&held, Status::Tombstone);
+                let mut h = g.materialize();
+                assert!(
+                    h.connection(&held).is_none() && h.node(&held).is_none(),
+                    "{at}: die Kopie haelt a → x0 nicht"
+                );
+                e.link_removed(&mut h, &held, &x0);
+                h
+            }
+        };
+        e.consolidate(&mut h);
+        let (knoten, verbindungen) = grabsteine(&h);
+        let root = h.node(&ab).is_some_and(|n| n.status.is_matchable());
+        let lebend = (
+            lebendige_korrespondenzen(&h, &x0),
+            lebendige_korrespondenzen(&h, &x1),
+        );
+        let verdikt = e.run(&mut h, &vs, 2000);
+        let laenge = e.cascade.len();
+        println!(
+            "BEOBACHTUNG link_removed lage={lage} knoten_grab={knoten} \
+             verbindungen_grab={verbindungen} root={root} korrespondenzen={lebend:?} \
+             verdikt={verdikt:?} kaskade={laenge}"
+        );
+        beobachtet.push((knoten, verbindungen, root, lebend, verdikt, laenge));
+    }
+    // Lagen 0 und 1: beide Child fallen, je zwei Knoten und drei
+    // Verbindungen. Lagen 2 und 3: das Child von x0.
+    let erwartet = vec![
+        (4, 6, true, (0, 0), Termination::Contradiction, 3),
+        (4, 6, true, (0, 0), Termination::Contradiction, 3),
+        (2, 3, true, (0, 1), Termination::Contradiction, 3),
+        (2, 3, true, (0, 1), Termination::Duplication, 3),
+    ];
+    assert_eq!(beobachtet, erwartet);
 }

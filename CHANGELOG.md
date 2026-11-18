@@ -235,7 +235,13 @@ instructions in every cell but one: filing under nodes only saves
   unheld links of every new match in it, until the engine is handed
   another graph. The engine asks such a question itself when a
   retraction on a materialized copy looks for products the copy left
-  out.
+  out. `link_removed` with the id of a connection as `a` or `b` takes
+  the matches resting on it from the lists of its ends or from that
+  index, and withdraws those that stand under the other argument as
+  well, as 2.0.2 did (`tests/verbindungs_ids.rs`, expected values from
+  a run of the file against `v2.0.2`). In `perf/select` it returned
+  without effect for such an id. With two node ids it does what it did
+  before. No cell and no `pde` protocol calls `link_removed`.
 - `step` looks a pulled match up once. The candidate in the todo
   carries the number of its match, "already applied" is a mark on that
   number, and one access per anchor answers both "tentatively
@@ -610,9 +616,11 @@ of each link of its pattern: the matches that rest on the connection
 and stand under the other argument are withdrawn. They come from the
 ends of the connection, or, for an id the graph does not know, from the
 index of the links not held. No cell and no `pde` protocol calls
-`linkRemoved`. Rust `link_removed` in `perf/select` reads only
-`by_element` and does nothing for such an id (read in the code, not
-run).
+`linkRemoved`. Rust `link_removed` in `perf/select` read only
+`by_element` and did nothing for such an id (run with
+`tests/verbindungs_ids.rs`). It now takes the matches resting on the
+connection from its ends or from the index of the links not held, as
+here.
 
 The seed over the index stays at `firstOnly`. The Rust form (`index_seed`
 of 0dcae91 and the seed part of 17b7e52) was taken over, measured and

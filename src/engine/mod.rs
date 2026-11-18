@@ -402,6 +402,13 @@ fn slice_of(rules: &[DirectedRule]) -> (usize, usize) {
     (rules.as_ptr() as usize, rules.len())
 }
 
+/// The entries of `a` that stand in `b` as well, in the order of `a`
+/// ([`Engine::link_removed`]).
+fn in_both(a: &[u32], b: &[u32]) -> Vec<u32> {
+    let set_b: BTreeSet<u32> = b.iter().copied().collect();
+    a.iter().copied().filter(|m| set_b.contains(m)).collect()
+}
+
 impl AnchorSlot<'_> {
     /// The index of a slot [`Engine::take_index`] has filled.
     fn index(&self) -> &AnchorIndex {
@@ -1537,21 +1544,25 @@ impl<'r> Engine<'r> {
         self.expand_at(g, resolver, &[*a, *b]);
     }
 
+    /// A link was REMOVED (counterpart of [`Self::link_added`]): the
+    /// matches filed under both `a` and `b` are withdrawn.
+    ///
+    /// `a` or `b` may be the id of a connection. 2.0.2 filed every match
+    /// also under the connection of each link of its pattern and
+    /// withdrew the matches that stood under `a` and under `b`. Those
+    /// resting on a connection come from its ends, or, for an id the
+    /// graph does not know, from the index of unheld links
+    /// (`filed_under`).
     pub fn link_removed(&mut self, g: &mut Graph, a: &GhostId, b: &GhostId) {
         self.settle_removed(g);
-        let Some(in_a) = self.by_element.get(a) else {
-            return;
+        let mixes = match (self.by_element.get(a), self.by_element.get(b)) {
+            (Some(in_a), Some(in_b)) => in_both(in_a.as_slice(), in_b.as_slice()),
+            _ => {
+                let in_a = self.filed_under(g, a);
+                let in_b = self.filed_under(g, b);
+                in_both(in_a.as_slice(), in_b.as_slice())
+            }
         };
-        let Some(in_b) = self.by_element.get(b) else {
-            return;
-        };
-        let set_b: BTreeSet<u32> = in_b.as_slice().iter().copied().collect();
-        let mixes: Vec<u32> = in_a
-            .as_slice()
-            .iter()
-            .copied()
-            .filter(|m| set_b.contains(m))
-            .collect();
         let mut queue: Vec<GhostId> = Vec::new();
         for mix in mixes {
             self.retract_match(g, mix, &mut queue);
