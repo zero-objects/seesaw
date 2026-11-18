@@ -1,0 +1,87 @@
+Messleiter pde.tsv: 63 Java-Zeilen, 0 Zeilen nicht_verfuegbar (0 Paare aus Zelle und Stand), 27 Rust-Zeilen, 9 Zellen, Stände S0 S1a S1b
+Werte je Stand: Minimum über die Zeilen (Runden) der Zelle. n = Zahl der Zeilen mit Wert (n_proc für proc_cpu).
+
+== pde/load/java40
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+S0     3       357.7        359.4     290.8      0       3            420.0
+S1a    3       352.1        352.6     289.4      0       3            420.0
+S1b    3       347.4        347.4     291.9      0       3            380.0
+Gewinn S0/S1b (CPU): 1.03  Rust CPU min: 225.8 (3 Zeilen)  Faktor Java:Rust bei S0: 1.6, bei S1b: 1.5
+
+== pde/graph/java40
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+S0     3       811.7        854.7    1262.5     39       3           1350.0
+S1a    3       816.1        856.9    1262.5     41       3           1320.0
+S1b    3       817.8        858.6    1262.5     40       3           1330.0
+Gewinn S0/S1b (CPU): 0.99  Rust CPU min: 182.2 (3 Zeilen)  Faktor Java:Rust bei S0: 4.5, bei S1b: 4.5
+
+== pde/open/java40
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+S0     3      7554.0       7825.2    4280.3    267       3          11010.0
+S1a    3      7430.4       7731.5    4282.0    262       3          11260.0
+S1b    3      7580.3       7865.8    4282.0    276       3          11410.0
+Gewinn S0/S1b (CPU): 1.00  Rust CPU min: 3860.8 (3 Zeilen)  Faktor Java:Rust bei S0: 2.0, bei S1b: 2.0
+
+== pde/load/open2
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+S1a    3       370.0        370.7     290.2      0       3           1040.0
+S1b    3       362.8        362.9     290.4      0       3           1100.0
+Gewinn S0/S1b (CPU): -  Rust CPU min: 226.0 (3 Zeilen)  Faktor Java:Rust bei S0: -, bei S1b: 1.6
+
+== pde/graph/open2
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+S1a    3        39.3         39.3      67.8      0       3             70.0
+S1b    3        39.3         39.3      67.8      0       3             80.0
+Gewinn S0/S1b (CPU): -  Rust CPU min: 3.2 (3 Zeilen)  Faktor Java:Rust bei S0: -, bei S1b: 12.3
+
+== pde/open/open2
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+S1a    3       137.4        137.4      98.9      0       3            170.0
+S1b    3       137.8        137.9      98.9      0       3            200.0
+Gewinn S0/S1b (CPU): -  Rust CPU min: 55.5 (3 Zeilen)  Faktor Java:Rust bei S0: -, bei S1b: 2.5
+
+== pde/load/open5
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+S1a    3       364.8        364.9     289.8      0       3            420.0
+S1b    3       360.2        360.3     290.4      0       3            730.0
+Gewinn S0/S1b (CPU): -  Rust CPU min: 227.3 (3 Zeilen)  Faktor Java:Rust bei S0: -, bei S1b: 1.6
+
+== pde/graph/open5
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+S1a    3       111.0        111.0     179.9      0       3            140.0
+S1b    3       107.1        107.1     179.9      0       3            110.0
+Gewinn S0/S1b (CPU): -  Rust CPU min: 17.4 (3 Zeilen)  Faktor Java:Rust bei S0: -, bei S1b: 6.2
+
+== pde/open/open5
+Stand  n  CPU min ms  Wall min ms  alloc MB  gc_ms  n_proc  proc_cpu min ms
+S1a    3      6292.8       6352.9    2029.4     53       3           6910.0
+S1b    3      6456.9       6513.7    2029.9     53       3           7180.0
+Gewinn S0/S1b (CPU): -  Rust CPU min: 3755.3 (3 Zeilen)  Faktor Java:Rust bei S0: -, bei S1b: 1.7
+
+Kurzform (S0 gegen S1b, ms, Faktor Java:Rust = Java-Wert geteilt durch Rust-Minimum)
+Zelle             Spalte      S0     S1b  Gewinn    Rust  Faktor S0  Faktor S1b
+pde/load/java40   CPU      357.7   347.4    1.03   225.8        1.6         1.5
+pde/graph/java40  CPU      811.7   817.8    0.99   182.2        4.5         4.5
+pde/open/java40   CPU     7554.0  7580.3    1.00  3860.8        2.0         2.0
+pde/load/open2    CPU          -   362.8       -   226.0          -         1.6
+pde/graph/open2   CPU          -    39.3       -     3.2          -        12.3
+pde/open/open2    CPU          -   137.8       -    55.5          -         2.5
+pde/load/open5    CPU          -   360.2       -   227.3          -         1.6
+pde/graph/open5   CPU          -   107.1       -    17.4          -         6.2
+pde/open/open5    CPU          -  6456.9       -  3755.3          -         1.7
+
+Alle Stände (ms, Minimum über die Zeilen, Spalte wie in der Kurzform)
+Zelle             Spalte      S0     S1a     S1b    Rust
+pde/load/java40   CPU      357.7   352.1   347.4   225.8
+pde/graph/java40  CPU      811.7   816.1   817.8   182.2
+pde/open/java40   CPU     7554.0  7430.4  7580.3  3860.8
+pde/load/open2    CPU          -   370.0   362.8   226.0
+pde/graph/open2   CPU          -    39.3    39.3     3.2
+pde/open/open2    CPU          -   137.4   137.8    55.5
+pde/load/open5    CPU          -   364.8   360.2   227.3
+pde/graph/open5   CPU          -   111.0   107.1    17.4
+pde/open/open5    CPU          -  6292.8  6456.9  3755.3
+
+Fingerprint (Schritte, angewandte Schritte, Knoten, Fingerprint) gegen die Referenz derselben Zelle:
+java zeilen=63 gleich=63 abweichend=0 ohne_referenz=0
+rust zeilen=27 gleich=27 abweichend=0 ohne_referenz=0

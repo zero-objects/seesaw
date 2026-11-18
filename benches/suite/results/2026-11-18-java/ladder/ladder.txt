@@ -1,0 +1,5 @@
+# Stände der Messung Task 4: <label> <commit>, eine Zeile je Stand.
+# Aufruf: LADDER=<diese Datei> sh java/bench/jsuite.sh send-ladder
+S0 02c3e39
+S1a 540f03d
+S1b 0a3f81a
