@@ -54,7 +54,8 @@ final class Applied {
     /** Zahl der Marken. */
     private int count;
     /** Die angewandten Schluessel, unter denen kein Match steht. null, bis
-     *  der erste Kandidat ohne Match vermerkt wird. */
+     *  der erste Kandidat mit negativer Nummer
+     *  ({@link Engine.TodoKey#keyTaken}) vermerkt wird. */
     private HashSet<MatchKey> unheld;
     /** Pruefung: die angewandten Schluessel, wie 2.0.2 sie fuehrte. null
      *  ohne Pruefung. */

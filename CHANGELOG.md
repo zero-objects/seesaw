@@ -127,12 +127,15 @@ Engine bookkeeping:
   matches resting on the connection and the entries that produced it,
   as 2.0.2 did (`tests/verbindungs_ids.rs`, expected values from a run
   of the file against `v2.0.2`). In `perf/select` the entries stayed.
-  A cell that deletes nodes pays one lookup of the id in the graph
-  where no node is filed under it. In
-  `langpack/delta-delete/k700/n20000` the instructions fell from 52.94
-  to 52.69 million (d200) and from 280.49 to 278.89 million (d2000),
-  user CPU 19.4 → 18.1 ms and 102.1 → 102.5 ms (minimum of two runs
-  of five samples on a machine under load).
+  Every id of a retraction wave that is neither a connection of the
+  graph nor filed as a node costs one more lookup in the graph. Such
+  waves run in `element_deleted`, `element_changed`, `retract_for`,
+  `link_removed` and in `consolidate` along fallen correspondences
+  (`follow_fallen_corrs`). In `langpack/delta-delete/k700/n20000` the
+  instructions fell from 52.94 to 52.69 million (d200) and from 280.49
+  to 278.89 million (d2000), user CPU 19.4 → 18.1 ms and
+  102.1 → 102.5 ms (minimum of two runs of five samples on a machine
+  under load). Why the instructions fell was not investigated.
 - Retraction walks the products of an entry without copying the lists
   and reads and writes each status in one access.
 
@@ -240,8 +243,12 @@ instructions in every cell but one: filing under nodes only saves
   index, and withdraws those that stand under the other argument as
   well, as 2.0.2 did (`tests/verbindungs_ids.rs`, expected values from
   a run of the file against `v2.0.2`). In `perf/select` it returned
-  without effect for such an id. With two node ids it does what it did
-  before. No cell and no `pde` protocol calls `link_removed`.
+  without effect for such an id. As in 2.0.2 it returns as soon as
+  nothing stands under `a`, and then as soon as nothing stands under
+  `b`. For a node of the graph that no match binds it does so without
+  asking the other argument. With two nodes that matches bind it takes
+  the path of 2.0.2. No cell and no `pde` protocol calls
+  `link_removed`.
 - `step` looks a pulled match up once. The candidate in the todo
   carries the number of its match, "already applied" is a mark on that
   number, and one access per anchor answers both "tentatively
@@ -340,6 +347,13 @@ consumers were run against this state: the development copy with the
 dry-cleaner fixtures and the dry-cleaner crates pass with the test
 counts of 2.0.2, the forward runs of the 34 fixtures take 127 ms
 (2.0.2: 377 ms).
+
+Not measured: building and extending the index of the connections each
+entry created, which `producers_of` reads for an id the graph does not
+know, and `link_removed` with an id the graph does not know, which
+builds the index of unheld links (one pass over the match store per
+graph) where 2.0.2 looked the id up once in `by_element`. No cell runs
+either path.
 
 ### Java: anchor index
 
