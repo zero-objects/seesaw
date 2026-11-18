@@ -342,7 +342,12 @@ equal to or better than Java 2.0.2: graph, cascade and its order and
 the results of `step` stay those of 2.0.2. The exception is the fix of
 the matcher (next section), which follows Rust where 2.0.2 did not.
 Doors that a host reaches only outside the contract behave differently
-and are listed below. The statement above does not cover them. Steps,
+and are listed below. The statement above does not cover them. The
+doors `elementDeleted`, `elementChanged`, `retractFor` and
+`drainRetraction` with a connection the passed graph does not hold,
+`retractMatch` on a dead match whose key another match carries and
+`linkRemoved` with the id of a connection behave as in 2.0.2, tested
+with expected values from runs of L0 (paragraphs after the list). Steps,
 applied steps, node count and fingerprint of every measured cell equal
 the ones of the Rust cells (792 measured lines of the Java cells and
 108 of `pde`, none differing). `java/bench/jgate.sh` runs a
@@ -480,9 +485,6 @@ only in the ways given:
   and before the next door with a graph is not killed there and keeps
   its candidate, as in 2.0.2, also when it carries the key of a match
   that dies there.
-- `Engine.linkRemoved(g, a, b)` with a connection id as `a` or `b`:
-  2.0.2 cut the file of the connection, it now returns without effect,
-  and with checks on it throws.
 - `new Engine(rules)` and `new Engine(rules, null)`: the anchor index
   comes from the store of the process, which keeps up to 32 indexes
   after the engines are gone. `AnchorIndex.forgetShared()` empties the
@@ -553,6 +555,16 @@ without a match stay, as in 2.0.2. `elementDeleted`, `elementChanged`,
 `retractFor` and `step` do not lead there, only a host that calls
 `retractMatch` itself. Rust has no counterpart, `retract_match` is
 private there.
+
+`Engine.linkRemoved(g, a, b)` with the id of a connection as `a` or `b`
+behaves as in 2.0.2, which filed every match also under the connection
+of each link of its pattern: the matches that rest on the connection
+and stand under the other argument are withdrawn. They come from the
+ends of the connection, or, for an id the graph does not know, from the
+index of the links not held. No cell and no `pde` protocol calls
+`linkRemoved`. Rust `link_removed` in `perf/select` reads only
+`by_element` and does nothing for such an id (read in the code, not
+run).
 
 Not taken over, and not measured:
 

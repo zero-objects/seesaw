@@ -421,6 +421,16 @@ final class LinksTest {
         return n;
     }
 
+    /** Wie viele lebendige Korrespondenzen an {@code x} haengen. */
+    static int liveCorrsAt(Graph g, Id x) {
+        int n = 0;
+        for (Part p : g.parts(x)) {
+            Node o = g.node(p.other);
+            if (o != null && o.isCorr && o.status.alive()) n++;
+        }
+        return n;
+    }
+
     /**
      * Ein Muster, das einen Link zweimal hat (ein Host kann einen in eine
      * geladene Regel schieben): der Match ruht zweimal auf der Verbindung,
@@ -619,6 +629,77 @@ final class LinksTest {
             assertEquals(Integer.valueOf(third), e.byKey.get(child.key));
             assertEquals(1, e.todo.size());
             assertEquals(third, e.todo.first().mix, "der Kandidat des neuen Matches");
+        }
+    }
+
+    /**
+     * {@link Engine#linkRemoved} mit der Id einer Verbindung als {@code a}
+     * oder {@code b}. 2.0.2 legte jeden Match auch unter der Verbindung
+     * jedes Links seines Musters ab und zog die Matches zurueck, die unter
+     * {@code a} und unter {@code b} standen. Vier Lagen in der Welt mit zwei
+     * Kindern, je eine frische Welt:
+     * <ul>
+     * <li>0: {@code corr → a} (der Graph haelt sie andersherum) und {@code a},
+     * <li>1: {@code a} und {@code corr → a},
+     * <li>2: {@code a → x0} (gehalten) und {@code x0},
+     * <li>3: {@code a → x0} auf der materialisierten Kopie, die sie als
+     *     Tombstone weglaesst, und {@code x0}.
+     * </ul>
+     * Derselbe Ablauf ueber die oeffentliche API gegen fa12974 gefahren
+     * (Job 7428), die erwarteten Werte sind die von dort: die Matches von
+     * {@code Child}, die auf der Verbindung ruhen, sind tot, die
+     * Konsolidierung macht ihre Erzeugnisse zu Tombstones, ein neuer Seed
+     * traegt sie wieder ein, und ihr Schritt widerspricht der Historie.
+     */
+    @Test
+    void eineVerbindungsIdInLinkRemovedZiehtDieMatchesAufIhrZurueck() {
+        int[] eliminated = {10, 10, 5, 5};
+        int[] liveAtX1 = {0, 0, 1, 1};
+        int[] matchesAfter = {5, 5, 4, 3};
+        Engine.Termination[] verdictAfter = {Engine.Termination.CONTRADICTION,
+            Engine.Termination.CONTRADICTION, Engine.Termination.CONTRADICTION,
+            Engine.Termination.DUPLICATION};
+        for (int lage = 0; lage < 4; lage++) {
+            String at = "Lage " + lage;
+            ContextLink w = contextLinkGraph(2);
+            Graph g = w.g();
+            Id a = w.a();
+            Id x0 = w.xs().get(0);
+            Id x1 = w.xs().get(1);
+            Map<Id, String> vs = new HashMap<>();
+            Engine e = forward(w.rules());
+            e.seed(g, vs);
+            runRemaining(e, g, vs);
+            e.consolidate(g);
+            assertEquals(3, e.cascade.size(), at + ": Root und zwei Child");
+            Id named = Ident.identConnection(corrAb(g), a);
+            Id held = g.connectionId(a, x0);
+            assertTrue(g.conn(named) == null && g.node(named) == null, at);
+            assertNotNull(held, at);
+            Graph h = g;
+            switch (lage) {
+                case 0 -> e.linkRemoved(h, named, a);
+                case 1 -> e.linkRemoved(h, a, named);
+                case 2 -> e.linkRemoved(h, held, x0);
+                default -> {
+                    g.setConnectionStatus(held, St.TOMBSTONE);
+                    h = g.materialize();
+                    assertTrue(h.conn(held) == null && h.node(held) == null, at);
+                    e.linkRemoved(h, held, x0);
+                }
+            }
+            assertFalse(e.matches.get(0).dead, at + ": Root");
+            int dead = 0;
+            for (Engine.MatchRec m : e.matches) if (m.dead) dead++;
+            assertEquals(lage < 2 ? 2 : 1, dead, at + ": tote Matches von Child");
+            assertEquals(eliminated[lage], e.consolidate(h), at + ": Tombstones");
+            assertEquals(0, liveCorrsAt(h, x0), at);
+            assertEquals(liveAtX1[lage], liveCorrsAt(h, x1), at);
+            e.seed(h, vs);
+            runRemaining(e, h, vs);
+            assertEquals(3, e.cascade.size(), at);
+            assertEquals(matchesAfter[lage], e.matches.size(), at);
+            assertEquals(verdictAfter[lage], e.verdict(), at);
         }
     }
 }

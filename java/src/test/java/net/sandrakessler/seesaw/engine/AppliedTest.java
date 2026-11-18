@@ -18,8 +18,6 @@ import java.util.function.Consumer;
 import org.junit.jupiter.api.Test;
 
 import net.sandrakessler.seesaw.graph.Graph;
-import net.sandrakessler.seesaw.graph.Node;
-import net.sandrakessler.seesaw.graph.Part;
 import net.sandrakessler.seesaw.ident.Id;
 import net.sandrakessler.seesaw.ident.St;
 
@@ -159,16 +157,6 @@ final class AppliedTest {
         }
     }
 
-    /** Die lebendigen Korrespondenzen an {@code x}. */
-    private static int liveCorrsAt(Graph g, Id x) {
-        int n = 0;
-        for (Part p : g.parts(x)) {
-            Node o = g.node(p.other);
-            if (o != null && o.isCorr && o.status.alive()) n++;
-        }
-        return n;
-    }
-
     /** Eine Engine fuer eine Welle von der Quellseite, mit oder ohne
      *  Pruefung. */
     private static Engine forward(LinksTest.ContextLink w, boolean checks) {
@@ -231,7 +219,7 @@ final class AppliedTest {
             e.drainRetraction(g, queue);
             assertEquals(Boolean.TRUE, e.step(g, vals), at + ": der Kandidat des anderen wird angewandt");
             assertNull(e.matches.get(other).entry, at + ": ohne Provenienzkante");
-            assertEquals(1, liveCorrsAt(g, x0), at);
+            assertEquals(1, LinksTest.liveCorrsAt(g, x0), at);
             e.record(rule, refs.clone());
             assertEquals(4, e.matches.size(), at + ": der Schluessel war frei");
             assertNull(e.step(g, vals), at + ": der Schluessel ist angewandt, der dritte wird uebersprungen");
@@ -240,7 +228,7 @@ final class AppliedTest {
             g.setNodeStatus(x0, St.TOMBSTONE);
             e.elementDeleted(g, x0);
             assertEquals(0, e.consolidate(g), at + ": x0 geloescht");
-            assertEquals(1, liveCorrsAt(g, x0), at + ": das Erzeugnis des anderen bleibt wie in 2.0.2");
+            assertEquals(1, LinksTest.liveCorrsAt(g, x0), at + ": das Erzeugnis des anderen bleibt wie in 2.0.2");
             g.setNodeStatus(w.a(), St.TOMBSTONE);
             e.elementDeleted(g, w.a());
             assertEquals(4, e.consolidate(g), at + ": a geloescht");
@@ -274,7 +262,7 @@ final class AppliedTest {
             g.setNodeStatus(x0, St.TOMBSTONE);
             e.elementDeleted(g, x0);
             assertEquals(5, e.consolidate(g), at + ": x0 geloescht");
-            assertEquals(0, liveCorrsAt(g, x0), at);
+            assertEquals(0, LinksTest.liveCorrsAt(g, x0), at);
 
             // fall2c: der tote war angewandt, der andere holt die Erzeugnisse zurueck.
             w = LinksTest.contextLinkGraph(1);
@@ -304,7 +292,7 @@ final class AppliedTest {
             g.setNodeStatus(x0, St.TOMBSTONE);
             e.elementDeleted(g, x0);
             assertEquals(5, e.consolidate(g), at + ": x0 geloescht");
-            assertEquals(0, liveCorrsAt(g, x0), at);
+            assertEquals(0, LinksTest.liveCorrsAt(g, x0), at);
         }
     }
 

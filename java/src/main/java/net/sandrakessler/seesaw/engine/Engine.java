@@ -883,18 +883,25 @@ public final class Engine {
         drainRetraction(g, queue);
     }
 
-    /** Kanten-Wegfall (Spiegel von link_removed): Matches, deren Refs
-     *  BEIDE Endpunkte enthalten, verlieren ihre Begründung. {@code a} und
-     *  {@code b} sind die Enden eines Links, also Knoten, und stehen in
-     *  {@link #byElement} mit allem, was 2.0.2 dort unter ihnen ablegte
-     *  (unter Pruefung nachgesehen). */
+    /**
+     * Kanten-Wegfall (Spiegel von link_removed): Matches, deren Refs
+     * BEIDE Endpunkte enthalten, verlieren ihre Begründung. {@code a} und
+     * {@code b} sind die Enden eines Links, also Knoten, und stehen in
+     * {@link #byElement} mit allem, was 2.0.2 dort unter ihnen ablegte.
+     *
+     * <p>Hat {@code a} oder {@code b} dort keine Liste, kann es die Id einer
+     * Verbindung sein. Ihre Matches, die, die auf ihr ruhen, kommen dann aus
+     * {@link Links#filedUnder}. 2.0.2 legte sie in {@code byElement} auch
+     * unter der Verbindung ab und zog die Matches zurueck, die unter
+     * {@code a} und unter {@code b} standen.
+     */
     public void linkRemoved(Graph g, Id a, Id b) {
         links.settleRemoved(g);
-        links.checkNotFiled("linkRemoved", a);
-        links.checkNotFiled("linkRemoved", b);
         IntList inA = byElement.get(a);
+        if (inA == null) inA = links.filedUnder(g, a);
         if (inA == null) return;
         IntList inB = byElement.get(b);
+        if (inB == null) inB = links.filedUnder(g, b);
         if (inB == null) return;
         int[] setB = inB.toArray();
         Arrays.sort(setB);

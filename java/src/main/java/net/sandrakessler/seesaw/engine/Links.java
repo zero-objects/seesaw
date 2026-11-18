@@ -274,15 +274,6 @@ final class Links {
         removed.clear();
     }
 
-    /** Pruefung unter {@link Engine#CHECKS}: unter {@code id} sind keine
-     *  Links abgelegt. {@code where}: die Tuer, die fragt. */
-    void checkNotFiled(String where, Id id) {
-        if (filed != null && filed.containsKey(id)) {
-            throw new IllegalStateException(where + ": unter " + hex(id) + " sind Links abgelegt "
-                    + filed.get(id) + ", gefragt wird nach Knoten");
-        }
-    }
-
     private static int[] array(IntList l) {
         return l == null ? new int[0] : l.toArray();
     }
