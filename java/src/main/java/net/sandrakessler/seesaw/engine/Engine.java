@@ -49,9 +49,10 @@ public final class Engine {
          *  {@link #stepWithLimit}. */
         final MatchKey key;
         /** Nummer des Matches im Match-Speicher (Rust {@code Carried}),
-         *  nimmt nicht an der Ordnung teil. -1 in einer Schranke und in
-         *  einem Kandidaten, dessen Match {@link #retractMatch} den
-         *  Schluessel genommen hat (siehe dort). */
+         *  nimmt nicht an der Ordnung teil. -1 in einer Schranke. Kleiner
+         *  als -1 in einem Kandidaten, dessen Match {@link #retractMatch}
+         *  den Schluessel genommen hat: {@link #keyTaken} der Nummer dieses
+         *  Matches (siehe dort). */
         final int mix;
 
         /** Eine Schranke, ohne Match. */
@@ -72,6 +73,14 @@ public final class Engine {
             this.ruleIx = ruleIx;
             this.key = key;
             this.mix = mix;
+        }
+
+        /** Die Nummer, die der Kandidat des Matches {@code mix} traegt,
+         *  nachdem {@link #retractMatch} diesem Match den Schluessel
+         *  genommen hat, und umgekehrt: -2 - mix. Kleiner als -1, keine
+         *  Schranke. */
+        static int keyTaken(int mix) {
+            return -2 - mix;
         }
 
         /** Acht Byte ab {@code from}, Big-Endian. */
@@ -503,16 +512,16 @@ public final class Engine {
      * die der Graph nicht kennt, aus dem Index der nicht gehaltenen Links,
      * den {@link Links#fileLinks} hier weiterfuehrt.
      *
-     * <p>Steht im Todo schon ein Kandidat mit demselben Schluessel, traegt
-     * er keinen Match (Nummer -1): unter dem Schluessel stand keiner, und
-     * einen Kandidaten mit Match gibt es nur, solange dieser unter seinem
-     * Schluessel steht. Dahin fuehrt nur ein Host, der {@link #retractMatch}
+     * <p>Steht im Todo schon ein Kandidat mit demselben Schluessel, hat sein
+     * Match den Schluessel verloren (negative Nummer, {@link TodoKey#keyTaken}):
+     * unter dem Schluessel stand keiner, und eine Nummer ab 0 traegt ein
+     * Kandidat nur, solange sein Match unter seinem Schluessel steht. Dahin fuehrt nur ein Host, der {@link #retractMatch}
      * fuer einen toten Match ruft, dessen Schluessel ein anderer haelt. Der
      * neue Kandidat ersetzt ihn (Rust {@code BTreeMap::insert}). 2.0.2
      * fuehrte das Todo ohne Nummer und fand beim Ziehen ueber den Schluessel
      * den neuen Match. Unter {@link #checks} wirft der Aufruf, wenn der
-     * Kandidat im Todo einen Match traegt. War der Schluessel ohne Match
-     * angewandt, traegt der neue Match die Marke ({@link Applied#adopt}).
+     * Kandidat im Todo eine Nummer ab 0 traegt. War der Schluessel ohne
+     * Match angewandt, traegt der neue Match die Marke ({@link Applied#adopt}).
      */
     void record(Graph g, int ruleIx, Id[] refs) {
         MatchKey k = new MatchKey(ruleIx, refs);
@@ -528,7 +537,7 @@ public final class Engine {
         TodoKey candidate = new TodoKey(rule.rank, k, ix);
         if (!todo.add(candidate)) {
             if (checks && todo.ceiling(candidate).mix >= 0) {
-                throw new IllegalStateException("record: im Todo steht schon ein Kandidat mit Match und dem "
+                throw new IllegalStateException("record: im Todo steht schon ein Kandidat mit Nummer und dem "
                         + "Schluessel des Matches " + ix + ", Regel " + rule.name);
             }
             todo.remove(candidate);
@@ -568,9 +577,10 @@ public final class Engine {
      * verlor (tentativ zurueckgezogener Anker) und nicht im Todo steht.
      * 2.0.2 toetete beim Aufruf, der Kandidat des spaeter eingetragenen
      * Matches blieb. Sonst traegt jeder Kandidat im Todo eine Nummer unter
-     * {@code below}. Auch ein Kandidat ohne Match (Nummer -1, siehe
-     * {@link #retractMatch}): er entsteht nur an einer Tuer mit Graph,
-     * stand also schon beim Aufruf im Todo, und 2.0.2 nahm ihn heraus.
+     * {@code below}. Auch ein Kandidat, dessen Match den Schluessel verloren
+     * hat (negative Nummer, siehe {@link #retractMatch}): er entsteht nur an
+     * einer Tuer mit Graph, stand also schon beim Aufruf im Todo, und 2.0.2
+     * nahm ihn heraus.
      */
     void kill(IntList mixes, int below) {
         boolean all = below >= matches.size();
@@ -601,9 +611,13 @@ public final class Engine {
      *
      * <p>Steht unter dem Schluessel ein anderer Match, nimmt der Aufruf ihm
      * den Schluessel und seine Marke wie 2.0.2, das beides ueber den
-     * Schluessel fuehrte. Steht sein Kandidat im Todo, traegt der danach
-     * keinen Match (Nummer -1): angewandt bekommt er keine Provenienzkante
-     * wie in 2.0.2, das den Match beim Anwenden unter dem Schluessel suchte.
+     * Schluessel fuehrte. Steht sein Kandidat im Todo, traegt der danach die
+     * Nummer {@link TodoKey#keyTaken} des anderen. Angewandt gilt sein
+     * Schluessel als angewandt ohne Match wie in 2.0.2 ({@link Applied}),
+     * und die Provenienzkante bekommt der andere Match: seine Retraktion
+     * nimmt die Erzeugnisse mit. 2.0.2 suchte den Match beim Anwenden unter
+     * dem Schluessel, fand keinen, setzte keine Kante und liess die
+     * Erzeugnisse stehen, wenn der andere spaeter zurueckgezogen wurde.
      * Dahin fuehrt nur ein Host, der diese Tuer selbst fuer einen toten
      * Match ruft, der seinen Schluessel schon verloren hatte. Die internen
      * Aufrufer erreichen den anderen in derselben Schleife (siehe
@@ -625,9 +639,9 @@ public final class Engine {
         applied.forget(m.key, holder);
         if (holder != null && holder != mix) {
             // Ein anderer Match stand unter dem Schluessel. Sein Kandidat
-            // im Todo verliert ihn.
-            TodoKey free = new TodoKey(rank, m.key, -1);
-            if (todo.remove(free)) todo.add(free);
+            // im Todo verliert ihn und nennt den Match weiter.
+            TodoKey taken = new TodoKey(rank, m.key, TodoKey.keyTaken(holder));
+            if (todo.remove(taken)) todo.add(taken);
         }
         if (entry != null) {
             Entry e = cascade.get(entry);
@@ -1679,13 +1693,17 @@ public final class Engine {
             }
             applied.insert(mk, k.mix);
             // Provenienz-Kante materialisieren (für retractFor ohne Scan).
-            // Ein Kandidat ohne Match (Nummer -1) bekommt keine, wie in
-            // 2.0.2 (siehe retractMatch).
             if (k.mix >= 0) {
                 matches.get(pulledMatch(k)).entry = eix;
-            } else if (checks && byKey.containsKey(mk)) {
-                throw new IllegalStateException("step: ein Kandidat ohne Match, unter seinem Schluessel steht "
-                        + byKey.get(mk) + ", Regel " + rule.name);
+            } else {
+                // Der Match des Kandidaten hat seinen Schluessel an
+                // retractMatch verloren. Er bekommt die Kante, seine
+                // Retraktion nimmt die Erzeugnisse mit (2.0.2 nicht).
+                if (checks && byKey.containsKey(mk)) {
+                    throw new IllegalStateException("step: der Match des Kandidaten hat seinen Schluessel "
+                            + "verloren, unter ihm steht " + byKey.get(mk) + ", Regel " + rule.name);
+                }
+                matches.get(TodoKey.keyTaken(k.mix)).entry = eix;
             }
             expandAt(g, vals, cr.nodes);
             return true;

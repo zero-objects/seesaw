@@ -595,12 +595,12 @@ final class LinksTest {
      * Ein Host ruft das oeffentliche {@link Engine#retractMatch} fuer einen
      * toten Match, dessen Schluessel inzwischen ein anderer Match haelt. Der
      * Aufruf nimmt dem anderen den Schluessel, dessen Kandidat bleibt im
-     * Todo und traegt keinen Match mehr (Nummer -1). {@link Engine#record}
-     * mit demselben Schluessel ersetzt ihn durch den Kandidaten des neuen
-     * Matches. Mit und ohne Pruefung gleich.
+     * Todo und traegt die Nummer {@link Engine.TodoKey#keyTaken} des
+     * anderen. {@link Engine#record} mit demselben Schluessel ersetzt ihn
+     * durch den Kandidaten des neuen Matches. Mit und ohne Pruefung gleich.
      */
     @Test
-    void einKandidatOhneMatchWirdVomNeuenErsetzt() {
+    void derKandidatDesAnderenWirdVomNeuenErsetzt() {
         for (boolean checks : new boolean[] {true, false}) {
             ContextLink w = contextLinkGraph(1);
             Graph g = w.g();
@@ -622,7 +622,8 @@ final class LinksTest {
             e.retractMatch(g, child.mix, new ArrayList<>());
             assertNull(e.byKey.get(child.key));
             assertEquals(1, e.todo.size());
-            assertEquals(-1, e.todo.first().mix, "der Kandidat traegt keinen Match");
+            assertEquals(Engine.TodoKey.keyTaken(other), e.todo.first().mix,
+                    "der Kandidat nennt den anderen, dem der Schluessel genommen ist");
             assertFalse(e.matches.get(other).dead, "der andere lebt");
             e.record(child.ruleIx, child.refs.clone());
             int third = e.matches.size() - 1;

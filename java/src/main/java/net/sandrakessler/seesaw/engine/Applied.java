@@ -39,13 +39,14 @@ import java.util.Set;
  *
  * <p>Ruft ein Host das oeffentliche retractMatch selbst fuer einen toten Match,
  * dessen Schluessel ein anderer haelt, nimmt es diesem den Schluessel wie
- * 2.0.2. Steht dessen Kandidat im Todo, traegt er danach keinen Match (Nummer
- * -1, {@link Engine#retractMatch}). Wird so ein Kandidat angewandt oder als
- * Duplikat vermerkt, steht der Schluessel in {@link #unheld}: angewandt, ohne
- * dass ein Match unter ihm steht, wie in der Menge von 2.0.2 ein Schluessel,
- * der in {@code byKey} fehlt. {@link Engine#record} gibt die Marke an den
- * Match, der danach unter den Schluessel kommt ({@link #adopt}), und dessen
- * Kandidat ersetzt den ohne Match.
+ * 2.0.2. Steht dessen Kandidat im Todo, traegt er danach eine negative Nummer
+ * ({@link Engine.TodoKey#keyTaken}, {@link Engine#retractMatch}). Wird so ein
+ * Kandidat angewandt oder als Duplikat vermerkt, steht der Schluessel in
+ * {@link #unheld}: angewandt, ohne dass ein Match unter ihm steht, wie in der
+ * Menge von 2.0.2 ein Schluessel, der in {@code byKey} fehlt.
+ * {@link Engine#record} gibt die Marke an den Match, der danach unter den
+ * Schluessel kommt ({@link #adopt}), und dessen Kandidat ersetzt den mit
+ * negativer Nummer.
  */
 final class Applied {
     /** Ein Bit je Match. */
@@ -70,7 +71,8 @@ final class Applied {
     }
 
     /** Ist der gezogene Kandidat mit dem Schluessel {@code key}, der den
-     *  Match {@code mix} traegt (-1: keinen), schon angewandt? */
+     *  Match {@code mix} traegt (negativ: sein Match hat den Schluessel
+     *  verloren), schon angewandt? */
     boolean contains(MatchKey key, int mix) {
         boolean m = mix >= 0 ? marked(mix) : unheld != null && unheld.contains(key);
         if (check != null && m != check.contains(key)) {
@@ -80,8 +82,8 @@ final class Applied {
         return m;
     }
 
-    /** Vermerkt den gezogenen Kandidaten des Matches {@code mix} (-1:
-     *  ohne Match) als angewandt. */
+    /** Vermerkt den gezogenen Kandidaten des Matches {@code mix} (negativ:
+     *  sein Match hat den Schluessel verloren) als angewandt. */
     void insert(MatchKey key, int mix) {
         if (mix < 0) {
             if (unheld == null) unheld = new HashSet<>();

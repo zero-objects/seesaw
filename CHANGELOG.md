@@ -347,16 +347,18 @@ in Rust by decision of 2026-11-18).
 Doors that a host reaches only outside the contract behave differently
 and are listed below. The statement above does not cover them. The
 doors `elementDeleted`, `elementChanged`, `retractFor` and
-`drainRetraction` with a connection the passed graph does not hold,
-`retractMatch` on a dead match whose key another match carries and
-`linkRemoved` with the id of a connection behave as in 2.0.2, tested
-with expected values from runs of L0 (paragraphs after the list). Steps,
-applied steps, node count and fingerprint of every measured cell equal
-the ones of the Rust cells (792 measured lines of the Java cells and
-108 of `pde`, none differing). `java/bench/jgate.sh` runs a
-differential test against Java 2.0.2 and compares the full replay of
-the `pde` protocol `open2-edit` with L0 up to line 27 636, where L0
-leaves the protocol.
+`drainRetraction` with a connection the passed graph does not hold and
+`linkRemoved` with the id of a connection behave as in 2.0.2.
+`retractMatch` on a dead match whose key another match carries behaves
+better than 2.0.2: products applied for the other match after the call
+fall with it when it is retracted, where 2.0.2 left them. All of these
+are tested with expected values from runs of L0 (paragraphs after the
+list). Steps, applied steps, node count and fingerprint of every
+measured cell equal the ones of the Rust cells (792 measured lines of
+the Java cells and 108 of `pde`, none differing). `java/bench/jgate.sh`
+runs a differential test against Java 2.0.2 and compares the full
+replay of the `pde` protocol `open2-edit` with L0 up to line 27 636,
+where L0 leaves the protocol.
 This engine has to match the protocol on every call of the replay.
 
 Stages, with the thread CPU in ms (minimum over three rounds) of
@@ -549,21 +551,23 @@ only the filed nodes for such an id and finds no producers (read in
 the code, not run).
 
 `Engine.retractMatch`, called by a host for a dead match whose key now
-belongs to another match with the same ref sequence, behaves as in
-2.0.2, which kept todo, applied keys and provenance by key. The other
-match loses key and mark. If it was applied before the call, it keeps
-its provenance edge, and its products fall with it when it is retracted
-later. If its candidate is still in the todo, the candidate carries no
-match from then on (number -1). A match recorded under the key before
-the candidate is pulled replaces it. Pulled without a match, the
-candidate gets no provenance edge when it is applied, and its key counts
-as applied without a match, also when it is taken as a duplicate. A
-match recorded under the key after that takes over the mark. When the
-other match is retracted later, the products of a candidate applied
-without a match stay, as in 2.0.2. `elementDeleted`, `elementChanged`,
-`retractFor` and `step` do not lead there, only a host that calls
-`retractMatch` itself. Rust has no counterpart, `retract_match` is
-private there.
+belongs to another match with the same ref sequence, behaves better
+than 2.0.2, which kept todo, applied keys and provenance by key. The
+other match loses key and mark, as in 2.0.2. If it was applied before
+the call, it keeps its provenance edge, and its products fall with it
+when it is retracted later, as in 2.0.2. If its candidate is still in
+the todo, the candidate keeps naming that match with a negative number
+(`-2 - number`). A match recorded under the key before the candidate is
+pulled replaces it. Pulled with the negative number, the candidate's key
+counts as applied without a match, also when it is taken as a
+duplicate, as in 2.0.2. A match recorded under the key after that takes
+over the mark. Applied, the candidate gives its provenance edge to the
+other match, and the products fall with it when it is retracted later.
+2.0.2 looked the match up under the key, found none, set no edge and
+left the products in place.
+`elementDeleted`, `elementChanged`, `retractFor` and `step` do not lead
+there, only a host that calls `retractMatch` itself. Rust has no
+counterpart, `retract_match` is private there.
 
 `Engine.linkRemoved(g, a, b)` with the id of a connection as `a` or `b`
 behaves as in 2.0.2, which filed every match also under the connection

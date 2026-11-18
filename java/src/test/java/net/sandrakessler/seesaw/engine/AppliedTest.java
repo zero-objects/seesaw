@@ -184,18 +184,20 @@ final class AppliedTest {
      * 2.0.2 fuehrte Todo, angewandte Schluessel und Provenienz ueber den
      * Schluessel: der Aufruf nahm ihn dem anderen Match, der Kandidat im Todo
      * blieb, und wurde er angewandt, bekam kein Match die Provenienzkante.
-     * Derselbe Ablauf ueber die oeffentliche API gegen fa12974 gefahren
-     * (Job 7398), die erwarteten Werte sind die von dort. Drei Lagen:
+     * Hier traegt der andere Match die Kante, seine Retraktion nimmt die
+     * Erzeugnisse mit. Alles andere wie 2.0.2. Derselbe Ablauf ueber die
+     * oeffentliche API gegen fa12974 gefahren (Job 7398). Wo die Werte
+     * abweichen, steht der von 2.0.2 in der Meldung. Drei Lagen:
      * <ul>
      * <li>der Kandidat des anderen steht noch im Todo (fall2),
-     * <li>der andere ist schon angewandt (fall2b),
+     * <li>der andere ist schon angewandt (fall2b, gleich 2.0.2),
      * <li>der tote war angewandt, der andere holt dessen Erzeugnisse vor der
      *     Konsolidierung zurueck (fall2c).
      * </ul>
      * Mit und ohne Pruefung.
      */
     @Test
-    void einToterMatchNimmtDemAnderenDenSchluesselWie202() {
+    void einToterMatchNimmtDemAnderenDenSchluessel() {
         for (boolean checks : new boolean[] {false, true}) {
             String at = checks ? "mit Pruefung" : "ohne Pruefung";
             // fall2: der Kandidat des anderen steht noch im Todo.
@@ -218,7 +220,8 @@ final class AppliedTest {
             assertEquals(0, queue.size(), at);
             e.drainRetraction(g, queue);
             assertEquals(Boolean.TRUE, e.step(g, vals), at + ": der Kandidat des anderen wird angewandt");
-            assertNull(e.matches.get(other).entry, at + ": ohne Provenienzkante");
+            assertEquals(Integer.valueOf(1), e.matches.get(other).entry,
+                    at + ": die Provenienzkante traegt der andere (2.0.2: keine)");
             assertEquals(1, LinksTest.liveCorrsAt(g, x0), at);
             e.record(rule, refs.clone());
             assertEquals(4, e.matches.size(), at + ": der Schluessel war frei");
@@ -227,8 +230,8 @@ final class AppliedTest {
             assertEquals(Engine.Termination.DUPLICATION, e.verdict(), at);
             g.setNodeStatus(x0, St.TOMBSTONE);
             e.elementDeleted(g, x0);
-            assertEquals(0, e.consolidate(g), at + ": x0 geloescht");
-            assertEquals(1, LinksTest.liveCorrsAt(g, x0), at + ": das Erzeugnis des anderen bleibt wie in 2.0.2");
+            assertEquals(5, e.consolidate(g), at + ": x0 geloescht, die Erzeugnisse des anderen fallen (2.0.2: 0)");
+            assertEquals(0, LinksTest.liveCorrsAt(g, x0), at + ": 2.0.2: 1, das Erzeugnis blieb");
             g.setNodeStatus(w.a(), St.TOMBSTONE);
             e.elementDeleted(g, w.a());
             assertEquals(4, e.consolidate(g), at + ": a geloescht");
@@ -288,7 +291,8 @@ final class AppliedTest {
             assertNull(e.step(g, vals), at);
             assertEquals(0, e.consolidate(g), at);
             assertEquals(3, e.cascade.size(), at);
-            assertNull(e.matches.get(other).entry, at + ": ohne Provenienzkante");
+            assertEquals(Integer.valueOf(2), e.matches.get(other).entry,
+                    at + ": die Provenienzkante traegt der andere (2.0.2: keine)");
             g.setNodeStatus(x0, St.TOMBSTONE);
             e.elementDeleted(g, x0);
             assertEquals(5, e.consolidate(g), at + ": x0 geloescht");
