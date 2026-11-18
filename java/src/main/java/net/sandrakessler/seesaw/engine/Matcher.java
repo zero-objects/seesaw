@@ -58,9 +58,16 @@ public final class Matcher {
      * Wertgleichheit verbindet keine Positionen: sie bestimmt weder die
      * nächste Position noch deren Kandidaten und wird erst auf der
      * vollständigen Bindung geprüft. Java 2.0.2 nahm sie in den Plan
-     * (Code 2, Kandidaten aus den Nachbarn des gesetzten Knotens) und fand
-     * dadurch Matches nicht, deren Ende der Wertgleichheit kein Nachbar
-     * des anderen ist.
+     * (Code 2) und zählte sie bei der Wahl der nächsten Position als
+     * Verbindung. War sie der erste Link des Schritts, der ihr zweites
+     * Ende setzt, kamen die Kandidaten aus den Nachbarn des ersten Endes,
+     * und 2.0.2 fand die Matches nicht, deren Enden keine Nachbarn sind.
+     * Bei Regeln aus {@code Lower} ist das der Fall, in dem das zweite
+     * Ende keinen anderen Link zu einer gesetzten Position hat:
+     * {@code Lower} hängt die Wertgleichheiten hinter alle anderen Links.
+     * Sonst kamen die Kandidaten über den ersten Link, und die
+     * Wertgleichheit wurde nur verglichen, mit zwei fehlenden Werten als
+     * gleich ({@link #sameValue}).
      */
     static Plan plan(Rule r, Id[] fixed) {
         int n = r.patNodes.size();
@@ -122,9 +129,32 @@ public final class Matcher {
         return pn.predMatches(g.resolveValue(id, vals));
     }
 
+    /**
+     * Die Links {@code links} eines Schritts für den Kandidaten
+     * {@code cand}, wie in 2.0.2. Je Link {@code [Position, Code]}, Code 1:
+     * Kandidat → anderer, 0: anderer → Kandidat, -1: eine der beiden
+     * Richtungen, 2: Wertgleichheit über {@link #sameValue}. Den Code 2
+     * erzeugt {@link #plan} nicht mehr, ein Host kann ihn in einer eigenen
+     * Liste übergeben. Anders als 2.0.2: zwei fehlende Werte bestehen
+     * dort nicht.
+     */
     public static boolean linksOk(Graph g, Map<Id, String> vals, Id[] cur, List<int[]> links,
             Id cand) {
-        return linksOk(g, vals, cur, links, 0, cand);
+        for (int[] l : links) {
+            Id other = cur[l[0]];
+            boolean ok;
+            if (l[1] == 2) {
+                ok = sameValue(g, vals, cand, other);
+            } else if (l[1] == 1) {
+                ok = g.connected(cand, other);
+            } else if (l[1] == 0) {
+                ok = g.connected(other, cand);
+            } else {
+                ok = g.connected(cand, other) || g.connected(other, cand);
+            }
+            if (!ok) return false;
+        }
+        return true;
     }
 
     /** Die Links {@code links} ab dem Index {@code from}. */
@@ -150,7 +180,13 @@ public final class Matcher {
      * Wert-Gleichheit zweier Blätter wie Rust ({@code closing_links_ok}):
      * beide Werte vorhanden und gleich. Ein fehlender Wert gleicht keinem,
      * auch keinem fehlenden. Java 2.0.2 ließ zwei fehlende Werte als gleich
-     * durch.
+     * durch und fand einen Match mit zwei Blättern ohne Wert an einer
+     * Wertgleichheit überall, außer wo die Wertgleichheit der erste Link
+     * des Schritts war, der das zweite Blatt setzt, und die beiden keine
+     * Nachbarn waren ({@link #plan}). Die Suche findet einen solchen Match
+     * nie. Ein Wert fehlt einem Blatt ohne Eintrag im Wertespeicher und
+     * einem abgeleiteten Blatt, dessen Quelle keinen Wert hat oder dessen
+     * Transform nicht anwendbar ist ({@link Graph#resolveValue}).
      */
     private static boolean sameValue(Graph g, Map<Id, String> vals, Id a, Id b) {
         String va = g.resolveValue(a, vals);
