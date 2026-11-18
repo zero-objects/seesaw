@@ -515,13 +515,14 @@ public final class Engine {
      * <p>Steht im Todo schon ein Kandidat mit demselben Schluessel, hat sein
      * Match den Schluessel verloren (negative Nummer, {@link TodoKey#keyTaken}):
      * unter dem Schluessel stand keiner, und eine Nummer ab 0 traegt ein
-     * Kandidat nur, solange sein Match unter seinem Schluessel steht. Dahin fuehrt nur ein Host, der {@link #retractMatch}
-     * fuer einen toten Match ruft, dessen Schluessel ein anderer haelt. Der
-     * neue Kandidat ersetzt ihn (Rust {@code BTreeMap::insert}). 2.0.2
-     * fuehrte das Todo ohne Nummer und fand beim Ziehen ueber den Schluessel
-     * den neuen Match. Unter {@link #checks} wirft der Aufruf, wenn der
-     * Kandidat im Todo eine Nummer ab 0 traegt. War der Schluessel ohne
-     * Match angewandt, traegt der neue Match die Marke ({@link Applied#adopt}).
+     * Kandidat nur, solange sein Match unter seinem Schluessel steht. Dahin
+     * fuehrt nur ein Host, der {@link #retractMatch} fuer einen toten Match
+     * ruft, dessen Schluessel ein anderer haelt. Der neue Kandidat ersetzt
+     * ihn (Rust {@code BTreeMap::insert}). 2.0.2 fuehrte das Todo ohne
+     * Nummer und fand beim Ziehen ueber den Schluessel den neuen Match.
+     * Unter {@link #checks} wirft der Aufruf, wenn der Kandidat im Todo eine
+     * Nummer ab 0 traegt. War der Schluessel ohne Match angewandt, traegt
+     * der neue Match die Marke ({@link Applied#adopt}).
      */
     void record(Graph g, int ruleIx, Id[] refs) {
         MatchKey k = new MatchKey(ruleIx, refs);

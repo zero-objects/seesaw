@@ -300,6 +300,104 @@ final class AppliedTest {
         }
     }
 
+    /**
+     * Der Host ruft {@link Engine#retractMatch} danach auch fuer den anderen
+     * Match selbst. Derselbe Ablauf ueber die oeffentliche API gegen fa12974
+     * gefahren (Job 7649), wo die Werte abweichen, steht der von 2.0.2 in der
+     * Meldung. Drei Lagen:
+     * <ul>
+     * <li>fall2d: der tote war angewandt, der Kandidat des anderen holt
+     *     dessen Erzeugnisse nach dem Aufruf zurueck. Die Knoten fallen mit
+     *     dem anderen, ein neuer Seed widerspricht der Historie. 2.0.2 liess
+     *     sie stehen.
+     * <li>fall2e: der Kandidat des anderen wird nach dem Aufruf angewandt,
+     *     ein dritter Match uebernimmt die Marke. Die Erzeugnisse fallen
+     *     mit dem anderen, der dritte bleibt lebendig ohne Schluessel.
+     *     2.0.2 liess die Erzeugnisse stehen.
+     * <li>fall2e, der andere war vor dem Aufruf angewandt: gleich 2.0.2,
+     *     und derselbe Endzustand wie in der Lage davor.
+     * </ul>
+     * Mit und ohne Pruefung.
+     */
+    @Test
+    void derAndereWirdVomHostZurueckgezogen() {
+        for (boolean checks : new boolean[] {false, true}) {
+            String at = checks ? "mit Pruefung" : "ohne Pruefung";
+            // fall2d
+            LinksTest.ContextLink w = LinksTest.contextLinkGraph(1);
+            Graph g = w.g();
+            Id x0 = w.xs().get(0);
+            Map<Id, String> vals = new HashMap<>();
+            Engine e = forward(w, checks);
+            e.seed(g, vals);
+            LinksTest.runRemaining(e, g, vals);
+            int dead = child(e);
+            int rule = e.matches.get(dead).ruleIx;
+            Id[] refs = e.matches.get(dead).refs.clone();
+            ArrayList<Id> queue = new ArrayList<>();
+            e.retractMatch(g, dead, queue);
+            e.drainRetraction(g, queue);
+            e.record(rule, refs.clone());
+            int other = e.matches.size() - 1;
+            queue = new ArrayList<>();
+            e.retractMatch(g, dead, queue);
+            e.drainRetraction(g, queue);
+            LinksTest.runRemaining(e, g, vals);
+            assertEquals(0, e.consolidate(g), at);
+            assertEquals(Integer.valueOf(2), e.matches.get(other).entry, at + ": fall2d (2.0.2: keine Kante)");
+            queue = new ArrayList<>();
+            e.retractMatch(g, other, queue);
+            assertEquals(2, queue.size(), at + ": fall2d, die Erzeugnisse des anderen (2.0.2: 0)");
+            e.drainRetraction(g, queue);
+            assertEquals(2, e.consolidate(g), at + ": fall2d (2.0.2: 0)");
+            assertEquals(0, LinksTest.liveCorrsAt(g, x0), at + ": fall2d (2.0.2: 1)");
+            e.seed(g, vals);
+            LinksTest.runRemaining(e, g, vals);
+            assertEquals(Engine.Termination.CONTRADICTION, e.verdict(), at + ": fall2d (2.0.2: DUPLICATION)");
+
+            // fall2e, ohne und mit Anwendung des anderen vor dem Aufruf
+            for (boolean before : new boolean[] {false, true}) {
+                String in = at + ", fall2e, vorher angewandt " + before;
+                w = LinksTest.contextLinkGraph(1);
+                g = w.g();
+                x0 = w.xs().get(0);
+                e = forward(w, checks);
+                e.seed(g, vals);
+                assertEquals(Boolean.TRUE, e.step(g, vals), in + ": Root");
+                dead = child(e);
+                rule = e.matches.get(dead).ruleIx;
+                refs = e.matches.get(dead).refs.clone();
+                e.elementRemoved(x0);
+                e.retractMatch(g, dead, new ArrayList<>());
+                e.record(rule, refs.clone());
+                other = e.matches.size() - 1;
+                if (before) LinksTest.runRemaining(e, g, vals);
+                queue = new ArrayList<>();
+                e.retractMatch(g, dead, queue);
+                e.drainRetraction(g, queue);
+                LinksTest.runRemaining(e, g, vals);
+                e.record(rule, refs.clone());
+                int third = e.matches.size() - 1;
+                assertEquals(before ? Boolean.FALSE : null, e.step(g, vals), in + ": der dritte");
+                LinksTest.runRemaining(e, g, vals);
+                assertEquals(Integer.valueOf(1), e.matches.get(other).entry,
+                        in + (before ? "" : " (2.0.2: keine Kante)"));
+                queue = new ArrayList<>();
+                e.retractMatch(g, other, queue);
+                assertEquals(2, queue.size(), in + (before ? "" : " (2.0.2: 0)"));
+                e.drainRetraction(g, queue);
+                assertEquals(5, e.consolidate(g), in + (before ? "" : " (2.0.2: 0)"));
+                assertEquals(0, LinksTest.liveCorrsAt(g, x0), in + (before ? "" : " (2.0.2: 1)"));
+                assertTrue(!e.matches.get(third).dead, in + ": der dritte lebt");
+                assertNull(e.byKey.get(e.matches.get(third).key), in + ": ohne Schluessel");
+                e.seed(g, vals);
+                LinksTest.runRemaining(e, g, vals);
+                assertEquals(Engine.Termination.CONTRADICTION, e.verdict(),
+                        in + (before ? "" : " (2.0.2: DUPLICATION)"));
+            }
+        }
+    }
+
     /** Gerichtet, ungerichtet saettigt die Welt nicht. Hier werden
      *  Schluessel vergessen und wieder angewandt, und Kandidaten mit
      *  tentativ zurueckgezogenem Anker vergessen ihren Match (gemessen

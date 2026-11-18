@@ -2,6 +2,8 @@ package net.sandrakessler.seesaw.engine;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -149,6 +151,116 @@ final class ErzeugerTest {
         assertTrue(runden >= 10, "Runden: " + runden);
         assertTrue(verbindungenMitErzeuger >= 100, "Verbindungen mit Erzeuger: " + verbindungenMitErzeuger);
         assertTrue(knotenMitMehrerenErzeugern > 0, "Knoten mit mehreren Erzeugern: " + knotenMitMehrerenErzeugern);
+    }
+
+    /** Die Regeln von {@code LinksTest} und {@code Pair}: zwei
+     *  {@code X} mit einer Verbindung, deren {@code Y} ueber ihre
+     *  Korrespondenzen gematcht werden. Die Verbindung zwischen den beiden
+     *  {@code Y} erzeugt {@code Pair} zwischen zwei gematchten Knoten. */
+    private static final String PAIR_RULES = """
+            {
+              "format": 3,
+              "name": "context_link_pair",
+              "rules": [
+                {
+                  "name": "Root", "rank": 100,
+                  "left": {"anchor": "a", "nodes": [{"name": "a", "type": "A"}]},
+                  "right": {"anchor": "b", "nodes": [{"name": "b", "type": "B"}]},
+                  "corrs": [{"type": "AB", "left": "a", "right": "b", "role": "establishes"}]
+                },
+                {
+                  "name": "Child", "rank": 90,
+                  "left": {"anchor": "a", "nodes": [
+                    {"name": "a", "type": "A"}, {"name": "x", "type": "X"}
+                  ], "links": [["a", "x"]]},
+                  "right": {"anchor": "b", "nodes": [
+                    {"name": "b", "type": "B"}, {"name": "y", "type": "Y"}
+                  ], "links": [["b", "y"]]},
+                  "corrs": [
+                    {"type": "AB", "left": "a", "right": "b", "role": "references"},
+                    {"type": "XY", "left": "x", "right": "y", "role": "establishes"}
+                  ]
+                },
+                {
+                  "name": "Pair", "rank": 80,
+                  "left": {"anchor": "x1", "nodes": [
+                    {"name": "x1", "type": "X"}, {"name": "x2", "type": "X"}
+                  ], "links": [["x1", "x2"]]},
+                  "right": {"anchor": "y1", "nodes": [
+                    {"name": "y1", "type": "Y"}, {"name": "y2", "type": "Y"}
+                  ], "links": [["y1", "y2"]]},
+                  "corrs": [
+                    {"type": "XY", "left": "x1", "right": "y1", "role": "references"},
+                    {"type": "XY", "left": "x2", "right": "y2", "role": "references"}
+                  ]
+                }
+              ]
+            }
+            """;
+
+    /**
+     * Ein Eintrag legt eine Verbindung zwischen zwei gematchten Knoten an
+     * ({@code Pair}: {@code y0 → y1}). Ablauf wie AppliedTest, Lage fall2:
+     * der Match von {@code Pair} stirbt und verliert seinen Schluessel, ein
+     * anderer Match bekommt ihn, ein Host ruft {@link Engine#retractMatch}
+     * fuer den toten, der Kandidat des anderen wird angewandt und legt die
+     * Verbindung an. Ein dritter Match T kommt unter den Schluessel und
+     * uebernimmt die Marke. Dann loescht der Host die Verbindung. Die
+     * Erzeuger einer Verbindung kommen aus ihren Enden: aus den Erzeugern
+     * der Enden und den Eintraegen der Matches, die sie binden. Keines der
+     * Enden hat der Eintrag erzeugt, ihn findet nur die Provenienzkante am
+     * anderen Match. Gegen fa12974 gefahren (Job 7649): T stirbt, der
+     * Schluessel ist nicht mehr angewandt, ein neuer Match unter ihm wird
+     * angewandt. Ohne die Kante (a6102c4 bis fc0bdc4) blieb T lebendig,
+     * mit {@code -Dseesaw.checks=true} warf {@code checkProducers}.
+     */
+    @Test
+    void eineVerbindungZwischenGematchtenKnotenFindetIhrenErzeuger() {
+        Graph g = new Graph();
+        Id a = g.addBaseline("a", "A");
+        Id x0 = g.addBaseline("a/x0", "X");
+        Id x1 = g.addBaseline("a/x1", "X");
+        g.connect(a, x0, St.SOLID);
+        g.connect(a, x1, St.SOLID);
+        g.connect(x0, x1, St.SOLID);
+        List<Rule> rules = Rules.load(PAIR_RULES, g);
+        Map<Id, String> vals = new HashMap<>();
+        Engine e = LinksTest.forward(rules);
+        e.seed(g, vals);
+        for (int i = 0; i < 3; i++) assertEquals(Boolean.TRUE, e.step(g, vals), "Root und zwei Child");
+        int pair = -1;
+        for (int mix = 0; mix < e.matches.size(); mix++) {
+            if (e.rules.get(e.matches.get(mix).ruleIx).name.startsWith("Pair")) pair = mix;
+        }
+        assertTrue(pair >= 0, "der Match von Pair");
+        int rule = e.matches.get(pair).ruleIx;
+        Id[] refs = e.matches.get(pair).refs.clone();
+        e.elementRemoved(x1);
+        e.retractMatch(g, pair, new ArrayList<>());
+        e.record(rule, refs.clone());
+        int other = e.matches.size() - 1;
+        ArrayList<Id> queue = new ArrayList<>();
+        e.retractMatch(g, pair, queue);
+        e.drainRetraction(g, queue);
+        assertEquals(Boolean.TRUE, e.step(g, vals), "der Kandidat des anderen");
+        int eix = e.cascade.size() - 1;
+        assertEquals(1, e.cascade.get(eix).createdEdges.size(), "y0 → y1");
+        Id edge = e.cascade.get(eix).createdEdges.get(0);
+        e.record(rule, refs.clone());
+        int third = e.matches.size() - 1;
+        assertNull(e.step(g, vals), "T wird uebersprungen");
+        g.setConnectionStatus(edge, St.TOMBSTONE);
+        e.elementDeleted(g, edge);
+        assertTrue(e.matches.get(third).dead, "T ist tot");
+        assertFalse(e.matches.get(other).dead, "der andere lebt");
+        assertFalse(e.applied.marked(third), "der Schluessel ist nicht angewandt");
+        assertFalse(e.appliedKeys().contains(e.matches.get(third).key));
+        assertArrayEquals(new int[] {eix}, liste(e.producersOf(g, edge)), "der Eintrag des anderen");
+        assertEquals(0, e.consolidate(g));
+        e.record(rule, refs.clone());
+        assertEquals(Boolean.TRUE, e.step(g, vals), "ein neuer Match unter dem Schluessel");
+        assertNull(e.step(g, vals));
+        assertEquals(5, e.cascade.size());
     }
 
     /**

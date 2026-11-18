@@ -351,11 +351,13 @@ doors `elementDeleted`, `elementChanged`, `retractFor` and
 `linkRemoved` with the id of a connection behave as in 2.0.2.
 `retractMatch` on a dead match whose key another match carries behaves
 better than 2.0.2: products applied for the other match after the call
-fall with it when it is retracted, where 2.0.2 left them. All of these
-are tested with expected values from runs of L0 (paragraphs after the
-list). Steps, applied steps, node count and fingerprint of every
-measured cell equal the ones of the Rust cells (792 measured lines of
-the Java cells and 108 of `pde`, none differing). `java/bench/jgate.sh`
+fall with it when it is retracted. 2.0.2 left them, unless the dead
+match had produced them as well and fell with it. All of these are
+tested against runs of L0, with the deviations named in the test
+(paragraphs after the list). Steps, applied steps, node count and
+fingerprint of every measured cell equal the ones of the Rust cells
+(792 measured lines of the Java cells and 108 of `pde`, none
+differing). `java/bench/jgate.sh`
 runs a differential test against Java 2.0.2 and compares the full
 replay of the `pde` protocol `open2-edit` with L0 up to line 27 636,
 where L0 leaves the protocol.
@@ -564,7 +566,17 @@ duplicate, as in 2.0.2. A match recorded under the key after that takes
 over the mark. Applied, the candidate gives its provenance edge to the
 other match, and the products fall with it when it is retracted later.
 2.0.2 looked the match up under the key, found none, set no edge and
-left the products in place.
+left the products in place. If the dead match had been applied and had
+produced the same elements, 2.0.2 retracted them through its edge as
+soon as it fell together with the other match, for example when the
+host deletes an element both bind. Then the two differ only when the
+host calls `retractMatch` for the other match alone. If a third match
+took over the mark and the host then calls `retractMatch` for the other
+match, its products fall and the third match stays alive without the
+key. 2.0.2 left the products in that sequence and reaches the same state
+when the other match was applied before the call. With the edge,
+`producersOf` finds the entry for a connection it created between two
+matched nodes, as 2.0.2 did through the filed connections.
 `elementDeleted`, `elementChanged`, `retractFor` and `step` do not lead
 there, only a host that calls `retractMatch` itself. Rust has no
 counterpart, `retract_match` is private there.
