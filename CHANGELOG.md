@@ -637,17 +637,6 @@ The check does not count in the counters of the searches. The seed then
 takes the way the threshold chooses. Before, a seed under the checks
 always went through the index.
 
-The seed part of Rust 17b7e52 is taken over as well: the walk of the
-index from a node does not enter a smaller node, which the search
-anchored there leaves out. A place whose paths pass only through such a
-node is not offered. The expansion has left out the earlier nodes of a
-delta in the same way since stage T11. On `langpack/seed/k700/n2000`
-(seed and steps to saturation) Java now counts what Rust counts on
-`perf/select` with `perf_trace`: 4 953 anchored searches, no search per
-rule, 30 775 walk visits. With `firstOnly` Java counted 4 952 searches
-and 26 497 visits, with `index_seed` before the seed part of 17b7e52
-4 955 and 37 103.
-
 ### Tests
 
 - `difftest/` is a package of its own, not published, that depends on

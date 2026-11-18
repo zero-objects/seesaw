@@ -166,8 +166,7 @@ final class Par {
         List<long[]> triples = spread(walkPieces, walks, (walk, p) -> {
             int from = p * size;
             int to = Math.min(from + size, nodes.size());
-            long[] found = ix.candidates(g, vals, nodes.subList(from, to), walk, active,
-                    (ni, id) -> id.compareTo(nodes.get(from + ni)) < 0);
+            long[] found = ix.candidates(g, vals, nodes.subList(from, to), walk, active, null);
             for (int k = 0; k < found.length; k++) {
                 long t = found[k];
                 found[k] = AnchorIndex.pack(AnchorIndex.rule(t), AnchorIndex.node(t) + from,
