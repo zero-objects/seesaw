@@ -11,7 +11,7 @@ Zeilen "<label> <zelle> nicht_verfuegbar <grund>" (eine Zelle, die der Stand nic
 gehen in keine der beiden Auswertungen ein und stehen am Ende je Zelle und Label.
 
 jreport.py --ladder <ladder.txt> --ref <tsv>[:<label>] [--ref ...] [--rust <tsv>]
-           [--komma] [--kurz-md] [--out <datei>] <tsv>: Auswertung der Messleiter
+           [--komma] [--kurz-md] [--alle-staende] [--out <datei>] <tsv>: Auswertung der Messleiter
 (java/bench/jsuite.sh ladder). ladder.txt gibt die Reihenfolge der Stände. Je Zelle eine
 Tabelle über die Stände: Thread-CPU min (Spalte 4), Wall min (Spalte 6), alloc (MB),
 gc_ms und proc_cpu_ms, je das Minimum über die Runden, dazu die Zahl der Zeilen (Runden)
@@ -25,7 +25,9 @@ jeder Rust-Zeile gegen die Referenz derselben Zelle aus den --ref-Dateien (mit
 ":<label>" nur Zeilen dieses Labels). Exit-Code 1 bei einer Abweichung oder einer Zelle
 ohne Referenz. --rust wertet nur die Zellen aus, die die Java-TSV hat. --komma schreibt
 Dezimalkommas, --kurz-md gibt nur die Kurzform als Markdown-Tabelle aus, --out schreibt
-zusätzlich in eine Datei.
+zusätzlich in eine Datei. --alle-staende hängt an die Kurzform eine zweite Tabelle mit dem
+Wert jedes Stands der Leiter (maßgebliche Spalte wie in der Kurzform) und dem Rust-Wert,
+ohne Gewinn und Faktor. Ohne die Option bleibt die Ausgabe unverändert.
 """
 
 import argparse
@@ -216,6 +218,7 @@ def ladder_main():
     ap.add_argument("--rust")
     ap.add_argument("--komma", action="store_true")
     ap.add_argument("--kurz-md", action="store_true")
+    ap.add_argument("--alle-staende", action="store_true")
     ap.add_argument("--out")
     ap.add_argument("tsv")
     args = ap.parse_args()
@@ -257,6 +260,7 @@ def ladder_main():
     out()
 
     summary = []
+    per_stand = []
     header = ("Stand", "n", "CPU min ms", "Wall min ms", "alloc MB", "gc_ms", "n_proc",
               "proc_cpu min ms")
     for cell in cells:
@@ -304,6 +308,7 @@ def ladder_main():
             f"  Faktor Java:Rust bei {first}: {num(f0)}, bei {last}: {num(f1)}")
         out()
         summary.append((cell, unit, v0, v1, gain, rust_v, f0, f1))
+        per_stand.append((cell, unit, {k: v[col] for k, v in stat.items()}, rust_v))
 
     out(f"Kurzform ({order[0]} gegen {order[-1]}, ms, Faktor Java:Rust = Java-Wert geteilt "
         f"durch Rust-Minimum)")
@@ -318,6 +323,18 @@ def ladder_main():
         print("|---|---|---|---|---|---|---|---|")
         for c, u, a, b, g, rv, f0, f1 in short:
             print(f"| `{c}` | {u} | {a} | {b} | {g} | {rv} | {f0} | {f1} |")
+
+    if args.alle_staende:
+        out("Alle Stände (ms, Minimum über die Zeilen, Spalte wie in der Kurzform)")
+        wide = [(c, u) + tuple(num(st.get(lb)) for lb in order) + (num(rv),)
+                for c, u, st, rv in per_stand]
+        table(("Zelle", "Spalte") + tuple(order) + ("Rust",), wide, out, left=2)
+        out()
+        if args.kurz_md:
+            print("| Zelle | Spalte | " + " | ".join(order) + " | Rust |")
+            print("|---" * (len(order) + 3) + "|")
+            for row in wide:
+                print(f"| `{row[0]}` | " + " | ".join(row[1:]) + " |")
 
     if unavailable:
         out("Nicht verfügbar (Zelle, Label, Grund):")
