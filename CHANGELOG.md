@@ -340,7 +340,10 @@ It builds on the anchor index of the section before, which is the state
 the measurements call L0. Within the contract, what the engine does is
 equal to or better than Java 2.0.2: graph, cascade and its order and
 the results of `step` stay those of 2.0.2. The exception is the fix of
-the matcher (next section), which follows Rust where 2.0.2 did not.
+the matcher (next section), which follows Rust where 2.0.2 did not,
+including two leaves without a value at a value equality: 2.0.2 took
+them as equal, the matcher now does not (different from 2.0.2, not
+rated).
 Doors that a host reaches only outside the contract behave differently
 and are listed below. The statement above does not cover them. The
 doors `elementDeleted`, `elementChanged`, `retractFor` and
@@ -468,6 +471,12 @@ did not exist before T13:
 | `pde/graph/java40` | thread CPU | 866.5 | 811.7 | 1.07x | 4.8 | 4.5 |
 | `pde/open/java40` | thread CPU | 46042.9 | 7519.4 | 6.12x | 11.7 | 1.9 |
 
+The column "after" is the stage "end" (246227e, main classes equal to
+those of 02c3e39) of the measurement of 2026-11-16, before the fixes in
+the paragraphs below and in the next section. The state after those
+fixes is `S1a` (540f03d) in `benches/suite/results/2026-11-18-java/README.md`,
+measured on part of these cells.
+
 The tables of all stages, the machine load during the runs and the
 limits of the measurement are in
 `benches/suite/results/2026-11-16-java/README.md`. The machine had a
@@ -575,21 +584,37 @@ rose from 43 592 to 47 902. The cause of the extra time was not
 investigated. Details in
 `benches/suite/results/2026-11-18-java/README.md`.
 
+From 02c3e39 to 540f03d (the matcher fix and the doors above that behave
+as in 2.0.2 again) the thread CPU of
+`langpack/delta-delete/k700/n20000/d200` rose from 31.7 ms to 32.4 ms
+and that of `langpack/delta-delete/k700/n20000/d2000` from 148.6 ms to
+154.9 ms (minimum over three rounds, same README). Which of the commits
+causes it was not measured.
+
 Not measured: the cost of `producersOf` and `restingOn` for a connection,
 and the index of the connections an entry created. The cells delete nodes
 only. The path runs when a host gives the id of a connection to
-`elementDeleted`, `elementChanged` or `retractFor`.
+`elementDeleted`, `elementChanged` or `retractFor`. Also not measured:
+`linkRemoved` with an id the graph does not know builds the index of the
+links not held (one pass over the match store per graph), where 2.0.2
+looked the id up once in `byElement`. No cell and no `pde` protocol
+calls `linkRemoved`.
 
 ### Java: matches missed behind a value equality
 
 Fixed. Java 2.0.2 took a value equality (`SAME_VALUE`, from `joins` and
-`same_value_links`) into the search plan (`Matcher.buildPlan`). It
-counted as a connection when the next position was chosen, and the
-candidates for that position came from the participations of the node
-at its other end. A node with the same value that is not a neighbour of
-that node was never tried. Rust (`build_plan` in
-`src/engine/matcher.rs`) checks a value equality only on the complete
-binding. `Matcher.plan` now does the same.
+`same_value_links`) into the search plan (`Matcher.buildPlan`, code 2).
+It counted as a connection when the next position was chosen. Where it
+was the first link of the step that set its second end, the candidates
+for that position came from the participations of the node at its first
+end, and a node with the same value that is not a neighbour of that node
+was never tried. Where the step had another link first, the candidates
+came from that link and the value equality was only compared. `Lower`
+puts the value equalities behind all other links of a rule, so the first
+case is the one where the second end has no other link to a position
+already bound. Rust (`build_plan` in `src/engine/matcher.rs`) checks a
+value equality only on the complete binding. `Matcher.plan` now does the
+same.
 
 Found in the `pde` protocols of zerodds-pde: at the engine `test-unit`,
 Java did not find the forward match of `TestUnit_JUnit5_Plan`, whose
@@ -608,13 +633,26 @@ alone, the rule above with `pn` and `xn` both without a value would
 have found a match that neither 2.0.2 nor Rust finds.
 `Matcher.sameValue` now follows Rust. It is the only comparison of two
 values in the search, the index of the links (`Links`) and the anchor
-index skip value equalities.
+index skip value equalities. The public `Matcher.linksOk` compares
+through it for code 2, as 2.0.2 did, although the plan no longer
+produces that code. Two missing values do not pass there either, 2.0.2
+let them pass.
 
 Compared with 2.0.2, a search over a pattern with a value equality also
-finds the matches whose two ends are not neighbours, and how often it
-returns a match no longer depends on the connections between those two
-ends. Where the two ends are neighbours and both have no value, 2.0.2
-found the match, the search now does not, as in Rust.
+finds the matches 2.0.2 missed because their two ends are not
+neighbours, and how often it returns a match no longer depends on the
+connections between those two ends. A match whose value equality has
+two leaves without a value is no longer found. 2.0.2 found it in all
+other cases: where the step that set the second leaf had another link
+first, where the two leaves were neighbours, and where both were fixed
+positions. Example: two leaves of one node joined by `same_value_links`,
+both without a value. 2.0.2 finds the match without a fixed position,
+at each fixed position and through the engine (run against fa12974),
+the search does not (`MatcherTest.zweiFehlendeWerteSindNichtGleich`).
+A leaf has no value when the value map has no entry for it, or when it
+is a derived leaf whose source has no value or whose transform does not
+apply (`Graph.resolveValue`). This case is different from 2.0.2 and not
+rated.
 
 Thread CPU of the `pde` cells on `open2` and `open5`, minimum over three
 rounds (`benches/suite/results/2026-11-18-java/`, 02c3e39 before the
@@ -622,17 +660,21 @@ fix, 540f03d after it):
 
 | Cell | Before (ms) | After (ms) |
 |---|---|---|
-| `pde/load/open2` | does not run | 370.0 |
-| `pde/graph/open2` | does not run | 39.3 |
-| `pde/open/open2` | does not run | 137.4 |
-| `pde/load/open5` | does not run | 364.8 |
-| `pde/graph/open5` | does not run | 111.0 |
-| `pde/open/open5` | does not run | 6292.8 |
+| `pde/load/open2` | not run, the replay leaves the protocol | 370.0 |
+| `pde/graph/open2` | not run, the replay leaves the protocol | 39.3 |
+| `pde/open/open2` | not run, the replay leaves the protocol | 137.4 |
+| `pde/load/open5` | not run, the replay leaves the protocol | 364.8 |
+| `pde/graph/open5` | not run, the replay leaves the protocol | 111.0 |
+| `pde/open/open5` | not run, the replay leaves the protocol | 6292.8 |
 
 Before the fix the replay of both protocols leaves the protocol at the
-lines given above, so the cells were not run on 02c3e39. After it, steps,
-applied steps, node count and fingerprint of all six cells are equal to
-the Rust cells.
+lines given above, so the cells were not run on 02c3e39. The departure
+was measured on 02c3e39 for `pde/open/open2` and `pde/open/open5` by
+the gate (the entries of `java/bench/pde-abweichungen.txt` before
+c233050). For `load` and `graph` it follows from
+the code: every part replays the whole protocol (`PdeReplay.run`). After
+the fix, steps, applied steps, node count and fingerprint of all six
+cells are equal to the Rust cells.
 
 ### Tests
 

@@ -17,9 +17,10 @@ kommt aus HEAD und läuft gegen das JAR der Hauptklassen des Stands.
 | `S1b` | 0a3f81a | java: Gang des Seeds betritt keine kleineren Knoten (Seed-Teil von Rust 17b7e52) |
 
 - `S0` ist der Stand der letzten Messleiter.
-- `S1a` enthält die Matcher-Behebung (Wertgleichheit, `SAME_VALUE`) und vier
-  Fälle, in denen Java wieder wie 2.0.2 verfährt. Der Seed über den Index
-  hat die Java-Form (`firstOnly`).
+- `S1a` enthält die Matcher-Behebung (Wertgleichheit, `SAME_VALUE`) und drei
+  Fälle, in denen Java wieder wie 2.0.2 verfährt (391a8f3, a6102c4,
+  540f03d). Ein vierter Fall trat nicht auf (74ecf61 ändert nur
+  `CHANGELOG.md`). Der Seed über den Index hat die Java-Form (`firstOnly`).
 - `S1b` enthält zusätzlich die Rust-Form des Seeds (94f8363 und 0a3f81a).
   Beide Commits sind zurückgenommen (siehe unten), `S1b` ist nur der
   gemessene Stand.
@@ -212,6 +213,15 @@ Gegenprobe bestanden. Einzelheiten stehen im Bericht der Aufgabe.
 - `proc_cpu_ms` hat 10-ms-Stufen.
 - Die Reservierung 1042 war exklusiv. Last von außen war trotzdem vorhanden
   (siehe Load Average), ihre Herkunft ist nicht geprüft.
+- Das Zurückziehen von Matches nach gelöschten oder geänderten Elementen
+  (`elementDeleted`, `elementChanged`), an dem die drei Fälle aus `S1a`
+  ansetzen, ist an keinem Protokoll des Hosts gemessen. In der Messstrecke
+  läuft es nur in den Zellen `delta-delete`, die nur Knoten löschen.
+  `java40`, `open2` und `open5` enthalten keine Zeile `deleted` oder
+  `changed`. Nur `open2-edit` hat sie (5343 `deleted`, 4 `changed`,
+  gezählt), die Zelle `pde/edit/open2-edit` ist nicht Teil dieser Messung.
+  Geprüft wird `open2-edit` im Gate (`pde:open2-edit`,
+  `pde-voll:open2-edit`), ohne Zeitmessung.
 
 ## Dateien
 
