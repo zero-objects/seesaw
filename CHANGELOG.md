@@ -342,15 +342,13 @@ equal to or better than Java 2.0.2: graph, cascade and its order and
 the results of `step` stay those of 2.0.2. The exception is the fix of
 the matcher (next section), which follows Rust where 2.0.2 did not.
 Doors that a host reaches only outside the contract behave differently
-and are listed below. The statement above does not cover them, and
-one of them behaves worse than 2.0.2: after `elementRemoved` with the
-id of a connection and `record(int, Id[])` a match recorded later can
-lose its candidate at the next door with a graph. Steps, applied steps,
-node count and fingerprint of every measured cell equal the ones of the
-Rust cells (792 measured lines of the Java cells and 108 of `pde`, none
-differing). `java/bench/jgate.sh` runs a differential test against
-Java 2.0.2 and compares the full replay of the `pde` protocol
-`open2-edit` with L0 up to line 27 636, where L0 leaves the protocol.
+and are listed below. The statement above does not cover them. Steps,
+applied steps, node count and fingerprint of every measured cell equal
+the ones of the Rust cells (792 measured lines of the Java cells and
+108 of `pde`, none differing). `java/bench/jgate.sh` runs a
+differential test against Java 2.0.2 and compares the full replay of
+the `pde` protocol `open2-edit` with L0 up to line 27 636, where L0
+leaves the protocol.
 This engine has to match the protocol on every call of the replay.
 
 Stages, with the thread CPU in ms (minimum over three rounds) of
@@ -477,9 +475,11 @@ only in the ways given:
   resting on it die at the next door that takes a graph, on the graph of
   that door.
 - `Engine.record(int, Id[])` (without a graph): the index of the links
-  not held is dropped (it is rebuilt at the next question), and so is
-  the bound per noted id. A match recorded this way after
-  `elementRemoved` is not killed by it, as in 2.0.2.
+  not held is dropped (it is rebuilt at the next question). A match
+  recorded this way after `elementRemoved` with the id of a connection
+  and before the next door with a graph is not killed there and keeps
+  its candidate, as in 2.0.2, also when it carries the key of a match
+  that dies there.
 - `Engine.linkRemoved(g, a, b)` with a connection id as `a` or `b`:
   2.0.2 cut the file of the connection, it now returns without effect,
   and with checks on it throws.
