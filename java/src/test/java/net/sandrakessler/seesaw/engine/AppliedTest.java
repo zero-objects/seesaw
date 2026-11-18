@@ -1,6 +1,7 @@
 package net.sandrakessler.seesaw.engine;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
@@ -388,7 +389,7 @@ final class AppliedTest {
                 e.drainRetraction(g, queue);
                 assertEquals(5, e.consolidate(g), in + (before ? "" : " (2.0.2: 0)"));
                 assertEquals(0, LinksTest.liveCorrsAt(g, x0), in + (before ? "" : " (2.0.2: 1)"));
-                assertTrue(!e.matches.get(third).dead, in + ": der dritte lebt");
+                assertFalse(e.matches.get(third).dead, in + ": der dritte lebt");
                 assertNull(e.byKey.get(e.matches.get(third).key), in + ": ohne Schluessel");
                 e.seed(g, vals);
                 LinksTest.runRemaining(e, g, vals);

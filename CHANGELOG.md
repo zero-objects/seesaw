@@ -357,10 +357,9 @@ tested against runs of L0, with the deviations named in the test
 (paragraphs after the list). Steps, applied steps, node count and
 fingerprint of every measured cell equal the ones of the Rust cells
 (792 measured lines of the Java cells and 108 of `pde`, none
-differing). `java/bench/jgate.sh`
-runs a differential test against Java 2.0.2 and compares the full
-replay of the `pde` protocol `open2-edit` with L0 up to line 27 636,
-where L0 leaves the protocol.
+differing). `java/bench/jgate.sh` runs a differential test against
+Java 2.0.2 and compares the full replay of the `pde` protocol
+`open2-edit` with L0 up to line 27 636, where L0 leaves the protocol.
 This engine has to match the protocol on every call of the replay.
 
 Stages, with the thread CPU in ms (minimum over three rounds) of
@@ -570,7 +569,13 @@ left the products in place. If the dead match had been applied and had
 produced the same elements, 2.0.2 retracted them through its edge as
 soon as it fell together with the other match, for example when the
 host deletes an element both bind. Then the two differ only when the
-host calls `retractMatch` for the other match alone. If a third match
+host calls `retractMatch` for the other match alone. In that case only
+the nodes fall. The connections the other match took over from the
+dead one were not fresh, are not among its products and stay `GHOST`,
+as in 2.0.2 when a re-derivation takes over products and is retracted
+later (measured against L0). A new seed then reports `CONTRADICTION`
+where 2.0.2 reports `DUPLICATION`, and `step` returns `null` where
+2.0.2 returns `false`, then `null`. If a third match
 took over the mark and the host then calls `retractMatch` for the other
 match, its products fall and the third match stays alive without the
 key. 2.0.2 left the products in that sequence and reaches the same state
