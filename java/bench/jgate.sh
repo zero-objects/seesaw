@@ -35,13 +35,13 @@
 #         "pde <name> VERDIKT=durchgefallen <gründe> zellen=…". Bestanden nur, wenn jede
 #         Rust-Zelle des Protokolls ohne Abweichung durchlief und Schritte, angewandte Schritte,
 #         Knoten und Fingerprint gleich der Rust-Zelle sind.
-#         Bekannte Abweichungen von Java 2.0.2 stehen in PDE_EXPECTED (Vorgabe
-#         bench/pde-abweichungen.txt, Format und Grund dort). Für ein Protokoll mit Eintrag besteht
-#         eine Zelle nur, wenn ihre erste Abweichung genau an der Zeile des Eintrags mit genau
-#         dessen Meldung liegt ("bekannte Abweichung an Zeile …"). Eine andere Abweichung
-#         (ANDERE_ABWEICHUNG), ein Lauf ohne Abweichung (OHNE_ABWEICHUNG, eine
-#         Verhaltensänderung gegenüber 2.0.2) oder ein anderer Fehler fallen durch. Fehlt die
-#         Datei oder ist eine Zeile ungültig, fällt der ganze Teil durch.
+#         Bekannte Abweichungen der Java-Engine vom Protokoll stehen in PDE_EXPECTED (Vorgabe
+#         bench/pde-abweichungen.txt, Format und Grund dort, derzeit ohne Eintrag). Für ein
+#         Protokoll mit Eintrag besteht eine Zelle nur, wenn ihre erste Abweichung genau an der
+#         Zeile des Eintrags mit genau dessen Meldung liegt ("bekannte Abweichung an Zeile …").
+#         Eine andere Abweichung (ANDERE_ABWEICHUNG), ein Lauf ohne Abweichung (OHNE_ABWEICHUNG,
+#         eine Verhaltensänderung) oder ein anderer Fehler fallen durch. Fehlt die Datei oder ist
+#         eine Zeile ungültig, fällt der ganze Teil durch.
 #         Am Ende "pde PDE_RC=… protokolle=… bestanden=… durchgefallen=…". PDE_RC=0 nur, wenn
 #         jedes verlangte Protokoll besteht und protokolle>0.
 #           pde:<name>  nur das Protokoll <name>, für Jobs unter 5 Minuten
@@ -85,12 +85,26 @@
 #         einem anderen Stand gehört, gesendet auf dem Mac mit jsuite.sh send L0 fa12974) und
 #         einmal gegen die dieses Baums. Die Nachfahrt kommt beide Male aus diesem Baum.
 #         Verglichen werden die beiden Ausgaben Zeile für Zeile (/tmp/jgate-voll-L0.out und
-#         /tmp/jgate-voll-HEAD.out). Je Seite eine Zeile "pde-voll <name> <seite> ende=ja|nein
-#         zeilen=… sekunden=…" und die Zeile "ende …" oder "abbruch …" der Seite, dann
-#         "pde-voll <name> VERDIKT=bestanden zeilen=…" nur, wenn beide Seiten bis zum Ende
-#         kamen und die Ausgaben gleich sind, sonst "VERDIKT=durchgefallen <gründe>" mit der
-#         ersten abweichenden Zeile beider Seiten. Am Ende "pde-voll VOLL_RC=… protokolle=…
-#         bestanden=… durchgefallen=…".
+#         /tmp/jgate-voll-HEAD.out), für ein Protokoll mit Eintrag in VOLL_L0_GRENZE nur die
+#         Zeilen der Aufrufe vor der Protokollzeile des Eintrags, sonst alle Zeilen.
+#         Grund der Grenze: das Verhalten dieses Baums ist gleich oder besser als das von Java
+#         2.0.2. Auf open2-edit unterscheiden sich beide am Matcher. Java 2.0.2 nahm SAME_VALUE
+#         in den Suchplan (Matcher.buildPlan) und fand an der Engine test-unit den Match von
+#         TestUnit_JUnit5_Plan (vorwärts) nicht, den Rust als Duplikat erkennt. In open2-edit
+#         weicht L0 deshalb an Zeile 27636 zum ersten Mal vom Protokoll ab, dieser Baum nicht
+#         (CHANGELOG [Unreleased], "Java: matches missed behind a value equality"). Ab dieser
+#         Zeile rechnet L0 auf einem anderen Zustand weiter, seine Zeilen dahinter sind kein
+#         Maßstab mehr. Vor der Grenze muss dieser Baum gleich L0 sein, über das ganze Protokoll
+#         gleich dem Protokoll: in der Zeile "ende" dieser Seite abweichend=0. Ein Eintrag gilt
+#         nur, wenn L0 genau an seiner Zeile zum ersten Mal abweicht (erste_abweichung= in der
+#         Zeile "ende" von L0), sonst fällt das Protokoll durch.
+#         Je Seite eine Zeile "pde-voll <name> <seite> ende=ja|nein zeilen=… sekunden=…" und die
+#         Zeile "ende …" oder "abbruch …" der Seite, dann "pde-voll <name> VERDIKT=bestanden
+#         zeilen=… verglichen=… grenze=…|keine head_abweichend=0" nur, wenn beide Seiten bis zum
+#         Ende kamen, die verglichenen Zeilen gleich sind, dieser Baum nicht vom Protokoll
+#         abweicht und L0 an der Grenze zuerst abweicht, sonst "VERDIKT=durchgefallen <gründe>"
+#         mit der ersten abweichenden Zeile beider Seiten. Am Ende "pde-voll VOLL_RC=…
+#         protokolle=… bestanden=… durchgefallen=…".
 #           pde-voll           jedes Protokoll <name>-edit in SEESAW_PDE_DUMP
 #           pde-voll:<name>    nur das Protokoll <name> (für das Gate pde-voll:open2-edit)
 #
@@ -353,6 +367,9 @@ pde() {
 VOLL_JARS=${SEESAW_JARS:-/root/seesaw-java/jars}
 VOLL_L0=fa12974
 VOLL_TIMEOUT=${VOLL_TIMEOUT:-120}
+# Grenze des Vergleichs mit L0 je Protokoll, <name>:<zeile>: die Protokollzeile, an der L0 zum
+# ersten Mal vom Protokoll abweicht (Grund im Kopf, Teil pde-voll).
+VOLL_L0_GRENZE="open2-edit:27636"
 pde_full() {
     if ! build_suite voll; then
         echo "pde-voll VOLL_RC=1 BUILD_RC=$rc"
@@ -409,19 +426,35 @@ pde_full() {
             fi
         done
         n=$(wc -l </tmp/jgate-voll-HEAD.out | tr -d ' ')
-        if ! cmp -s /tmp/jgate-voll-L0.out /tmp/jgate-voll-HEAD.out; then
+        grenze=$(printf '%s\n' $VOLL_L0_GRENZE | awk -F: -v n="$name" '$1 == n { print $2 }')
+        l0_first=$(sed -n 's/^ende .* erste_abweichung=\([0-9][0-9]*\) .*/\1/p' /tmp/jgate-voll-L0.out)
+        head_dev=$(sed -n 's/^ende .* abweichend=\([0-9][0-9]*\) .*/\1/p' /tmp/jgate-voll-HEAD.out)
+        if [ -n "$grenze" ]; then
+            # Nur die Zeilen der Aufrufe vor der Grenze. Sie stehen in Protokollfolge vorn.
+            [ "$l0_first" = "$grenze" ] || why="$why L0_erste_abweichung=${l0_first:-?}_statt_$grenze"
+            for side in L0 HEAD; do
+                awk -v g="$grenze" '$1 ~ /^[0-9]+$/ && $1 + 0 < g + 0' /tmp/jgate-voll-$side.out \
+                    >/tmp/jgate-voll-$side.vor
+            done
+            a=/tmp/jgate-voll-L0.vor; b=/tmp/jgate-voll-HEAD.vor
+        else
+            a=/tmp/jgate-voll-L0.out; b=/tmp/jgate-voll-HEAD.out
+        fi
+        cmpd=$(wc -l <"$b" | tr -d ' ')
+        [ "$cmpd" -gt 0 ] || why="$why verglichen=0"
+        if ! cmp -s "$a" "$b"; then
             at=$(awk 'FNR == NR { a[FNR] = $0; n = FNR; next }
                 { if (!(FNR in a) || a[FNR] != $0) { print FNR; found = 1; exit } }
-                END { if (!found && FNR < n) print FNR + 1 }' \
-                /tmp/jgate-voll-L0.out /tmp/jgate-voll-HEAD.out)
+                END { if (!found && FNR < n) print FNR + 1 }' "$a" "$b")
             [ -n "$at" ] || at=1
             why="$why ungleich_ab_zeile=$at"
-            echo "pde-voll   L0:   $(sed -n "${at}p" /tmp/jgate-voll-L0.out | cut -c1-300)"
-            echo "pde-voll   HEAD: $(sed -n "${at}p" /tmp/jgate-voll-HEAD.out | cut -c1-300)"
+            echo "pde-voll   L0:   $(sed -n "${at}p" "$a" | cut -c1-300)"
+            echo "pde-voll   HEAD: $(sed -n "${at}p" "$b" | cut -c1-300)"
         fi
+        [ "$head_dev" = 0 ] || why="$why head_abweichend=${head_dev:-?}"
         if [ -z "$why" ]; then
             passed=$((passed + 1))
-            echo "pde-voll $name VERDIKT=bestanden zeilen=$n"
+            echo "pde-voll $name VERDIKT=bestanden zeilen=$n verglichen=$cmpd grenze=${grenze:-keine} head_abweichend=$head_dev"
         else
             failed_records=$((failed_records + 1))
             echo "pde-voll $name VERDIKT=durchgefallen$why zeilen=$n"

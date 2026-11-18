@@ -1,18 +1,14 @@
-# Bekannte Abweichungen der Java-Engine (Verhalten Java 2.0.2) von den Protokollen des Hosts
+# Bekannte Abweichungen der Java-Engine von den Protokollen des Hosts
 # zerodds-pde, für den Teil pde von jgate.sh. Eine Zeile je Protokoll:
 #   <name> <zeile> <meldung>
 # <meldung> ist der Text der PdeReplay$Mismatch zwischen "<datei>:<zeile>: " und "; Aufruf:".
 # Für ein Protokoll mit Eintrag besteht der Teil pde nur, wenn die erste Abweichung genau an dieser
 # Zeile mit genau dieser Meldung liegt. Jeder Aufruf davor ist dann gegen das Protokoll geprüft.
 # Eine frühere oder spätere Abweichung, eine andere Meldung oder ein Lauf ohne Abweichung (eine
-# Verhaltensänderung gegenüber Java 2.0.2) fallen durch.
+# Verhaltensänderung) fallen durch.
 #
-# Grund, offen zur Entscheidung: Java 2.0.2 nimmt SAME_VALUE in den Suchplan
-# (Matcher.buildPlan in v2.0.2 und fa12974: Wahl der nächsten Position Zeile 38, Code 2 Zeile 53),
-# Rust nicht
-# (src/engine/matcher.rs v2.0.2 Zeilen 128 und 144: Wert-Gleichheiten nur als abschließende
-# Bedingung). An der Engine test-unit findet Java dadurch den Match von TestUnit_JUnit5_Plan
-# (vorwärts) nicht, den Rust als Duplikat erkennt, und wendet stattdessen den nächsten Kandidaten an.
-open2 27636 step: erwartet false, bekommen true
-open2-edit 27636 step: erwartet false, bekommen true
-open5 76200 step: erwartet false, bekommen true
+# Keine Einträge. Java 2.0.2 wich in open2 und open2-edit an Zeile 27636 und in open5 an Zeile 76200
+# ab (step: erwartet false, bekommen true): Matcher.buildPlan nahm SAME_VALUE in den Suchplan, Rust
+# (src/engine/matcher.rs, build_plan) prüft Wert-Gleichheiten nur als abschließende Bedingung. Seit
+# der Behebung (CHANGELOG [Unreleased], "Java: matches missed behind a value equality") laufen
+# java40, open2, open2-edit und open5 ohne Abweichung.

@@ -28,8 +28,9 @@ public final class Matcher {
         final List<Step> steps;
         /**
          * Die Links, die kein Schritt prüft, als Indizes in
-         * {@code Rule.patLinks}: Selbstlinks und Links zwischen zwei vorab
-         * gebundenen Positionen. Jeden anderen Link prüft der Schritt, der
+         * {@code Rule.patLinks}: Wertgleichheiten, Selbstlinks und Links
+         * zwischen zwei vorab gebundenen Positionen (Rust
+         * {@code Plan::closing}). Jeden anderen Link prüft der Schritt, der
          * das spätere seiner beiden Enden setzt. Die Bedingung ist die von
          * {@link #allLinksOk}, außer beim ersten Link eines Schritts mit
          * Code -1 (richtungsfrei): dort liest der Schritt nur den Status
@@ -37,10 +38,7 @@ public final class Matcher {
          * kam, nicht beide Richtungen. Ein Kandidat, den zwei Verbindungen
          * mit dem gesetzten Nachbarn verbinden, von denen nur eine
          * matchbar ist, besteht deshalb einmal, in 2.0.2 zweimal (Rust
-         * 891a63b). Die Menge der Matches ist dieselbe. Anders als Rust
-         * gehört zu den Links der Schritte auch die Wertgleichheit: Java
-         * 2.0.2 nimmt sie in den Plan (Code 2), der Schritt prüft sie mit
-         * {@code sameValue} wie die Abschlussprüfung.
+         * 891a63b). Die Menge der Matches ist dieselbe.
          */
         final int[] closing;
 
@@ -54,8 +52,16 @@ public final class Matcher {
         return plan(r, fixed).steps;
     }
 
-    /** Der Plan für die festen Positionen {@code fixed}, samt den Links,
-     *  die kein Schritt prüft. */
+    /**
+     * Der Plan für die festen Positionen {@code fixed}, samt den Links,
+     * die kein Schritt prüft (Rust {@code build_plan}). Eine
+     * Wertgleichheit verbindet keine Positionen: sie bestimmt weder die
+     * nächste Position noch deren Kandidaten und wird erst auf der
+     * vollständigen Bindung geprüft. Java 2.0.2 nahm sie in den Plan
+     * (Code 2, Kandidaten aus den Nachbarn des gesetzten Knotens) und fand
+     * dadurch Matches nicht, deren Ende der Wertgleichheit kein Nachbar
+     * des anderen ist.
+     */
     static Plan plan(Rule r, Id[] fixed) {
         int n = r.patNodes.size();
         boolean[] placed = new boolean[n];
@@ -76,7 +82,8 @@ public final class Matcher {
                 if (placed[i]) continue;
                 boolean connected = false;
                 for (PatLink l : r.patLinks)
-                    if ((l.from == i && placed[l.to]) || (l.to == i && placed[l.from])) {
+                    if (l.kind != PatLink.Kind.SAME_VALUE
+                            && ((l.from == i && placed[l.to]) || (l.to == i && placed[l.from]))) {
                         connected = true;
                         break;
                     }
@@ -87,22 +94,16 @@ public final class Matcher {
             s.nodeIx = next;
             for (int li = 0; li < r.patLinks.size(); li++) {
                 PatLink l = r.patLinks.get(li);
+                // Wertgleichheiten prüft die Abschlussprüfung.
+                if (l.kind == PatLink.Kind.SAME_VALUE) continue;
                 // Kodierung je Bedingung: 1 = Kandidat -> anderer,
-                // 0 = anderer -> Kandidat, -1 = irgendeine Richtung,
-                // 2 = Wert-Gleichheit.
-                int code;
-                if (l.kind == PatLink.Kind.SAME_VALUE) {
-                    code = 2;
-                } else if (l.kind == PatLink.Kind.CONTEXT) {
-                    code = -1;
-                } else {
-                    code = -9; // wird unten je nach Seite gesetzt
-                }
+                // 0 = anderer -> Kandidat, -1 = irgendeine Richtung.
+                boolean context = l.kind == PatLink.Kind.CONTEXT;
                 if (l.from == next && placed[l.to]) {
-                    s.links.add(new int[] {l.to, code == -9 ? 1 : code});
+                    s.links.add(new int[] {l.to, context ? -1 : 1});
                     inStep[li] = true;
                 } else if (l.to == next && placed[l.from]) {
-                    s.links.add(new int[] {l.from, code == -9 ? 0 : code});
+                    s.links.add(new int[] {l.from, context ? -1 : 0});
                     inStep[li] = true;
                 }
             }
@@ -133,9 +134,7 @@ public final class Matcher {
             int[] l = links.get(i);
             Id other = cur[l[0]];
             boolean ok;
-            if (l[1] == 2) {
-                ok = sameValue(g, vals, cand, other);
-            } else if (l[1] == 1) {
+            if (l[1] == 1) {
                 ok = g.connected(cand, other);
             } else if (l[1] == 0) {
                 ok = g.connected(other, cand);
@@ -147,11 +146,15 @@ public final class Matcher {
         return true;
     }
 
-    /** Wert-Gleichheit zweier Blaetter; null gleicht nur null. */
+    /**
+     * Wert-Gleichheit zweier Blätter wie Rust ({@code closing_links_ok}):
+     * beide Werte vorhanden und gleich. Ein fehlender Wert gleicht keinem,
+     * auch keinem fehlenden. Java 2.0.2 ließ zwei fehlende Werte als gleich
+     * durch.
+     */
     private static boolean sameValue(Graph g, Map<Id, String> vals, Id a, Id b) {
         String va = g.resolveValue(a, vals);
-        String vb = g.resolveValue(b, vals);
-        return va == null ? vb == null : va.equals(vb);
+        return va != null && va.equals(g.resolveValue(b, vals));
     }
 
     public static boolean allLinksOk(Graph g, Map<Id, String> vals, Rule r, Id[] cur) {
@@ -238,22 +241,17 @@ public final class Matcher {
             return;
         }
         // Kandidaten: die Beteiligungsliste des ersten gesetzten
-        // Nachbarn, über den Bereich seines Typs. Bei einem gerichteten
-        // oder richtungsfreien Link bringt der Kandidat die Verbindung
-        // mit, die den ersten Link verwirklicht: deren Status wird dort
-        // gelesen, linksOk prüft die übrigen Links. Bei einer
-        // Wertgleichheit (Code 2) bleiben die Kandidaten die von 2.0.2
-        // (jede Richtung, ohne Blick auf die Verbindung), und linksOk
-        // prüft auch den ersten Link.
+        // Nachbarn, über den Bereich seines Typs. Der Kandidat bringt die
+        // Verbindung mit, die den ersten Link verwirklicht: deren Status
+        // wird dort gelesen, linksOk prüft die übrigen Links.
         int[] first = links.get(0);
         Id anchor = cur[first[0]];
         int code = first[1];
-        int rest = code == 2 ? 0 : 1;
         for (Part p : g.partsOfType(anchor, pn.typ)) {
             if (code == 1 && p.outgoing) continue;      // cand ist source ⇒ part incoming
             if (code == 0 && !p.outgoing) continue;     // cand ist target ⇒ part outgoing
             if (tryCandidate(g, vals, r, plan, depth, cur, out, foundAny, stopFirst, skip, step,
-                    pn, p.other, code == 2 ? null : p.connection, rest)) {
+                    pn, p.other, p.connection, 1)) {
                 return;
             }
         }
@@ -355,6 +353,6 @@ public final class Matcher {
 static final class Step {
     public int nodeIx;
     public boolean preBound;
-    final List<int[]> links = new ArrayList<>(); // [placedPos, dir] dir: 1=candIsSource,0=candIsTarget,-1=context,2=Wert-Gleichheit
+    final List<int[]> links = new ArrayList<>(); // [placedPos, dir] dir: 1=candIsSource,0=candIsTarget,-1=context
 }
 }

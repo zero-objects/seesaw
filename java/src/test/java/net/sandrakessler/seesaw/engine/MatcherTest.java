@@ -28,7 +28,13 @@ import net.sandrakessler.seesaw.rules.Rules;
 
 /**
  * Die Suche ({@link Matcher}) gegen die Fassung von Java 2.0.2, hier
- * als {@link Alt} kopiert.
+ * als {@link Alt} kopiert. Zwei Stellen weichen von 2.0.2 ab, beide wie
+ * Rust: {@code Alt.buildPlan} nimmt Wertgleichheiten nicht in den Plan,
+ * die Abschlussprüfung {@code Alt.allLinksOk} prüft sie. 2.0.2 nahm sie in
+ * den Plan und fand dadurch Matches nicht
+ * ({@link #wertgleichheitNurAlsAbschlussbedingungWieInRust}). Und
+ * {@code Alt.sameValue} lässt zwei fehlende Werte nicht als gleich durch
+ * ({@link #zweiFehlendeWerteSindNichtGleich}).
  *
  * <p>Verglichen wird je Stelle (Regel, feste Positionen) die Menge der
  * Matches nach {@link Matcher#compareBindings}: dieselben Bindungen,
@@ -42,7 +48,8 @@ import net.sandrakessler.seesaw.rules.Rules;
  */
 final class MatcherTest {
 
-    // ── Die Suche von Java 2.0.2 (Matcher und Graph.connected), unverändert ──
+    // ── Die Suche von Java 2.0.2 (Matcher und Graph.connected), bis auf die
+    //    Wertgleichheit in buildPlan und sameValue unverändert ──
 
     private static final class Alt {
         static final class Step {
@@ -70,7 +77,8 @@ final class MatcherTest {
                     if (placed[i]) continue;
                     boolean connected = false;
                     for (PatLink l : r.patLinks)
-                        if ((l.from == i && placed[l.to]) || (l.to == i && placed[l.from])) {
+                        if (l.kind != PatLink.Kind.SAME_VALUE
+                                && ((l.from == i && placed[l.to]) || (l.to == i && placed[l.from]))) {
                             connected = true;
                             break;
                         }
@@ -80,10 +88,10 @@ final class MatcherTest {
                 Step s = new Step();
                 s.nodeIx = next;
                 for (PatLink l : r.patLinks) {
+                    // Abweichung von 2.0.2: keine Wertgleichheit im Plan.
+                    if (l.kind == PatLink.Kind.SAME_VALUE) continue;
                     int code;
-                    if (l.kind == PatLink.Kind.SAME_VALUE) {
-                        code = 2;
-                    } else if (l.kind == PatLink.Kind.CONTEXT) {
+                    if (l.kind == PatLink.Kind.CONTEXT) {
                         code = -1;
                     } else {
                         code = -9;
@@ -130,10 +138,10 @@ final class MatcherTest {
             return true;
         }
 
+        // Abweichung von 2.0.2: zwei fehlende Werte sind nicht gleich.
         static boolean sameValue(Graph g, Map<Id, String> vals, Id a, Id b) {
             String va = g.resolveValue(a, vals);
-            String vb = g.resolveValue(b, vals);
-            return va == null ? vb == null : va.equals(vb);
+            return va != null && va.equals(g.resolveValue(b, vals));
         }
 
         static boolean allLinksOk(Graph g, Map<Id, String> vals, Rule r, Id[] cur) {
@@ -566,16 +574,16 @@ final class MatcherTest {
     }
 
     /**
-     * Wertgleichheit als erster Link eines Schritts: die Kandidaten
-     * kommen wie in 2.0.2 aus den Participations des gesetzten Knotens,
-     * in jeder Richtung und ohne Blick auf den Status der Verbindung. Ein
-     * Knoten mit gleichem Wert, der kein Nachbar ist, wird nicht gefunden,
-     * einer über eine Verbindung im Tombstone schon, ein Nachbar über
-     * beide Richtungen zweimal. Sind beide Positionen fest, prüft die
-     * Abschlussprüfung den Wert.
+     * Wertgleichheit als einziger Link: die Kandidaten der zweiten
+     * Position sind alle Knoten ihres Typs, die Abschlussprüfung
+     * vergleicht die Werte. Jeder Knoten mit gleichem Wert kommt genau
+     * einmal, gleich ob und wie er mit dem ersten verbunden ist: b über
+     * beide Richtungen, d gar nicht, e über eine Verbindung im Tombstone.
+     * Java 2.0.2 nahm die Kandidaten aus den Participations des gesetzten
+     * Knotens, dort fehlte d und b kam zweimal.
      */
     @Test
-    void wertgleichheitAlsErsterLinkEinesSchrittsWieInJava202() {
+    void wertgleichheitOhneVerbindungZwischenDenEnden() {
         Graph g = new Graph();
         Map<Id, String> vals = new HashMap<>();
         Id a = blatt(g, vals, "a", "L1", "v");
@@ -589,29 +597,177 @@ final class MatcherTest {
         Id ae = g.connect(a, e, St.SOLID);
         g.setConnectionStatus(ae, St.TOMBSTONE);
         Rule r = regel(g, "Wert", List.of("L1", "L2"), List.of(PatLink.sameValue(0, 1)));
-        List<Id[]> ab = List.of(new Id[] {a, b}, new Id[] {a, b}, new Id[] {a, e});
+        List<Id[]> ab = List.of(new Id[] {a, b}, new Id[] {a, d}, new Id[] {a, e});
         ArrayList<Id[]> erwartet = new ArrayList<>(ab);
         erwartet.sort(Matcher::compareBindings);
         for (Id[] fixed : List.of(new Id[] {a, null}, new Id[2])) {
-            assertEquals(text(erwartet), text(Alt.find(g, vals, r, fixed)), "2.0.2");
+            assertEquals(text(erwartet), text(Alt.find(g, vals, r, fixed)), "Alt");
             assertEquals(text(erwartet), text(Matcher.findMatchesWithFixed(g, vals, r, fixed)));
         }
         Id[][][] stellen = {
-            {{null, b}, {a, b}, {a, b}},
-            {{null, d}},
+            {{null, b}, {a, b}},
+            {{null, d}, {a, d}},
             {{a, d}, {a, d}},
             {{a, c}},
         };
         for (Id[][] s : stellen) {
             List<Id[]> soll = new ArrayList<>();
             for (int i = 1; i < s.length; i++) soll.add(s[i]);
-            assertEquals(text(soll), text(Alt.find(g, vals, r, s[0])), "2.0.2");
+            assertEquals(text(soll), text(Alt.find(g, vals, r, s[0])), "Alt");
             assertEquals(text(soll), text(Matcher.findMatchesWithFixed(g, vals, r, s[0])));
         }
         Vergleich v = new Vergleich(g, vals, List.of(r));
         v.alle("wert");
         assertEquals(0, v.weg);
         v.engineGleich("wert");
+    }
+
+    /**
+     * Die Regel {@code TestUnit_JUnit5_Plan} der Engine {@code test-unit}
+     * aus den Protokollen von zerodds-pde ({@code open2} Zeile 396),
+     * verkürzt auf die Knoten, an denen der Fehler liegt: links
+     * R → p → pn, rechts P → cu → xn mit cu und xn als Kontext, die
+     * references-Corr R ↔ P, die establishes-Corr p ↔ cu und der Join
+     * pn = xn. Im Original liegen zwischen cu und xn weitere
+     * Kontextknoten.
+     */
+    private static final String JUNIT5_PLAN = "{\"format\":3,\"name\":\"test-unit\",\"rules\":["
+            + "{\"name\":\"TestUnit_JUnit5_Plan\",\"rank\":865,"
+            + "\"left\":{\"anchor\":\"p\",\"nodes\":["
+            + "{\"name\":\"R\",\"type\":\"tst:Root\"},"
+            + "{\"name\":\"p\",\"type\":\"tst:Node\"},"
+            + "{\"name\":\"pn\",\"type\":\"name\"}],"
+            + "\"links\":[[\"R\",\"p\"],[\"p\",\"pn\"]]},"
+            + "\"right\":{\"anchor\":\"cu\",\"nodes\":["
+            + "{\"name\":\"P\",\"type\":\"sl:Project\"},"
+            + "{\"name\":\"cu\",\"type\":\"sl:Node\",\"context\":true},"
+            + "{\"name\":\"xn\",\"type\":\"name\",\"context\":true}],"
+            + "\"links\":[[\"P\",\"cu\"],[\"cu\",\"xn\"]]},"
+            + "\"corrs\":["
+            + "{\"type\":\"Ctestunit_Root\",\"left\":\"R\",\"right\":\"P\",\"role\":\"references\","
+            + "\"bindings\":[]},"
+            + "{\"type\":\"Ctestunit_Node\",\"left\":\"p\",\"right\":\"cu\",\"role\":\"establishes\","
+            + "\"bindings\":[{\"left\":\"pn\",\"right\":\"xn\"}]}],"
+            + "\"joins\":[[\"pn\",\"xn\"]]}]}";
+
+    /**
+     * Wertgleichheit nur als abschließende Bedingung, wie Rust
+     * ({@code build_plan} in {@code src/engine/matcher.rs}). Vorwärts
+     * stehen im Muster R, p, pn, cu, xn, die Corr und P an den Positionen
+     * 0 bis 6. Java 2.0.2 setzt nach pn als nächste Position xn, weil die
+     * Wertgleichheit pn = xn als Verbindung zählt, und sucht die
+     * Kandidaten für xn unter den Nachbarn von pn. Dort steht kein Knoten
+     * des Typs name, also kein Match. Rust erreicht xn über die Corr, P
+     * und cu und prüft pn = xn am Ende. Erwartet wird der eine Match ohne
+     * feste Position, an jeder festen Position und auf dem verankerten Weg
+     * der Engine. Mit verschiedenen Werten an pn und xn keiner.
+     */
+    @Test
+    void wertgleichheitNurAlsAbschlussbedingungWieInRust() {
+        Graph g = new Graph();
+        Map<Id, String> vals = new HashMap<>();
+        Id[] match = junit5Graph(g, vals, "Plan", "Plan");
+        Id xn = match[4];
+        Rule fwd = Rules.load(JUNIT5_PLAN, g).get(0);
+        assertEquals("TestUnit_JUnit5_Plan→", fwd.name);
+        String[] typen = {"tst:Root", "tst:Node", "name", "sl:Node", "name", "Ctestunit_Root",
+            "sl:Project"};
+        assertEquals(typen.length, fwd.patNodes.size(), "Positionen im Muster");
+        for (int i = 0; i < typen.length; i++) {
+            assertEquals(g.lookup(typen[i]), fwd.patNodes.get(i).typ, "Typ an Position " + i);
+        }
+        int n = match.length;
+        AnchorIndex ix = AnchorIndex.build(List.of(fwd));
+        Matcher.Scratch scratch = new Matcher.Scratch();
+        for (int pos = -1; pos < n; pos++) {
+            Id[] fixed = new Id[n];
+            if (pos >= 0) fixed[pos] = match[pos];
+            String wo = pos < 0 ? "ohne feste Position" : "fest an Position " + pos;
+            List<Id[]> found = Matcher.findMatchesWithFixed(g, vals, fwd, fixed);
+            assertEquals(text(List.<Id[]>of(match)), text(found), wo);
+            if (pos >= 0) {
+                Matcher.findMatchesPlanned(g, vals, fwd, ix.plan(0, pos, fwd), pos, match[pos],
+                        scratch);
+                assertEquals(text(found), text(scratch.found), wo + ", verankerter Weg");
+            }
+        }
+        vals.put(xn, "Test");
+        assertEquals(0, Matcher.findMatchesWithFixed(g, vals, fwd, new Id[n]).size(),
+                "verschiedene Werte");
+    }
+
+    /**
+     * Der Graph zu {@link #JUNIT5_PLAN} mit einem Match. Rückgabe: der Match
+     * in Musterfolge R, p, pn, cu, xn, Corr, P. {@code wertPn} und
+     * {@code wertXn}: die Werte der beiden Blätter, null für keinen Eintrag
+     * im Wertespeicher.
+     */
+    private static Id[] junit5Graph(Graph g, Map<Id, String> vals, String wertPn,
+            String wertXn) {
+        Id root = g.addBaseline("R", "tst:Root");
+        Id p = g.addBaseline("p", "tst:Node");
+        Id pn = g.addBaseline("pn", "name");
+        Id project = g.addBaseline("P", "sl:Project");
+        Id cu = g.addBaseline("cu", "sl:Node");
+        Id xn = g.addBaseline("xn", "name");
+        Id corr = g.addBaseline("c", "Ctestunit_Root");
+        if (wertPn != null) vals.put(pn, wertPn);
+        if (wertXn != null) vals.put(xn, wertXn);
+        g.connect(root, p, St.SOLID);
+        g.connect(p, pn, St.SOLID);
+        g.connect(project, cu, St.SOLID);
+        g.connect(cu, xn, St.SOLID);
+        g.connect(corr, root, St.SOLID);
+        g.connect(corr, project, St.SOLID);
+        return new Id[] {root, p, pn, cu, xn, corr, project};
+    }
+
+    /**
+     * Zwei Blätter ohne Wert sind nicht gleich, wie in Rust
+     * ({@code closing_links_ok}: {@code a.is_some() && a == …}). Java 2.0.2
+     * ließ zwei fehlende Werte als gleich durch. Zusammen mit der Behebung im
+     * Plan ergäbe das an {@link #JUNIT5_PLAN} mit pn und xn ohne Wert einen
+     * Match, den weder 2.0.2 noch Rust findet. Erwartet wird dort kein Match,
+     * ohne feste Position, an jeder festen Position und auf dem verankerten
+     * Weg, ebenso mit nur einem der beiden Werte. Sind die beiden Enden
+     * Nachbarn und beide ohne Wert, fand 2.0.2 den Match (Kandidat aus den
+     * Nachbarn, null gleich null), jetzt wie Rust keinen.
+     */
+    @Test
+    void zweiFehlendeWerteSindNichtGleich() {
+        String[][] werte = {{null, null}, {"Plan", null}, {null, "Plan"}};
+        for (String[] w : werte) {
+            Graph g = new Graph();
+            Map<Id, String> vals = new HashMap<>();
+            Id[] match = junit5Graph(g, vals, w[0], w[1]);
+            Rule fwd = Rules.load(JUNIT5_PLAN, g).get(0);
+            int n = match.length;
+            AnchorIndex ix = AnchorIndex.build(List.of(fwd));
+            Matcher.Scratch scratch = new Matcher.Scratch();
+            for (int pos = -1; pos < n; pos++) {
+                Id[] fixed = new Id[n];
+                if (pos >= 0) fixed[pos] = match[pos];
+                String wo = "pn " + w[0] + ", xn " + w[1]
+                        + (pos < 0 ? ", ohne feste Position" : ", fest an Position " + pos);
+                assertEquals("", text(Matcher.findMatchesWithFixed(g, vals, fwd, fixed)), wo);
+                if (pos >= 0) {
+                    Matcher.findMatchesPlanned(g, vals, fwd, ix.plan(0, pos, fwd), pos,
+                            match[pos], scratch);
+                    assertEquals("", text(scratch.found), wo + ", verankerter Weg");
+                }
+            }
+        }
+        Graph g = new Graph();
+        Map<Id, String> vals = new HashMap<>();
+        Id u = g.addBaseline("u", "L1");
+        Id w = g.addBaseline("w", "L2");
+        g.connect(u, w, St.SOLID);
+        Rule r = regel(g, "Wert", List.of("L1", "L2"), List.of(PatLink.sameValue(0, 1)));
+        for (Id[] fixed : List.of(new Id[2], new Id[] {u, null}, new Id[] {null, w},
+                new Id[] {u, w})) {
+            assertEquals("", text(Matcher.findMatchesWithFixed(g, vals, r, fixed)),
+                    "Nachbarn ohne Wert, fest " + text(Vergleich.fixed(fixed)));
+        }
     }
 
     /** Der Regelsatz langpack (k = 10) über 120 Sprachknoten: vor dem

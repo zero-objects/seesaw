@@ -337,14 +337,25 @@ The Java engine took over the performance work of the Rust engine
 above (rounds 1 to 4 of `perf/main` and the options taken in
 `perf/select`) in ten stages, T4 to T13, and added changes of its own.
 It builds on the anchor index of the section before, which is the state
-the measurements call L0. What the engine does is meant to stay the
-one of Java 2.0.2: graph, cascade and its order, the results of `step`.
-Steps, applied steps, node count and fingerprint of every measured
-cell equal the ones of the Rust cells (792 measured lines of the Java
-cells and 108 of `pde`, none differing), and a differential test
-against Java 2.0.2 runs in `java/bench/jgate.sh`. The exceptions are
-doors that a host reaches only outside the contract. They are listed
-below.
+the measurements call L0. Within the contract, what the engine does is
+equal to or better than Java 2.0.2: graph, cascade and its order and
+the results of `step` stay those of 2.0.2. The exception is the fix of
+the matcher (next section), which follows Rust where 2.0.2 did not.
+Doors that a host reaches only outside the contract behave differently
+and are listed below. The statement above does not cover them, and
+three of them behave worse than 2.0.2: `elementDeleted`,
+`elementChanged`, `retractFor` and `drainRetraction` with a connection
+the passed graph does not hold leave the entries that produced it in
+place, `retractMatch` on a dead match sets provenance edge and mark on
+the match that now carries its key, and after `elementRemoved` with the
+id of a connection and `record(int, Id[])` a match recorded later can
+lose its candidate at the next door with a graph. Steps, applied steps,
+node count and fingerprint of every measured cell equal the ones of the
+Rust cells (792 measured lines of the Java cells and 108 of `pde`, none
+differing). `java/bench/jgate.sh` runs a differential test against
+Java 2.0.2 and compares the full replay of the `pde` protocol
+`open2-edit` with L0 up to line 27 636, where L0 leaves the protocol.
+This engine has to match the protocol on every call of the replay.
 
 Stages, with the thread CPU in ms (minimum over three rounds) of
 three cells. A dash means the stage was not measured on that cell
@@ -544,6 +555,42 @@ Not taken over, and not measured:
   measured by any cell. The cells delete nodes only. The path runs
   when a host gives the id of a connection to `elementDeleted`,
   `elementChanged` or `retractFor`.
+
+### Java: matches missed behind a value equality
+
+Fixed. Java 2.0.2 took a value equality (`SAME_VALUE`, from `joins` and
+`same_value_links`) into the search plan (`Matcher.buildPlan`). It
+counted as a connection when the next position was chosen, and the
+candidates for that position came from the participations of the node
+at its other end. A node with the same value that is not a neighbour of
+that node was never tried. Rust (`build_plan` in
+`src/engine/matcher.rs`) checks a value equality only on the complete
+binding. `Matcher.plan` now does the same.
+
+Found in the `pde` protocols of zerodds-pde: at the engine `test-unit`,
+Java did not find the forward match of `TestUnit_JUnit5_Plan`, whose
+join `pn = xn` ties a leaf of the left side to a context leaf of the
+right side, and applied the next candidate instead. The replay left the
+protocol in `open2` and `open2-edit` at line 27 636 and in `open5` at
+line 76 200. All three now run through the whole protocol with the
+steps, applied steps, node count and fingerprint of the Rust cells
+(`pde/open/open5`: 1 347 266 steps). `MatcherTest` has the rule cut
+down to the nodes involved.
+
+Two leaves without a value are no longer equal. Java 2.0.2 let two
+missing values pass a value equality, Rust does not
+(`a.is_some() && a == …` in `closing_links_ok`). With the plan fixed
+alone, the rule above with `pn` and `xn` both without a value would
+have found a match that neither 2.0.2 nor Rust finds.
+`Matcher.sameValue` now follows Rust. It is the only comparison of two
+values in the search, the index of the links (`Links`) and the anchor
+index skip value equalities.
+
+Compared with 2.0.2, a search over a pattern with a value equality also
+finds the matches whose two ends are not neighbours, and how often it
+returns a match no longer depends on the connections between those two
+ends. Where the two ends are neighbours and both have no value, 2.0.2
+found the match, the search now does not, as in Rust.
 
 ### Tests
 
