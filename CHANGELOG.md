@@ -566,16 +566,19 @@ index of the links not held. No cell and no `pde` protocol calls
 `by_element` and does nothing for such an id (read in the code, not
 run).
 
-Not taken over, and not measured:
+The seed over the index stays at `firstOnly`. The Rust form (`index_seed`
+of 0dcae91 and the seed part of 17b7e52) was taken over, measured and
+taken back. In `langpack/reseed/k700/n20000` the wall time rose from
+339.9 ms to 518.4 ms (t1), from 136.2 ms to 223.6 ms (t4) and from
+107.8 ms to 172.3 ms (t8), minimum over three rounds. The searches in t1
+rose from 43 592 to 47 902. The cause of the extra time was not
+investigated. Details in
+`benches/suite/results/2026-11-18-java/README.md`.
 
-- The seed over the index stays at `firstOnly`. The seed part of Rust
-  17b7e52 hangs on `index_seed`, which is not in the plan, so the
-  anchored searches in `langpack/seed` differ from Rust (not measured).
-- The cost of `producersOf` and `restingOn` for a connection is not
-  measured by any cell, nor is the index of the connections an entry
-  created. The cells delete nodes only. The path runs when a host gives
-  the id of a connection to `elementDeleted`, `elementChanged` or
-  `retractFor`.
+Not measured: the cost of `producersOf` and `restingOn` for a connection,
+and the index of the connections an entry created. The cells delete nodes
+only. The path runs when a host gives the id of a connection to
+`elementDeleted`, `elementChanged` or `retractFor`.
 
 ### Java: matches missed behind a value equality
 
@@ -612,6 +615,24 @@ finds the matches whose two ends are not neighbours, and how often it
 returns a match no longer depends on the connections between those two
 ends. Where the two ends are neighbours and both have no value, 2.0.2
 found the match, the search now does not, as in Rust.
+
+Thread CPU of the `pde` cells on `open2` and `open5`, minimum over three
+rounds (`benches/suite/results/2026-11-18-java/`, 02c3e39 before the
+fix, 540f03d after it):
+
+| Cell | Before (ms) | After (ms) |
+|---|---|---|
+| `pde/load/open2` | does not run | 370.0 |
+| `pde/graph/open2` | does not run | 39.3 |
+| `pde/open/open2` | does not run | 137.4 |
+| `pde/load/open5` | does not run | 364.8 |
+| `pde/graph/open5` | does not run | 111.0 |
+| `pde/open/open5` | does not run | 6292.8 |
+
+Before the fix the replay of both protocols leaves the protocol at the
+lines given above, so the cells were not run on 02c3e39. After it, steps,
+applied steps, node count and fingerprint of all six cells are equal to
+the Rust cells.
 
 ### Tests
 
