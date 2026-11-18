@@ -373,7 +373,7 @@ pub struct Engine<'r> {
 /// them in `by_product`. [`Engine::producers_of`] reads here only for an
 /// id the graph does not know, whose ends cannot be read off it: the
 /// host has replaced the graph by its materialized copy, which leaves
-/// tombstones out, or changed it through its public fields.
+/// tombstones out.
 ///
 /// Built from the entries of the cascade at the first such question,
 /// and extended at every later one by the entries added since. The step
@@ -1552,14 +1552,26 @@ impl<'r> Engine<'r> {
     /// withdrew the matches that stood under `a` and under `b`. Those
     /// resting on a connection come from its ends, or, for an id the
     /// graph does not know, from the index of unheld links
-    /// (`filed_under`).
+    /// (`filed_under`). As in 2.0.2, the call returns as soon as nothing
+    /// stands under `a`, and then as soon as nothing stands under `b`. A
+    /// node of the graph that no match binds is answered without asking
+    /// the other argument.
     pub fn link_removed(&mut self, g: &mut Graph, a: &GhostId, b: &GhostId) {
         self.settle_removed(g);
         let mixes = match (self.by_element.get(a), self.by_element.get(b)) {
             (Some(in_a), Some(in_b)) => in_both(in_a.as_slice(), in_b.as_slice()),
+            // A node no match binds: nothing stands under it.
+            (None, _) if g.node(a).is_some() => return,
+            (_, None) if g.node(b).is_some() => return,
             _ => {
                 let in_a = self.filed_under(g, a);
+                if in_a.as_slice().is_empty() {
+                    return;
+                }
                 let in_b = self.filed_under(g, b);
+                if in_b.as_slice().is_empty() {
+                    return;
+                }
                 in_both(in_a.as_slice(), in_b.as_slice())
             }
         };
@@ -2649,6 +2661,42 @@ mod tests {
         assert!(copy.connection(&link).is_none() && copy.node(&link).is_none());
         let from_index = e.filed_under(&copy, &link);
         assert_eq!(from_index.as_slice(), from_ends.as_slice());
+    }
+
+    /// `link_removed` with a node of the graph that no match binds as
+    /// `a` or `b` returns at once, as 2.0.2 did: nothing is withdrawn,
+    /// and the other argument is not asked for, so an id the graph does
+    /// not know builds no index of unheld links.
+    #[test]
+    fn link_removed_with_a_node_no_match_binds_returns_at_once() {
+        let (mut g, a, _xs, rules) = context_link_graph(2);
+        let z = g.add_baseline("z", "Z");
+        let vs = ValueStore::default();
+        let mut e = Engine::new(&rules);
+        e.admit_delta(&[DeltaDomain::Source]);
+        e.seed(&g, &vs);
+        while e.step(&mut g, &vs).is_some() {}
+        e.consolidate(&mut g);
+        assert_eq!(e.cascade.len(), 3, "Root and two Child");
+        let corr = g.iter_nodes().find(|n| n.is_corr).expect("AB").id;
+        let named = crate::graph::preview_connection_id(&corr, &a);
+        assert!(g.connection(&named).is_none() && g.node(&named).is_none());
+        assert!(e.links.unheld.is_none(), "no question yet, no index");
+        for (lage, (x, y)) in [(a, z), (z, a), (z, named), (named, z)]
+            .into_iter()
+            .enumerate()
+        {
+            e.link_removed(&mut g, &x, &y);
+            assert!(e.links.unheld.is_none(), "Lage {lage}: no index");
+            assert!(
+                g.iter_nodes().all(
+                    |n| n.status != Status::Tombstone && n.status != Status::TentativeTombstone
+                ),
+                "Lage {lage}: nothing withdrawn"
+            );
+            assert_eq!(e.step(&mut g, &vs), None, "Lage {lage}: no candidate");
+        }
+        assert_eq!(e.cascade.len(), 3);
     }
 
     impl<'r> Engine<'r> {

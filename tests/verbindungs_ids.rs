@@ -392,3 +392,47 @@ fn eine_verbindungs_id_in_link_removed_zieht_die_matches_auf_ihr_zurueck() {
     ];
     assert_eq!(beobachtet, erwartet);
 }
+
+/// `link_removed` mit einem Knoten des Graphen, den kein Match bindet,
+/// als `a` oder `b`. 2.0.2 kehrte sofort zurueck. Vier Lagen in der Welt
+/// mit zwei Kindern und einem Knoten `z` vom Typ `Z`, den keine Regel
+/// liest, je eine frische Welt: `(a, z)`, `(z, a)`, `(z, corr → a)` und
+/// `(corr → a, z)`. Keine Wirkung. Dass dabei kein Index der nicht
+/// gehaltenen Links entsteht, ist von aussen nicht sichtbar, das prueft
+/// `link_removed_with_a_node_no_match_binds_returns_at_once` in
+/// `src/engine/mod.rs`.
+#[test]
+fn ein_knoten_ohne_match_in_link_removed_hat_keine_wirkung() {
+    let mut beobachtet = Vec::new();
+    for lage in 0..4 {
+        let (mut g, a, xs, rules) = welt(2);
+        let z = g.add_baseline("z", "Z");
+        let vs = ValueStore::default();
+        let mut e = vorwaerts(&rules);
+        e.seed(&g, &vs);
+        saettigen(&mut e, &mut g, &vs);
+        e.consolidate(&mut g);
+        assert_eq!(e.cascade.len(), 3, "Lage {lage}: Root und zwei Child");
+        let ab = korrespondenz_ab(&g);
+        let named = preview_connection_id(&ab, &a);
+        let (x, y) = [(a, z), (z, a), (z, named), (named, z)][lage];
+        e.link_removed(&mut g, &x, &y);
+        e.consolidate(&mut g);
+        let (knoten, verbindungen) = grabsteine(&g);
+        let root = g.node(&ab).is_some_and(|n| n.status.is_matchable());
+        let lebend = (
+            lebendige_korrespondenzen(&g, &xs[0]),
+            lebendige_korrespondenzen(&g, &xs[1]),
+        );
+        let verdikt = e.run(&mut g, &vs, 2000);
+        let laenge = e.cascade.len();
+        println!(
+            "BEOBACHTUNG knoten_ohne_match lage={lage} knoten_grab={knoten} \
+             verbindungen_grab={verbindungen} root={root} korrespondenzen={lebend:?} \
+             verdikt={verdikt:?} kaskade={laenge}"
+        );
+        beobachtet.push((knoten, verbindungen, root, lebend, verdikt, laenge));
+    }
+    let erwartet = vec![(0, 0, true, (1, 1), Termination::Duplication, 3); 4];
+    assert_eq!(beobachtet, erwartet);
+}
