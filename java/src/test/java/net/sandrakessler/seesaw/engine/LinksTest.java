@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.lang.reflect.Field;
@@ -583,15 +582,15 @@ final class LinksTest {
     }
 
     /**
-     * Unter Pruefung wirft {@link Engine#record}, wenn das Todo den neuen
-     * Kandidaten nicht aufnimmt, weil dort schon einer mit demselben
-     * Schluessel steht. Dahin fuehrt nur ein Aufruf ausserhalb des
-     * Vertrags: ein Host ruft das oeffentliche {@link Engine#retractMatch}
-     * fuer einen toten Match, dessen Schluessel inzwischen ein anderer
-     * Match haelt. Ohne Pruefung bleibt der Kandidat des anderen stehen.
+     * Ein Host ruft das oeffentliche {@link Engine#retractMatch} fuer einen
+     * toten Match, dessen Schluessel inzwischen ein anderer Match haelt. Der
+     * Aufruf nimmt dem anderen den Schluessel, dessen Kandidat bleibt im
+     * Todo und traegt keinen Match mehr (Nummer -1). {@link Engine#record}
+     * mit demselben Schluessel ersetzt ihn durch den Kandidaten des neuen
+     * Matches. Mit und ohne Pruefung gleich.
      */
     @Test
-    void einBelegterSchluesselImTodoWirftUnterPruefung() {
+    void einKandidatOhneMatchWirdVomNeuenErsetzt() {
         for (boolean checks : new boolean[] {true, false}) {
             ContextLink w = contextLinkGraph(1);
             Graph g = w.g();
@@ -609,16 +608,17 @@ final class LinksTest {
             e.retractMatch(g, child.mix, new ArrayList<>());
             e.record(child.ruleIx, child.refs.clone());
             int other = e.matches.size() - 1;
+            assertEquals(other, e.todo.first().mix, "der Kandidat des anderen");
             e.retractMatch(g, child.mix, new ArrayList<>());
             assertNull(e.byKey.get(child.key));
-            assertEquals(1, e.todo.size(), "der Kandidat des neuen Matches");
-            if (checks) {
-                assertThrows(IllegalStateException.class,
-                        () -> e.record(child.ruleIx, child.refs.clone()));
-            } else {
-                e.record(child.ruleIx, child.refs.clone());
-                assertEquals(other, e.todo.first().mix, "der Kandidat des anderen bleibt");
-            }
+            assertEquals(1, e.todo.size());
+            assertEquals(-1, e.todo.first().mix, "der Kandidat traegt keinen Match");
+            assertFalse(e.matches.get(other).dead, "der andere lebt");
+            e.record(child.ruleIx, child.refs.clone());
+            int third = e.matches.size() - 1;
+            assertEquals(Integer.valueOf(third), e.byKey.get(child.key));
+            assertEquals(1, e.todo.size());
+            assertEquals(third, e.todo.first().mix, "der Kandidat des neuen Matches");
         }
     }
 }

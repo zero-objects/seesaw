@@ -343,11 +343,9 @@ the results of `step` stay those of 2.0.2. The exception is the fix of
 the matcher (next section), which follows Rust where 2.0.2 did not.
 Doors that a host reaches only outside the contract behave differently
 and are listed below. The statement above does not cover them, and
-two of them behave worse than 2.0.2: `retractMatch` on a dead match
-sets provenance edge and mark on the match that now carries its key,
-and after `elementRemoved` with the id of a connection and
-`record(int, Id[])` a match recorded later can lose its candidate at
-the next door with a graph. Steps, applied steps,
+one of them behaves worse than 2.0.2: after `elementRemoved` with the
+id of a connection and `record(int, Id[])` a match recorded later can
+lose its candidate at the next door with a graph. Steps, applied steps,
 node count and fingerprint of every measured cell equal the ones of the
 Rust cells (792 measured lines of the Java cells and 108 of `pde`, none
 differing). `java/bench/jgate.sh` runs a differential test against
@@ -478,16 +476,6 @@ only in the ways given:
 - `Engine.elementRemoved(Id)` with the id of a connection: the matches
   resting on it die at the next door that takes a graph, on the graph of
   that door.
-- `Engine.retractMatch` for a dead match whose key now belongs to
-  another match with the same ref sequence: the provenance edge and the
-  mark are set on that other match, 2.0.2 did not. Consequences found
-  in review: the mark stays at the other match and is never forgotten,
-  its verdict is `DUPLICATION`, a further match with the same key is
-  applied where 2.0.2 skipped it, a later retraction follows the entry
-  of the other match, and the todo keeps the old candidate where Rust
-  replaces it by number. `elementDeleted`, `elementChanged`,
-  `retractFor` and `step` do not lead there, only a host that calls
-  `retractMatch` itself. With checks on it throws.
 - `Engine.record(int, Id[])` (without a graph): the index of the links
   not held is dropped (it is rebuilt at the next question), and so is
   the bound per noted id. A match recorded this way after
@@ -548,6 +536,18 @@ which leaves tombstoned connections out, or from changes through the
 public field `Graph.map`. Rust `producers_of` in `perf/select` reads
 only the filed nodes for such an id and finds no producers (read in
 the code, not run).
+
+`Engine.retractMatch`, called by a host for a dead match whose key now
+belongs to another match with the same ref sequence, behaves as in
+2.0.2, which kept todo, applied keys and provenance by key. The other
+match loses key and mark. Its candidate stays in the todo and carries
+no match from then on (number -1). Applied, it gets no provenance edge,
+and its key counts as applied without a match. A match recorded later
+under the key replaces that candidate and takes over the mark. When the
+other match is retracted later, its products stay, as in 2.0.2.
+`elementDeleted`, `elementChanged`, `retractFor` and `step` do not lead
+there, only a host that calls `retractMatch` itself. Rust has no
+counterpart, `retract_match` is private there.
 
 Not taken over, and not measured:
 

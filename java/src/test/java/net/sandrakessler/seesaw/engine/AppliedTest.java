@@ -6,6 +6,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -15,6 +16,12 @@ import java.util.Set;
 import java.util.function.Consumer;
 
 import org.junit.jupiter.api.Test;
+
+import net.sandrakessler.seesaw.graph.Graph;
+import net.sandrakessler.seesaw.graph.Node;
+import net.sandrakessler.seesaw.graph.Part;
+import net.sandrakessler.seesaw.ident.Id;
+import net.sandrakessler.seesaw.ident.St;
 
 /**
  * Option E (Rust 04394d9): "angewandt" ist eine Marke an der Nummer des
@@ -149,6 +156,155 @@ final class AppliedTest {
             Totals t = world(Worlds.followup(), routed, 14, 300);
             assertTrue(t.applied > 300, "angewandt " + t.applied);
             assertTrue(t.forgotten > 0, "vergessen " + t.forgotten);
+        }
+    }
+
+    /** Die lebendigen Korrespondenzen an {@code x}. */
+    private static int liveCorrsAt(Graph g, Id x) {
+        int n = 0;
+        for (Part p : g.parts(x)) {
+            Node o = g.node(p.other);
+            if (o != null && o.isCorr && o.status.alive()) n++;
+        }
+        return n;
+    }
+
+    /** Eine Engine fuer eine Welle von der Quellseite, mit oder ohne
+     *  Pruefung. */
+    private static Engine forward(LinksTest.ContextLink w, boolean checks) {
+        Engine e = new Engine(w.rules(), Engine.defaultUseIndex(), checks);
+        e.admitDelta(List.of(Engine.DeltaDomain.SOURCE));
+        return e;
+    }
+
+    /** Die Nummer des einen Matches einer Regel {@code Child}. */
+    private static int child(Engine e) {
+        int found = -1;
+        for (int mix = 0; mix < e.matches.size(); mix++) {
+            if (e.rules.get(e.matches.get(mix).ruleIx).name.startsWith("Child")) {
+                assertEquals(-1, found, "ein Match von Child");
+                found = mix;
+            }
+        }
+        assertTrue(found >= 0, "ein Match von Child");
+        return found;
+    }
+
+    /**
+     * Ein Host ruft das oeffentliche {@link Engine#retractMatch} fuer einen
+     * toten Match, dessen Schluessel inzwischen ein anderer Match traegt.
+     * 2.0.2 fuehrte Todo, angewandte Schluessel und Provenienz ueber den
+     * Schluessel: der Aufruf nahm ihn dem anderen Match, der Kandidat im Todo
+     * blieb, und wurde er angewandt, bekam kein Match die Provenienzkante.
+     * Derselbe Ablauf ueber die oeffentliche API gegen fa12974 gefahren
+     * (Job 7398), die erwarteten Werte sind die von dort. Drei Lagen:
+     * <ul>
+     * <li>der Kandidat des anderen steht noch im Todo (fall2),
+     * <li>der andere ist schon angewandt (fall2b),
+     * <li>der tote war angewandt, der andere holt dessen Erzeugnisse vor der
+     *     Konsolidierung zurueck (fall2c).
+     * </ul>
+     * Mit und ohne Pruefung.
+     */
+    @Test
+    void einToterMatchNimmtDemAnderenDenSchluesselWie202() {
+        for (boolean checks : new boolean[] {false, true}) {
+            String at = checks ? "mit Pruefung" : "ohne Pruefung";
+            // fall2: der Kandidat des anderen steht noch im Todo.
+            LinksTest.ContextLink w = LinksTest.contextLinkGraph(1);
+            Graph g = w.g();
+            Id x0 = w.xs().get(0);
+            Map<Id, String> vals = new HashMap<>();
+            Engine e = forward(w, checks);
+            e.seed(g, vals);
+            assertEquals(Boolean.TRUE, e.step(g, vals), at + ": Root");
+            int dead = child(e);
+            int rule = e.matches.get(dead).ruleIx;
+            Id[] refs = e.matches.get(dead).refs.clone();
+            e.elementRemoved(x0);
+            e.retractMatch(g, dead, new ArrayList<>());
+            e.record(rule, refs.clone());
+            int other = e.matches.size() - 1;
+            ArrayList<Id> queue = new ArrayList<>();
+            e.retractMatch(g, dead, queue);
+            assertEquals(0, queue.size(), at);
+            e.drainRetraction(g, queue);
+            assertEquals(Boolean.TRUE, e.step(g, vals), at + ": der Kandidat des anderen wird angewandt");
+            assertNull(e.matches.get(other).entry, at + ": ohne Provenienzkante");
+            assertEquals(1, liveCorrsAt(g, x0), at);
+            e.record(rule, refs.clone());
+            assertEquals(4, e.matches.size(), at + ": der Schluessel war frei");
+            assertNull(e.step(g, vals), at + ": der Schluessel ist angewandt, der dritte wird uebersprungen");
+            assertEquals(2, e.cascade.size(), at);
+            assertEquals(Engine.Termination.DUPLICATION, e.verdict(), at);
+            g.setNodeStatus(x0, St.TOMBSTONE);
+            e.elementDeleted(g, x0);
+            assertEquals(0, e.consolidate(g), at + ": x0 geloescht");
+            assertEquals(1, liveCorrsAt(g, x0), at + ": das Erzeugnis des anderen bleibt wie in 2.0.2");
+            g.setNodeStatus(w.a(), St.TOMBSTONE);
+            e.elementDeleted(g, w.a());
+            assertEquals(4, e.consolidate(g), at + ": a geloescht");
+            assertEquals(Engine.Termination.CONVERGENCE, e.verdict(), at + ": nichts mehr angewandt");
+
+            // fall2b: der andere ist schon angewandt.
+            w = LinksTest.contextLinkGraph(1);
+            g = w.g();
+            x0 = w.xs().get(0);
+            e = forward(w, checks);
+            e.seed(g, vals);
+            assertEquals(Boolean.TRUE, e.step(g, vals), at + ": Root");
+            dead = child(e);
+            rule = e.matches.get(dead).ruleIx;
+            refs = e.matches.get(dead).refs.clone();
+            e.elementRemoved(x0);
+            e.retractMatch(g, dead, new ArrayList<>());
+            e.record(rule, refs.clone());
+            other = e.matches.size() - 1;
+            assertEquals(Boolean.TRUE, e.step(g, vals), at + ": der andere");
+            assertNull(e.step(g, vals), at);
+            assertEquals(Integer.valueOf(1), e.matches.get(other).entry, at);
+            queue = new ArrayList<>();
+            e.retractMatch(g, dead, queue);
+            assertEquals(0, queue.size(), at);
+            e.drainRetraction(g, queue);
+            e.record(rule, refs.clone());
+            assertEquals(Boolean.FALSE, e.step(g, vals), at + ": der dritte ist ein Duplikat");
+            assertNull(e.step(g, vals), at);
+            assertEquals(0, e.consolidate(g), at);
+            g.setNodeStatus(x0, St.TOMBSTONE);
+            e.elementDeleted(g, x0);
+            assertEquals(5, e.consolidate(g), at + ": x0 geloescht");
+            assertEquals(0, liveCorrsAt(g, x0), at);
+
+            // fall2c: der tote war angewandt, der andere holt die Erzeugnisse zurueck.
+            w = LinksTest.contextLinkGraph(1);
+            g = w.g();
+            x0 = w.xs().get(0);
+            e = forward(w, checks);
+            e.seed(g, vals);
+            LinksTest.runRemaining(e, g, vals);
+            assertEquals(2, e.cascade.size(), at + ": Root und Child");
+            dead = child(e);
+            rule = e.matches.get(dead).ruleIx;
+            refs = e.matches.get(dead).refs.clone();
+            queue = new ArrayList<>();
+            e.retractMatch(g, dead, queue);
+            e.drainRetraction(g, queue);
+            e.record(rule, refs.clone());
+            other = e.matches.size() - 1;
+            queue = new ArrayList<>();
+            e.retractMatch(g, dead, queue);
+            assertEquals(2, queue.size(), at + ": die Erzeugnisse des toten noch einmal");
+            e.drainRetraction(g, queue);
+            assertEquals(Boolean.TRUE, e.step(g, vals), at + ": der andere");
+            assertNull(e.step(g, vals), at);
+            assertEquals(0, e.consolidate(g), at);
+            assertEquals(3, e.cascade.size(), at);
+            assertNull(e.matches.get(other).entry, at + ": ohne Provenienzkante");
+            g.setNodeStatus(x0, St.TOMBSTONE);
+            e.elementDeleted(g, x0);
+            assertEquals(5, e.consolidate(g), at + ": x0 geloescht");
+            assertEquals(0, liveCorrsAt(g, x0), at);
         }
     }
 

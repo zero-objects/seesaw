@@ -2,6 +2,7 @@ package net.sandrakessler.seesaw.engine;
 
 import java.util.Arrays;
 import java.util.HashSet;
+import java.util.Set;
 
 /**
  * Die angewandten Matches (Rust {@code Applied} in {@code applied_marks.rs}):
@@ -37,17 +38,23 @@ import java.util.HashSet;
  * Frage und jede Aenderung vergleicht, eine Abweichung wirft.
  *
  * <p>Ruft ein Host das oeffentliche retractMatch selbst fuer einen toten Match,
- * dessen Schluessel ein anderer haelt, gilt die Grundlage nicht. Unter Pruefung
- * wirft dann {@code pulledMatch}, sobald der Kandidat des anderen angewandt
- * wird. Wird er als Duplikat vermerkt, weicht erst eine spaetere Frage nach dem
- * Schluessel oder sein Vergessen ab, dort wirft die Pruefung. Mit tentativem
- * Anker oder am V7-Guard verhalten sich beide Wege gleich.
+ * dessen Schluessel ein anderer haelt, nimmt es diesem den Schluessel wie
+ * 2.0.2. Steht dessen Kandidat im Todo, traegt er danach keinen Match (Nummer
+ * -1, {@link Engine#retractMatch}). Wird so ein Kandidat angewandt oder als
+ * Duplikat vermerkt, steht der Schluessel in {@link #unheld}: angewandt, ohne
+ * dass ein Match unter ihm steht, wie in der Menge von 2.0.2 ein Schluessel,
+ * der in {@code byKey} fehlt. {@link Engine#record} gibt die Marke an den
+ * Match, der danach unter den Schluessel kommt ({@link #adopt}), und dessen
+ * Kandidat ersetzt den ohne Match.
  */
 final class Applied {
     /** Ein Bit je Match. */
     private long[] marked = new long[1];
     /** Zahl der Marken. */
     private int count;
+    /** Die angewandten Schluessel, unter denen kein Match steht. null, bis
+     *  der erste Kandidat ohne Match vermerkt wird. */
+    private HashSet<MatchKey> unheld;
     /** Pruefung: die angewandten Schluessel, wie 2.0.2 sie fuehrte. null
      *  ohne Pruefung. */
     final HashSet<MatchKey> check;
@@ -63,9 +70,9 @@ final class Applied {
     }
 
     /** Ist der gezogene Kandidat mit dem Schluessel {@code key}, der den
-     *  Match {@code mix} traegt, schon angewandt? */
+     *  Match {@code mix} traegt (-1: keinen), schon angewandt? */
     boolean contains(MatchKey key, int mix) {
-        boolean m = marked(mix);
+        boolean m = mix >= 0 ? marked(mix) : unheld != null && unheld.contains(key);
         if (check != null && m != check.contains(key)) {
             throw new IllegalStateException("applied: die Marke des Matches " + mix + " (" + m
                     + ") weicht von der Menge der angewandten Schluessel ab, Regel " + key.ruleIx);
@@ -73,9 +80,18 @@ final class Applied {
         return m;
     }
 
-    /** Vermerkt den gezogenen Kandidaten des Matches {@code mix} als
-     *  angewandt. */
+    /** Vermerkt den gezogenen Kandidaten des Matches {@code mix} (-1:
+     *  ohne Match) als angewandt. */
     void insert(MatchKey key, int mix) {
+        if (mix < 0) {
+            if (unheld == null) unheld = new HashSet<>();
+            unheld.add(key);
+            if (check != null) {
+                check.add(key);
+                same();
+            }
+            return;
+        }
         int word = mix >>> 6;
         if (word >= marked.length) marked = Arrays.copyOf(marked, Math.max(word + 1, 2 * marked.length));
         long bit = 1L << mix;
@@ -96,6 +112,7 @@ final class Applied {
      */
     void forget(MatchKey key, Integer current) {
         if (check != null) check.remove(key);
+        if (unheld != null) unheld.remove(key);
         if (current != null) {
             int mix = current;
             int word = mix >>> 6;
@@ -108,15 +125,38 @@ final class Applied {
         if (check != null) same();
     }
 
+    /**
+     * Der Match {@code mix} kommt unter den Schluessel {@code key}. War der
+     * Schluessel ohne Match angewandt, traegt jetzt dieser Match die Marke
+     * (2.0.2: der Schluessel blieb in der Menge).
+     */
+    void adopt(MatchKey key, int mix) {
+        if (unheld == null || !unheld.remove(key)) return;
+        int word = mix >>> 6;
+        if (word >= marked.length) marked = Arrays.copyOf(marked, Math.max(word + 1, 2 * marked.length));
+        long bit = 1L << mix;
+        if ((marked[word] & bit) == 0) {
+            marked[word] |= bit;
+            count++;
+        }
+        if (check != null) same();
+    }
+
     /** Ist nichts angewandt? */
     boolean isEmpty() {
-        return count == 0;
+        return count == 0 && (unheld == null || unheld.isEmpty());
+    }
+
+    /** Die angewandten Schluessel, unter denen kein Match steht. */
+    Set<MatchKey> unheld() {
+        return unheld == null ? Set.of() : unheld;
     }
 
     private void same() {
-        if (count != check.size()) {
-            throw new IllegalStateException("applied: " + count + " Marken, aber " + check.size()
-                    + " angewandte Schluessel");
+        int n = count + (unheld == null ? 0 : unheld.size());
+        if (n != check.size()) {
+            throw new IllegalStateException("applied: " + n + " Marken und Schluessel ohne Match, aber "
+                    + check.size() + " angewandte Schluessel");
         }
     }
 }
