@@ -342,8 +342,8 @@ equal to or better than Java 2.0.2: graph, cascade and its order and
 the results of `step` stay those of 2.0.2. The exception is the fix of
 the matcher (next section), which follows Rust where 2.0.2 did not,
 including two leaves without a value at a value equality: 2.0.2 took
-them as equal, the matcher now does not (different from 2.0.2, not
-rated).
+them as equal, the matcher now does not (different from 2.0.2, kept as
+in Rust by decision of 2026-11-18).
 Doors that a host reaches only outside the contract behave differently
 and are listed below. The statement above does not cover them. The
 doors `elementDeleted`, `elementChanged`, `retractFor` and
@@ -651,8 +651,9 @@ at each fixed position and through the engine (run against fa12974),
 the search does not (`MatcherTest.zweiFehlendeWerteSindNichtGleich`).
 A leaf has no value when the value map has no entry for it, or when it
 is a derived leaf whose source has no value or whose transform does not
-apply (`Graph.resolveValue`). This case is different from 2.0.2 and not
-rated.
+apply (`Graph.resolveValue`). This case is different from 2.0.2. It is
+kept as in Rust by decision of 2026-11-18, so that Java and Rust find
+the same matches.
 
 Thread CPU of the `pde` cells on `open2` and `open5`, minimum over three
 rounds (`benches/suite/results/2026-11-18-java/`, 02c3e39 before the
