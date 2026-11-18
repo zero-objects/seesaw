@@ -924,9 +924,6 @@ public final class AnchorIndex {
      * Position): die Reihenfolge der ungefilterten Schleife. Kodiert
      * mit {@link #rule}, {@link #node}, {@link #pos}.
      *
-     * <p>{@code firstOnly}: nur die Plätze an Position 0 (für den Seed,
-     * der jeden Match von seinem ersten Knoten aus sucht).
-     *
      * <p>{@code skip} (null: keiner): die Suche an {@code nodes[ni]}
      * lässt den Knoten {@code id} aus, wenn {@code skip.test(ni, id)}.
      * Der Gang von {@code nodes[ni]} betritt einen solchen Knoten nicht,
@@ -936,7 +933,7 @@ public final class AnchorIndex {
      * hat keine Tripel.
      */
     long[] candidates(Graph g, Map<Id, String> vals, List<Id> nodes, Walk st,
-            IntPredicate active, boolean firstOnly, Skip skip) {
+            IntPredicate active, Skip skip) {
         if (st.marked.length != nodeCount) {
             st.marked = new boolean[nodeCount];
             st.listLen = 0;
@@ -981,13 +978,13 @@ public final class AnchorIndex {
             for (int i = 0; i <= st.listLen; i++) {
                 Filed f = i < st.listLen ? filed.get(st.list[i]) : ti.free;
                 for (int k = 0; k < f.any.n; k++) {
-                    offer(ti.places.get(f.any.a[k]), ni, value, false, st, active, firstOnly);
+                    offer(ti.places.get(f.any.a[k]), ni, value, false, st, active);
                 }
                 if (value != null && f.equals != null) {
                     Ints l = f.equals.get(value);
                     if (l != null) {
                         for (int k = 0; k < l.n; k++) {
-                            offer(ti.places.get(l.a[k]), ni, value, true, st, active, firstOnly);
+                            offer(ti.places.get(l.a[k]), ni, value, true, st, active);
                         }
                     }
                 }
@@ -1033,12 +1030,11 @@ public final class AnchorIndex {
     /** Ein erreichter Platz: Kandidat, wenn alle seine Pfade markiert
      *  sind und sein eigenes Wertprädikat zutrifft. */
     private void offer(Place place, int ni, String value, boolean valueHolds, Walk st,
-            IntPredicate active, boolean firstOnly) {
+            IntPredicate active) {
         for (int k = place.needsFrom; k < place.needsTo; k++) {
             if (!st.marked[needs[k]]) return;
         }
         if (!valueHolds && place.value != null && !place.value.matches(value)) return;
-        if (firstOnly && place.pos != 0) return;
         if (!active.test(place.rule)) return;
         st.push(pack(place.rule, ni, place.pos));
     }
