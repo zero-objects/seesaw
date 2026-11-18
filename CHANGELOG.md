@@ -540,14 +540,19 @@ the code, not run).
 `Engine.retractMatch`, called by a host for a dead match whose key now
 belongs to another match with the same ref sequence, behaves as in
 2.0.2, which kept todo, applied keys and provenance by key. The other
-match loses key and mark. Its candidate stays in the todo and carries
-no match from then on (number -1). Applied, it gets no provenance edge,
-and its key counts as applied without a match. A match recorded later
-under the key replaces that candidate and takes over the mark. When the
-other match is retracted later, its products stay, as in 2.0.2.
-`elementDeleted`, `elementChanged`, `retractFor` and `step` do not lead
-there, only a host that calls `retractMatch` itself. Rust has no
-counterpart, `retract_match` is private there.
+match loses key and mark. If it was applied before the call, it keeps
+its provenance edge, and its products fall with it when it is retracted
+later. If its candidate is still in the todo, the candidate carries no
+match from then on (number -1). A match recorded under the key before
+the candidate is pulled replaces it. Pulled without a match, the
+candidate gets no provenance edge when it is applied, and its key counts
+as applied without a match, also when it is taken as a duplicate. A
+match recorded under the key after that takes over the mark. When the
+other match is retracted later, the products of a candidate applied
+without a match stay, as in 2.0.2. `elementDeleted`, `elementChanged`,
+`retractFor` and `step` do not lead there, only a host that calls
+`retractMatch` itself. Rust has no counterpart, `retract_match` is
+private there.
 
 Not taken over, and not measured:
 
