@@ -29,7 +29,7 @@
 #         hängt eine Zeile an die TSV an. Das Aufteilen auf Jobs unter 5 Minuten liegt beim
 #         Aufrufer (z. B. eine Zelle je Aufruf). Ein Lauf wird nach LIMIT Sekunden beendet.
 #     sh jsuite.sh ladder [--tsv <tsv>] [<zelle>...]
-#         alle Stände aus ladder.txt in drei Runden (ROUNDS), Vorgabe die großen Zellen (CELLS),
+#         alle Stände aus ladder.txt (oder der Datei in LADDER) in drei Runden (ROUNDS), Vorgabe die großen Zellen (CELLS),
 #         TSV ladder.tsv. Baut fehlende JARs und die fehlende Messstrecke. Setzt fort, wo die
 #         TSV aufhört: in Runde r läuft ein Paar (Label, Zelle), wenn die TSV weniger als r
 #         Zeilen davon hat. Ein Aufruf bleibt unter LIMIT Sekunden: einen weiteren Lauf startet
@@ -54,7 +54,7 @@ set -u
 HOST=codepit
 ROOT=/root/seesaw-java
 J=$(cd "$(dirname "$0")/.." && pwd)
-LADDER=$J/bench/ladder.txt
+LADDER=${LADDER:-$J/bench/ladder.txt}
 JVM="-Xms8g -Xmx8g -XX:+UseParallelGC"
 MAIN=net.sandrakessler.seesaw.bench.JavaSuite
 ROUNDS=${ROUNDS:-3}
