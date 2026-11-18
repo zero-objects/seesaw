@@ -1,6 +1,7 @@
 package net.sandrakessler.seesaw.engine;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -148,5 +149,54 @@ final class ErzeugerTest {
         assertTrue(runden >= 10, "Runden: " + runden);
         assertTrue(verbindungenMitErzeuger >= 100, "Verbindungen mit Erzeuger: " + verbindungenMitErzeuger);
         assertTrue(knotenMitMehrerenErzeugern > 0, "Knoten mit mehreren Erzeugern: " + knotenMitMehrerenErzeugern);
+    }
+
+    /**
+     * Der Host macht mit der materialisierten Kopie weiter. Sie laesst eine
+     * Verbindung weg, die {@code Root} erzeugt hat und die der Host vorher
+     * zum Tombstone gemacht hat, und der Host gibt deren Id an eine Tuer.
+     * 2.0.2 fand den Erzeuger in {@code byProduct}, zog den Match von
+     * {@code Root} zurueck und mit ihm alles, was auf seiner Korrespondenz
+     * aufbaut. Derselbe Ablauf ueber die oeffentliche API gegen fa12974
+     * gefahren (Job 7397): nach der Tuer sind alle drei Matches tot, die
+     * Konsolidierung macht 13 Elemente zu Tombstones, das Verdikt ist
+     * {@code CONVERGENCE}. Je Tuer und je Verbindung von {@code Root} eine
+     * frische Welt.
+     */
+    @Test
+    @SuppressWarnings("deprecation")
+    void eineVerbindungDieDieKopieWeglaesstFindetIhrenErzeuger() {
+        for (int door = 0; door < 3; door++) {
+            for (int pick = 0; pick < 2; pick++) {
+                String at = "Tuer " + door + ", Verbindung " + pick;
+                LinksTest.ContextLink w = LinksTest.contextLinkGraph(2);
+                Graph g = w.g();
+                Map<Id, String> vals = new HashMap<>();
+                Engine e = LinksTest.forward(w.rules());
+                e.seed(g, vals);
+                saettigen(e, g, vals);
+                e.consolidate(g);
+                assertEquals(3, e.cascade.size(), at + ": Root und zwei Child");
+                assertEquals(2, e.cascade.get(0).createdEdges.size(), at + ": die Verbindungen von Root");
+                Id edge = e.cascade.get(0).createdEdges.get(pick);
+                g.setConnectionStatus(edge, St.TOMBSTONE);
+                Graph copy = g.materialize();
+                assertTrue(copy.conn(edge) == null && copy.node(edge) == null, at + ": die Kopie haelt sie nicht");
+                switch (door) {
+                    case 0 -> e.elementDeleted(copy, edge);
+                    case 1 -> e.elementChanged(copy, edge);
+                    default -> e.retractFor(copy, edge);
+                }
+                for (int mix = 0; mix < e.matches.size(); mix++) {
+                    assertTrue(e.matches.get(mix).dead, at + ": Match " + mix + " zurueckgezogen");
+                }
+                assertEquals(13, e.consolidate(copy), at + ": Tombstones");
+                for (Engine.Entry en : e.cascade) {
+                    for (Id c : en.created) assertEquals(St.TOMBSTONE, copy.node(c).status, at);
+                }
+                assertEquals(Engine.Termination.CONVERGENCE, e.verdict(), at);
+                assertArrayEquals(new int[] {0}, liste(e.producersOf(copy, edge)), at + ": der Eintrag von Root");
+            }
+        }
     }
 }

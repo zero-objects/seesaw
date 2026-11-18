@@ -174,6 +174,19 @@ public final class Engine {
      * (Rust {@code by_product_filed}). null ohne Pruefung.
      */
     final HashMap<Id, IntList> byProductFiled = CHECKS ? new HashMap<>() : null;
+    /**
+     * Die Erzeuger der Verbindungen, die die Kaskade gebaut hat, unter der
+     * Id der Verbindung, aufsteigend, ein Eintrag einmal je Verbindung (Rust
+     * hat kein Gegenstueck). {@link #producersOf} liest hier nur fuer eine
+     * Id, die der Graph nicht kennt: deren Enden lassen sich nicht ablesen.
+     * null, bis die erste solche Frage kommt. Gebaut aus den Eintraegen der
+     * Kaskade bis {@link #edgesMadeUpTo}, jede weitere Frage nimmt die
+     * seither angefuegten hinzu. Der Schritt fuehrt den Index nicht.
+     */
+    HashMap<Id, IntList> edgesMade;
+    /** Zahl der Eintraege der Kaskade, deren Verbindungen in
+     *  {@link #edgesMade} stehen. */
+    int edgesMadeUpTo;
     /** Null = absichtlich ungerichteter Initial-/Batchlauf. */
     boolean[] waveDirections;
     /**
@@ -635,7 +648,8 @@ public final class Engine {
             // Es wurde von Eintraegen ERZEUGT: die verlieren ihr
             // Ergebnis, und mit ihnen faellt alles Weitere, das sie
             // gebaut haben -- die Korrespondenz vor allem.
-            // Ohne Kopie: retractEntry aendert byProduct nicht.
+            // Ohne Kopie: retractEntry aendert weder byProduct noch
+            // edgesMade.
             IntList eixs = producersOf(g, id);
             if (eixs != null) {
                 for (int i = 0, n = eixs.size(); i < n; i++) retractEntry(g, eixs.get(i), queue);
@@ -656,11 +670,25 @@ public final class Engine {
      * Korrespondenz aus, die der Eintrag erzeugt hat). Die Erzeuger der
      * Enden und die Eintraege der Matches, die ein Ende binden, sind
      * damit alle Kandidaten.
+     *
+     * <p>Kennt der Graph die Id nicht, kann sie eine Verbindung sein, die er
+     * nicht haelt: der Host hat den Graphen durch seine materialisierte Kopie
+     * ersetzt, die Tombstones weglaesst, oder einen Platz aus
+     * {@link Graph#map} genommen. Steht sie nicht als Knoten in
+     * {@link #byProduct}, kommen ihre Erzeuger aus {@link #edgesMade}, wie
+     * 2.0.2 sie in {@code byProduct} fand.
      */
     IntList producersOf(Graph g, Id id) {
-        Conn c = g.conn(id);
+        Graph.Slot s = g.map.get(id);
+        Conn c = s == null ? null : s.connection;
         if (c == null) {
             IntList nodes = byProduct.get(id);
+            if (nodes == null && (s == null || s.node == null)) {
+                // Weder ein Knoten noch eine Verbindung des Graphen.
+                IntList edges = producersOfUnheld(id);
+                if (byProductFiled != null) checkProducers(id, true, edges);
+                return edges;
+            }
             if (byProductFiled != null) checkProducers(id, false, nodes);
             return nodes;
         }
@@ -703,14 +731,34 @@ public final class Engine {
     }
 
     /**
+     * Die Eintraege, die eine Verbindung mit der Id {@code id} erzeugt haben,
+     * aus {@link #edgesMade}, das hier angelegt oder um die Eintraege
+     * ergaenzt wird, die seit der letzten Frage in die Kaskade kamen. null:
+     * keiner. Ein Eintrag, der die Verbindung zweimal nennt, steht einmal
+     * darin, wie in der Antwort aus den Enden (siehe {@link #checkProducers}).
+     * Der Aufrufer aendert die Liste nicht.
+     */
+    private IntList producersOfUnheld(Id id) {
+        if (edgesMade == null) edgesMade = new HashMap<>();
+        for (int n = cascade.size(); edgesMadeUpTo < n; edgesMadeUpTo++) {
+            List<Id> made = cascade.get(edgesMadeUpTo).createdEdges;
+            for (int i = 0, m = made.size(); i < m; i++) {
+                IntList l = edgesMade.computeIfAbsent(made.get(i), x -> new IntList());
+                if (l.size() == 0 || l.get(l.size() - 1) != edgesMadeUpTo) l.add(edgesMadeUpTo);
+            }
+        }
+        return edgesMade.get(id);
+    }
+
+    /**
      * Pruefung unter {@link #CHECKS}: {@code found} sind die Erzeuger,
      * die 2.0.2 in {@link #byProduct} abgelegt haette, wo es Knoten und
-     * Verbindungen ablegte. Fuer eine Id, die keine Verbindung des
-     * Graphen ist, darf unter ihr keine Verbindung abgelegt sein. Fuer
-     * eine Verbindung ihre Ablage ohne aufeinanderfolgende
-     * Wiederholungen: ein Eintrag, der sie zweimal nennt, stand zweimal
-     * in der Liste, der zweite {@link #retractEntry} fand den Schluessel
-     * nicht mehr in {@link #byKey} und tat nichts.
+     * Verbindungen ablegte. Fuer einen Knoten ({@code connection} false)
+     * darf unter seiner Id keine Verbindung abgelegt sein. Fuer eine
+     * Verbindung, auch eine, die der Graph nicht haelt, ihre Ablage ohne
+     * aufeinanderfolgende Wiederholungen: ein Eintrag, der sie zweimal
+     * nennt, stand zweimal in der Liste, der zweite {@link #retractEntry}
+     * fand den Schluessel nicht mehr in {@link #byKey} und tat nichts.
      */
     private void checkProducers(Id id, boolean connection, IntList found) {
         IntList filed = byProductFiled.get(id);

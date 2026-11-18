@@ -343,13 +343,11 @@ the results of `step` stay those of 2.0.2. The exception is the fix of
 the matcher (next section), which follows Rust where 2.0.2 did not.
 Doors that a host reaches only outside the contract behave differently
 and are listed below. The statement above does not cover them, and
-three of them behave worse than 2.0.2: `elementDeleted`,
-`elementChanged`, `retractFor` and `drainRetraction` with a connection
-the passed graph does not hold leave the entries that produced it in
-place, `retractMatch` on a dead match sets provenance edge and mark on
-the match that now carries its key, and after `elementRemoved` with the
-id of a connection and `record(int, Id[])` a match recorded later can
-lose its candidate at the next door with a graph. Steps, applied steps,
+two of them behave worse than 2.0.2: `retractMatch` on a dead match
+sets provenance edge and mark on the match that now carries its key,
+and after `elementRemoved` with the id of a connection and
+`record(int, Id[])` a match recorded later can lose its candidate at
+the next door with a graph. Steps, applied steps,
 node count and fingerprint of every measured cell equal the ones of the
 Rust cells (792 measured lines of the Java cells and 108 of `pde`, none
 differing). `java/bench/jgate.sh` runs a differential test against
@@ -480,15 +478,6 @@ only in the ways given:
 - `Engine.elementRemoved(Id)` with the id of a connection: the matches
   resting on it die at the next door that takes a graph, on the graph of
   that door.
-- `elementDeleted`, `elementChanged`, `retractFor` and `drainRetraction`
-  with the id of a connection that the passed graph does not hold:
-  the matches resting on it are withdrawn (they are found through the
-  index of the links not held), the entries that produced it are not.
-  2.0.2 did both. Such an id comes from a host that calls with another
-  graph than the one the engine ran on, for example the copy made by
-  `Graph.materialize()`, which leaves tombstoned connections out, or
-  from changes through the public field `Graph.map`. With
-  `-Dseesaw.checks=true` it throws.
 - `Engine.retractMatch` for a dead match whose key now belongs to
   another match with the same ref sequence: the provenance edge and the
   mark are set on that other match, 2.0.2 did not. Consequences found
@@ -546,15 +535,30 @@ held forward, and after a change to a materialized copy of the graph the
 engine asks that index itself when a retraction looks for products
 the copy left out.
 
+`elementDeleted`, `elementChanged`, `retractFor` and `drainRetraction`
+with the id of a connection that the passed graph does not hold behave
+as in 2.0.2: the matches resting on it are withdrawn (found through the
+index of the links not held), and so are the entries that produced it.
+These come from an index of the connections each entry of the cascade
+created, built at the first question for an id the graph does not know
+and extended at every later one. The step does not maintain it. Such
+an id comes from a host that calls with another graph than the one the
+engine ran on, for example the copy made by `Graph.materialize()`,
+which leaves tombstoned connections out, or from changes through the
+public field `Graph.map`. Rust `producers_of` in `perf/select` reads
+only the filed nodes for such an id and finds no producers (read in
+the code, not run).
+
 Not taken over, and not measured:
 
 - The seed over the index stays at `firstOnly`. The seed part of Rust
   17b7e52 hangs on `index_seed`, which is not in the plan, so the
   anchored searches in `langpack/seed` differ from Rust (not measured).
 - The cost of `producersOf` and `restingOn` for a connection is not
-  measured by any cell. The cells delete nodes only. The path runs
-  when a host gives the id of a connection to `elementDeleted`,
-  `elementChanged` or `retractFor`.
+  measured by any cell, nor is the index of the connections an entry
+  created. The cells delete nodes only. The path runs when a host gives
+  the id of a connection to `elementDeleted`, `elementChanged` or
+  `retractFor`.
 
 ### Java: matches missed behind a value equality
 

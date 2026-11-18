@@ -87,11 +87,11 @@ final class LinksTest {
 
     /** Graph, Knoten {@code a}, seine Kinder und die Regeln
      *  (Rust {@code context_link_graph}). */
-    private record ContextLink(Graph g, Id a, List<Id> xs, List<Rule> rules) {}
+    record ContextLink(Graph g, Id a, List<Id> xs, List<Rule> rules) {}
 
     /** {@code a} mit {@code n} Kindern vom Typ {@code X}, die Regeln von
      *  {@link #CONTEXT_LINK_RULES} darin geladen. */
-    private static ContextLink contextLinkGraph(int n) {
+    static ContextLink contextLinkGraph(int n) {
         Graph g = new Graph();
         Id a = g.addBaseline("a", "A");
         List<Id> xs = new ArrayList<>();
@@ -105,14 +105,14 @@ final class LinksTest {
     }
 
     /** Eine Engine fuer eine Welle von der Quellseite. */
-    private static Engine forward(List<Rule> rules) {
+    static Engine forward(List<Rule> rules) {
         Engine e = new Engine(rules);
         e.admitDelta(List.of(Engine.DeltaDomain.SOURCE));
         return e;
     }
 
     /** Die Korrespondenz vom Typ {@code AB}, die {@code Root} erzeugt. */
-    private static Id corrAb(Graph g) {
+    static Id corrAb(Graph g) {
         Integer ab = g.lookup("AB");
         assertNotNull(ab, "Typ AB");
         Id found = null;
@@ -128,7 +128,7 @@ final class LinksTest {
 
     /** Schritte ohne neuen Seed, bis keiner mehr geht (Rust
      *  {@code run_remaining}). */
-    private static void runRemaining(Engine e, Graph g, Map<Id, String> vals) {
+    static void runRemaining(Engine e, Graph g, Map<Id, String> vals) {
         for (int i = 0; i < 2000; i++) {
             if (e.step(g, vals) == null) return;
         }
@@ -413,7 +413,7 @@ final class LinksTest {
     }
 
     /** Wie viele Korrespondenzen an {@code x} haengen. */
-    private static int corrsAt(Graph g, Id x) {
+    static int corrsAt(Graph g, Id x) {
         int n = 0;
         for (Part p : g.parts(x)) {
             Node o = g.node(p.other);
