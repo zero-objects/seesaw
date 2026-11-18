@@ -568,9 +568,9 @@ run).
 
 Not taken over, and not measured:
 
-- The seed over the index stayed at `firstOnly` here. Rust `index_seed`
-  (0dcae91) came later, see "Java: seed through the anchor index as in
-  Rust".
+- The seed over the index stays at `firstOnly`. The seed part of Rust
+  17b7e52 hangs on `index_seed`, which is not in the plan, so the
+  anchored searches in `langpack/seed` differ from Rust (not measured).
 - The cost of `producersOf` and `restingOn` for a connection is not
   measured by any cell, nor is the index of the connections an entry
   created. The cells delete nodes only. The path runs when a host gives
@@ -612,30 +612,6 @@ finds the matches whose two ends are not neighbours, and how often it
 returns a match no longer depends on the connections between those two
 ends. Where the two ends are neighbours and both have no value, 2.0.2
 found the match, the search now does not, as in Rust.
-
-### Java: seed through the anchor index as in Rust
-
-Rust 0dcae91 taken over. The seed through the anchor index
-(`Engine.indexSeed`, Rust `index_seed`) anchors every matchable node of
-the graph like an added one, at every place the index offers for it,
-and searches each match from the smallest of its nodes only: the search
-anchored at a node leaves out every smaller one. Before, the Java seed
-had a form of its own (`firstOnly`, from stage T11): only the nodes of
-the type of a rule's first position, at position 0. The seed takes the
-index, as before, when the scan per rule would start at more than four
-times the nodes of the graph. The matches are recorded rule by rule,
-those of one rule in μ order, as by the scan per rule.
-`AnchorIndex.candidates` has no parameter `firstOnly` any more.
-`Engine.seedWithThreads` spreads the new form (`Par.indexSeedSpread`,
-Rust `index_seed_spread`).
-
-With `-Dseesaw.checks=true` every seed of an engine with an index first
-runs both ways and compares them (`Engine.checkSeed`, Rust `check_seed`
-in the test build). Repetitions of a match stand next to each other and
-are dropped by `record`, the comparison leaves them out (Rust c8277a4).
-The check does not count in the counters of the searches. The seed then
-takes the way the threshold chooses. Before, a seed under the checks
-always went through the index.
 
 ### Tests
 

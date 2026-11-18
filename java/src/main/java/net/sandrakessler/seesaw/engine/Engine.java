@@ -399,20 +399,6 @@ public final class Engine {
             return out;
         }
 
-        /** Die Folge ohne jeden Match, der gleich dem vor ihm ist (Rust
-         *  {@code Vec::dedup}). */
-        Found dedup() {
-            Found out = new Found();
-            for (int i = 0; i < rule.size(); i++) {
-                if (i > 0 && rule.get(i).equals(rule.get(i - 1))
-                        && Matcher.compareBindings(refs.get(i), refs.get(i - 1)) == 0) {
-                    continue;
-                }
-                out.match(rule.get(i), refs.get(i));
-            }
-            return out;
-        }
-
         /** Stelle der ersten Abweichung, -1 = gleich. */
         int differsAt(Found o) {
             int n = Math.min(rule.size(), o.rule.size());
@@ -1034,16 +1020,20 @@ public final class Engine {
      * einen Scan je Regel oder ueber den {@link AnchorIndex}, je
      * nachdem, was weniger Knoten ansieht; beide Wege finden dieselben
      * Matches und tragen sie in derselben Reihenfolge ein.
-     *
-     * <p>Unter {@link #CHECKS} vergleicht jeder Seed einer Engine mit
-     * Index vorher beide Wege ({@link #checkSeed}, Rust {@code check_seed}
-     * im Testbuild).
      */
     public void seed(Graph g, Map<Id, String> vals) {
         links.settleRemoved(g);
         Sink sink = (ri, m) -> record(g, ri, m);
         if (useIndex && index() != null) {
-            if (CHECKS) checkSeed(g, vals);
+            if (CHECKS) {
+                Found indexed = new Found();
+                Found plain = new Found();
+                seedByIndex(g, vals, indexed);
+                seedByScan(g, vals, plain);
+                checkSame("der Seed", indexed, plain);
+                indexed.into(sink);
+                return;
+            }
             if (seedThroughIndex(g)) {
                 seedByIndex(g, vals, sink);
                 return;
@@ -1092,101 +1082,68 @@ public final class Engine {
      *  beginnen wuerde. */
     long seedFactor = 4;
 
-    /** Der Seed ueber den {@link AnchorIndex}: jeder matchbare Knoten des
-     *  Graphen wird wie ein hinzugefuegter verankert ({@link #indexSeed}). */
-    private void seedByIndex(Graph g, Map<Id, String> vals, Sink sink) {
-        seedsByIndex++;
-        indexSeed(g, vals, admitted(), sink);
-    }
-
-    /** Je Regel: laesst die Welle sie zu ({@link #ruleActive})? */
-    private boolean[] admitted() {
-        boolean[] admitted = new boolean[rules.size()];
-        for (int ri = 0; ri < rules.size(); ri++) admitted[ri] = ruleActive(ri);
-        return admitted;
-    }
-
     /**
-     * Die Matches jeder zugelassenen Regel ueber den ganzen Graphen,
-     * gefunden ueber den {@link AnchorIndex} (Rust {@code index_seed}):
-     * Regel fuer Regel, die einer Regel in mu-Ordnung, an {@code each}.
-     * Das ist die Folge eines Scans je Regel ({@link #seedByScan}) bis auf
-     * Wiederholungen: eine Suche liefert einen Match einmal je Weg, auf
-     * dem sie einen Link ohne Richtung zwischen zwei in beide Richtungen
-     * verbundenen Knoten liest, und zwei Suchen koennen diesen Link an
-     * verschiedenen Schritten lesen. {@link #record} verwirft eine
-     * Wiederholung.
+     * Der Seed ueber den {@link AnchorIndex}.
      *
-     * <p>Jeder matchbare Knoten wird an den Plaetzen verankert, die der
-     * Index fuer ihn anbietet. Ein Match wird nur von seinem kleinsten
-     * Knoten aus gesucht: die Suche an einem Knoten laesst jeden kleineren
-     * aus, und der Match mit einem kleineren Knoten wird an diesem Knoten
-     * gefunden, wo der Index dessen Position ebenfalls anbietet (die
-     * Bedingung des Index ist notwendig). Ein Muster ohne Knoten hat
+     * <p>Der Scan einer Regel setzt jeden matchbaren Knoten vom Typ der
+     * ersten Position an Position 0 und sucht von dort weiter. Die
+     * verankerte Suche mit dem Knoten an Position 0 ist genau dieser
+     * Teil des Scans: ihr Plan beginnt mit Position 0 und waehlt die
+     * weiteren Positionen wie der Plan des Scans. Der Index nennt die
+     * Knoten, bei denen diese Suche einen Match finden kann (seine
+     * Bedingung ist notwendig), die uebrigen fielen im Scan leer aus.
+     * Die Matches einer Regel werden wie im Scan sortiert, also ist die
+     * Folge dieselbe, samt Wiederholungen. Ein Muster ohne Knoten hat
      * keinen Platz im Index und wird direkt gesucht.
      */
-    private void indexSeed(Graph g, Map<Id, String> vals, boolean[] admitted, Sink each) {
+    private void seedByIndex(Graph g, Map<Id, String> vals, Sink sink) {
         AnchorIndex ix = index();
-        ArrayList<Id> nodes = matchableNodes(g);
-        long[] candidates = ix.candidates(g, vals, nodes, walk, ri -> admitted[ri], null);
+        seedsByIndex++;
+        ArrayList<Id> starts = seedStarts(g);
+        long[] candidates = ix.candidates(g, vals, starts, walk, this::ruleActive, true, null);
         int next = 0;
-        // Die Matches einer Regel, nacheinander.
         ArrayList<Id[]> found = new ArrayList<>();
         for (int ri = 0; ri < rules.size(); ri++) {
-            if (!admitted[ri]) continue;
+            if (!ruleActive(ri)) continue;
             Rule r = rules.get(ri);
-            if (r.patNodes.isEmpty()) {
-                for (Id[] m : Matcher.findMatchesWithFixed(g, vals, r, new Id[0])) each.match(ri, m);
+            int n = r.patNodes.size();
+            if (n == 0) {
+                for (Id[] m : Matcher.findMatchesWithFixed(g, vals, r, new Id[0])) sink.match(ri, m);
                 continue;
             }
             found.clear();
+            Matcher.Plan plan = null;
             while (next < candidates.length && AnchorIndex.rule(candidates[next]) == ri) {
-                long t = candidates[next++];
-                int pos = AnchorIndex.pos(t);
-                Id at = nodes.get(AnchorIndex.node(t));
+                Id start = starts.get(AnchorIndex.node(candidates[next]));
+                next++;
+                if (plan == null) plan = ix.plan(ri, 0, r);
                 searches++;
                 anchoredSearches++;
-                Matcher.findMatchesPlanned(g, vals, r, ix.plan(ri, pos, r), pos, at,
-                        id -> id.compareTo(at) < 0, scratch);
+                Matcher.findMatchesPlanned(g, vals, r, plan, 0, start, scratch);
                 found.addAll(scratch.found);
             }
             found.sort(Matcher::compareBindings);
-            for (Id[] m : found) each.match(ri, m);
+            for (Id[] m : found) sink.match(ri, m);
         }
         if (next != candidates.length) {
             throw new IllegalStateException("anchor index: Kandidat einer nicht zugelassenen Regel");
         }
     }
 
-    /** Die matchbaren Knoten des Graphen, aufsteigend (Rust {@code nodes}
-     *  in {@code index_seed}). Je Knoten einmal: die Schluessel der
-     *  Abbildung sind verschieden. */
-    static ArrayList<Id> matchableNodes(Graph g) {
-        ArrayList<Id> nodes = new ArrayList<>();
-        for (Map.Entry<Id, Graph.Slot> e : g.map.entrySet()) {
-            Node n = e.getValue().node;
-            if (n != null && n.status.matchable()) nodes.add(e.getKey());
+    /** Die Knoten, an denen ein Scan beginnen wuerde: die matchbaren vom
+     *  Typ der ersten Position einer zugelassenen Regel, je Typ einmal, in
+     *  der Folge der Regeln. */
+    private ArrayList<Id> seedStarts(Graph g) {
+        ArrayList<Id> starts = new ArrayList<>();
+        HashSet<Integer> types = new HashSet<>();
+        for (int ri = 0; ri < rules.size(); ri++) {
+            if (!ruleActive(ri)) continue;
+            Rule r = rules.get(ri);
+            if (!r.patNodes.isEmpty() && types.add(r.patNodes.get(0).typ)) {
+                starts.addAll(g.nodesOfType(r.patNodes.get(0).typ));
+            }
         }
-        nodes.sort(null);
-        return nodes;
-    }
-
-    /**
-     * Pruefung des Seeds unter {@link #CHECKS} (Rust {@code check_seed}):
-     * der Index findet die Matches des Scans, in dessen Folge. Verglichen
-     * wird ohne Wiederholungen eines Matches, die in mu-Ordnung
-     * nebeneinander stehen und die {@link #record} verwirft (Rust
-     * c8277a4). Weicht eine Folge ab, wirft der Seed. Die Pruefung zaehlt
-     * nicht.
-     */
-    private void checkSeed(Graph g, Map<Id, String> vals) {
-        long[] kept = counters();
-        Found scanned = new Found();
-        seedByScan(g, vals, scanned);
-        Found indexed = new Found();
-        indexSeed(g, vals, admitted(), indexed);
-        restore(kept);
-        checkSame("der Seed", indexed.dedup(), scanned.dedup());
+        return starts;
     }
 
     /**
@@ -1217,8 +1174,7 @@ public final class Engine {
      *
      * <p>Unter {@link #CHECKS} laeuft die Suche zusaetzlich auf einem Thread,
      * eine abweichende Folge wirft. Der Lauf auf einem Thread zaehlt nicht.
-     * Mit Index werden dazu wie in {@code seed} beide Wege verglichen
-     * ({@link #checkSeed}).
+     * Mit Index wird dazu wie in {@code seed} mit dem Scan verglichen.
      */
     public void seedWithThreads(Graph g, Map<Id, String> vals, int threads) {
         if (threads <= 1) {
@@ -1237,14 +1193,12 @@ public final class Engine {
     void seedWithThreads(Graph g, Map<Id, String> vals, int threads, int piece) {
         links.settleRemoved(g);
         Sink sink = (ri, m) -> record(g, ri, m);
-        // Der Weg wie in seed.
-        boolean indexed = useIndex && index() != null;
-        boolean byIndex = indexed && seedThroughIndex(g);
+        // Der Weg wie in seed: unter CHECKS mit Index immer der Index.
+        boolean byIndex = useIndex && index() != null && (CHECKS || seedThroughIndex(g));
         if (!CHECKS) {
             seedSpread(g, vals, byIndex, threads, piece, sink);
             return;
         }
-        if (indexed) checkSeed(g, vals);
         Found spread = new Found();
         seedSpread(g, vals, byIndex, threads, piece, spread);
         Found one = new Found();
@@ -1262,6 +1216,11 @@ public final class Engine {
                     + " Matches, ein Thread " + one.rule.size() + "), Weg "
                     + (byIndex ? "Index" : "Scan"));
         }
+        if (byIndex) {
+            Found plain = new Found();
+            seedByScan(g, vals, plain);
+            checkSame("der Seed", spread, plain);
+        }
         spread.into(sink);
     }
 
@@ -1270,11 +1229,13 @@ public final class Engine {
      *  Zaehlern wie {@link #seedByIndex} und {@link #seedByScan}. */
     private void seedSpread(Graph g, Map<Id, String> vals, boolean byIndex, int threads, int piece,
             Sink sink) {
-        boolean[] admitted = admitted();
+        boolean[] admitted = new boolean[rules.size()];
+        for (int ri = 0; ri < rules.size(); ri++) admitted[ri] = ruleActive(ri);
         if (byIndex) {
             AnchorIndex ix = index();
             seedsByIndex++;
-            Par.Counted c = Par.indexSeedSpread(ix, rules, g, vals, admitted, threads, piece, sink);
+            Par.Counted c = Par.indexSeedSpread(ix, rules, g, vals, seedStarts(g), admitted,
+                    threads, piece, sink);
             walk.visits += c.visits();
             searches += c.searches();
             anchoredSearches += c.searches();
@@ -1419,7 +1380,7 @@ public final class Engine {
         Earlier earlier = new Earlier(newNodes);
         // Die Suchen lesen nur den Graphen, das Eintragen aendert ihn
         // nicht: die Kandidaten gelten fuer die ganze Expansion.
-        long[] candidates = ix.candidates(g, vals, newNodes, walk, this::ruleActive, earlier);
+        long[] candidates = ix.candidates(g, vals, newNodes, walk, this::ruleActive, false, earlier);
         for (long t : candidates) {
             int ri = AnchorIndex.rule(t);
             int pos = AnchorIndex.pos(t);

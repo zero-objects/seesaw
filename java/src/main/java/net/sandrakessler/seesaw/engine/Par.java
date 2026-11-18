@@ -139,12 +139,14 @@ final class Par {
     private record Piece(IntList rules, ArrayList<Id[]> matches) {}
 
     /**
-     * Der Seed ueber den {@link AnchorIndex} ({@code Engine.indexSeed})
+     * Der Seed ueber den {@link AnchorIndex} ({@code Engine.seedByIndex})
      * mit den Gaengen und den Suchen auf bis zu {@code threads} Threads:
      * dieselben Matches in derselben Folge an {@code sink}, auf dem Thread
-     * des Aufrufers (Rust {@code index_seed_spread}).
+     * des Aufrufers (Rust {@code index_seed_spread}, in der Java-Form des
+     * Seeds: nur die Plaetze an Position 0).
      *
-     * <p>Der Gang eines Knotens und die Suche an einem Platz lesen nur den
+     * <p>{@code starts} sind die Knoten, an denen ein Scan beginnen wuerde.
+     * Der Gang eines Knotens und die Suche an einem Platz lesen nur den
      * Graphen, die Regeln, die Werte und den Index, sie liefern also
      * dasselbe, gleich welcher Thread sie faehrt. Die Gaenge laufen in
      * Stuecken zu {@code piece} Knoten. Die Tripel aller Stuecke, sortiert,
@@ -157,16 +159,16 @@ final class Par {
      * sortiert wie dort.
      */
     static Counted indexSeedSpread(AnchorIndex ix, List<Rule> rules, Graph g,
-            Map<Id, String> vals, boolean[] admitted, int threads, int piece, Engine.Sink sink) {
+            Map<Id, String> vals, List<Id> starts, boolean[] admitted, int threads, int piece,
+            Engine.Sink sink) {
         int size = Math.max(1, piece);
         IntPredicate active = ri -> admitted[ri];
-        List<Id> nodes = Engine.matchableNodes(g);
-        int walkPieces = (nodes.size() + size - 1) / size;
+        int walkPieces = (starts.size() + size - 1) / size;
         List<AnchorIndex.Walk> walks = memories(walkPieces, threads, AnchorIndex.Walk::new);
         List<long[]> triples = spread(walkPieces, walks, (walk, p) -> {
             int from = p * size;
-            int to = Math.min(from + size, nodes.size());
-            long[] found = ix.candidates(g, vals, nodes.subList(from, to), walk, active, null);
+            int to = Math.min(from + size, starts.size());
+            long[] found = ix.candidates(g, vals, starts.subList(from, to), walk, active, true, null);
             for (int k = 0; k < found.length; k++) {
                 long t = found[k];
                 found[k] = AnchorIndex.pack(AnchorIndex.rule(t), AnchorIndex.node(t) + from,
@@ -198,11 +200,9 @@ final class Par {
                     ArrayList<Id[]> matches = new ArrayList<>();
                     for (int k = from; k < to; k++) {
                         int ri = AnchorIndex.rule(candidates[k]);
-                        int pos = AnchorIndex.pos(candidates[k]);
                         Rule r = rules.get(ri);
-                        Id node = nodes.get(AnchorIndex.node(candidates[k]));
-                        Matcher.findMatchesPlanned(g, vals, r, ix.plan(ri, pos, r), pos, node,
-                                id -> id.compareTo(node) < 0, scratch);
+                        Id start = starts.get(AnchorIndex.node(candidates[k]));
+                        Matcher.findMatchesPlanned(g, vals, r, ix.plan(ri, 0, r), 0, start, scratch);
                         for (Id[] m : scratch.found) {
                             ofRule.add(ri);
                             matches.add(m);
