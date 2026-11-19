@@ -13,7 +13,9 @@ keywords = ["tgg", "graph", "model-transformation", "bidirectional", "cascade"]
 categories = ["data-structures", "algorithms", "science"]
 # The Java implementation lives in the repository, not in the crate:
 # it reads the same rule files but is built and released separately.
-exclude = ["java/", ".github/", "proofs/"]
+# The measurements of the performance suite (raw data and their
+# READMEs) stay in the repository as well.
+exclude = ["java/", ".github/", "proofs/", "benches/suite/results/"]
 
 [dependencies]
 # blake3 rather than SHA-256 for identities: collision resistant, so the
