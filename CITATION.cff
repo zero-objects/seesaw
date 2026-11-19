@@ -10,7 +10,7 @@ authors:
     email: mail@sandra-kessler.net
 repository-code: https://github.com/zero-objects/seesaw
 license: Apache-2.0
-version: 2.0.2
+version: 2.1.0
 abstract: >-
   A bidirectional graph transformation engine for Triple Graph
   Grammars with a declarative, purely positive rule format.

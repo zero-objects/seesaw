@@ -33,7 +33,7 @@ missing layer in the model, not a condition in the rule.
 
 ```toml
 [dependencies]
-seesaw-tgg = "2.0"
+seesaw-tgg = "2.1"
 ```
 
 A rule set is JSON. This one relates a UML class to a Java class and
