@@ -331,6 +331,8 @@ impl Meter {
 
     /// The sum over the pieces. A counter that was not counting for
     /// the whole of a piece, or is not available, reads 0.
+    // Only the counters of Linux change `self` here.
+    #[cfg_attr(not(target_os = "linux"), allow(unused_mut))]
     pub fn finish(mut self) -> Usage {
         #[cfg(target_os = "linux")]
         {
