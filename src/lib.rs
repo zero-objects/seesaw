@@ -64,3 +64,10 @@ pub mod ident;
 pub mod perf_trace;
 pub mod plan;
 pub mod rules;
+
+// The Rust examples of README.md compile and run under
+// `cargo test --doc`. The item exists only while doctests are
+// collected, never in the library.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+pub struct ReadmeDoctests;
