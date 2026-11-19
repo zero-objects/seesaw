@@ -1251,8 +1251,8 @@ impl<'r> Engine<'r> {
     #[inline(never)]
     fn producers_of_unheld(&mut self, id: &GhostId) -> Ixs {
         let made = self.edges_made.get_or_insert_with(EdgesMade::default);
-        for eix in made.upto..self.cascade.len() {
-            for e in &self.cascade[eix].created_edges {
+        for (eix, entry) in self.cascade.iter().enumerate().skip(made.upto) {
+            for e in &entry.created_edges {
                 let ixs = made.by_id.entry(*e).or_default();
                 if ixs.as_slice().last() != Some(&(eix as u32)) {
                     ixs.push(eix as u32);
